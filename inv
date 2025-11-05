@@ -1,136 +1,60 @@
--- Simple function to show inventory items
-local function showInventory()
-    print("📦 CHECKING INVENTORY...")
-    
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Player
+local player = Players.LocalPlayer
+
+-- Function to print all available pets in inventory
+local function printAvailablePets()
+    local pets = {}
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            for petId, petData in pairs(playerData.inventory.pets) do
+                if petData.id then
+                    table.insert(pets, {
+                        id = petId,
+                        name = petData.id,
+                        unique = petData.unique,
+                        properties = petData.properties or {}
+                    })
+                end
+            end
+        end
     end)
     
     if not success then
-        print("❌ Failed to get player data")
+        print("Error reading inventory: " .. tostring(errorMsg))
         return
     end
     
-    if not data then
-        print("❌ No player data found")
+    if #pets == 0 then
+        print("No pets found in inventory!")
         return
     end
     
-    print("✅ Player data loaded successfully")
-    
-    -- Check what's in the data
-    print("📋 Data keys:")
-    for key, value in pairs(data) do
-        print("  " .. key .. " = " .. type(value))
+    print("=== AVAILABLE PETS IN INVENTORY ===")
+    for i, pet in ipairs(pets) do
+        local age = pet.properties.age or 0
+        local isNeon = pet.properties.neon and "✨ NEON" or ""
+        local isMegaNeon = pet.properties.mega_neon and "🌟 MEGA NEON" or ""
+        local neonStatus = isMegaNeon ~= "" and isMegaNeon or isNeon
+        
+        print(string.format("%d. %s (Unique: %s)", i, pet.name, pet.unique))
+        print(string.format("   Age: %d years | %s", age, neonStatus))
+        
+        -- Print all properties for debugging
+        print("   Properties:")
+        for propKey, propValue in pairs(pet.properties) do
+            print(string.format("     %s: %s", propKey, tostring(propValue)))
+        end
+        print("   ---")
     end
-    
-    -- Check inventory
-    if data.inventory then
-        print("🎒 INVENTORY FOUND!")
-        print("Inventory keys:")
-        for key, value in pairs(data.inventory) do
-            print("  " .. key .. " = " .. type(value))
-        end
-        
-        -- Show pets if they exist
-        if data.inventory.pets then
-            print("🐾 PETS (" .. table.count(data.inventory.pets) .. "):")
-            local count = 0
-            for petId, petData in pairs(data.inventory.pets) do
-                count = count + 1
-                if count <= 5 then  -- Show first 5 pets only
-                    print("  Pet " .. count .. ": " .. tostring(petData.id))
-                    -- Show pet fields
-                    for key, value in pairs(petData) do
-                        if type(value) == "table" then
-                            print("    " .. key .. " = [table]")
-                        else
-                            print("    " .. key .. " = " .. tostring(value))
-                        end
-                    end
-                    print("    ---")
-                end
-            end
-            if count > 5 then
-                print("  ... and " .. (count - 5) .. " more pets")
-            end
-        else
-            print("❌ No pets in inventory")
-        end
-        
-        -- Show other inventory sections
-        local sections = {"toys", "food", "strollers", "furniture"}
-        for _, section in ipairs(sections) do
-            if data.inventory[section] then
-                local count = table.count(data.inventory[section])
-                print("📁 " .. section:upper() .. " (" .. count .. " items)")
-            end
-        end
-        
-    else
-        print("❌ No inventory found in data")
-    end
+    print("Total pets: " .. #pets)
+    print("===================================")
 end
 
--- Even simpler version - just show counts
-local function showInventoryCounts()
-    print("🔢 INVENTORY COUNTS:")
-    
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
-    
-    if success and data and data.inventory then
-        for section, items in pairs(data.inventory) do
-            if type(items) == "table" then
-                local count = 0
-                for _ in pairs(items) do
-                    count = count + 1
-                end
-                print("  " .. section .. ": " .. count .. " items")
-            end
-        end
-    else
-        print("❌ Could not load inventory")
-    end
-end
-
--- Test if we can even access the data
-local function testDataAccess()
-    print("🧪 TESTING DATA ACCESS...")
-    
-    local success, result = pcall(function()
-        local module = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return module
-    end)
-    
-    if success then
-        print("✅ ClientData module loaded")
-        
-        local success2, data = pcall(function()
-            return result.get_data()
-        end)
-        
-        if success2 then
-            print("✅ get_data() works")
-            if data[player.Name] then
-                print("✅ Player data found")
-            else
-                print("❌ No data for current player")
-            end
-        else
-            print("❌ get_data() failed: " .. tostring(data))
-        end
-    else
-        print("❌ Failed to require ClientData: " .. tostring(result))
-    end
-end
-
--- Call this to see what's in your inventory
-showInventory()
-
--- Or call the simple version
--- showInventoryCounts()
-
--- Or test data access first
--- testDataAccess()
+-- Run the function
+printAvailablePets()
