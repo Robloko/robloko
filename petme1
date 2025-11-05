@@ -1,0 +1,165 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+
+-- Function to get the pet's unique ID
+local function getPetUniqueID(petName)
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+
+    if not success or not data or not data.inventory or not data.inventory.pets then
+        warn("Failed to get pet data")
+        return nil
+    end
+
+    for petID, petData in pairs(data.inventory.pets) do
+        if petData.id == petName then
+            return petData.unique
+        end
+    end
+
+    warn("Pet not found in inventory")
+    return nil
+end
+
+-- Function to focus on the pet and set up animations
+local function setupPetForPetting(petName)
+    local petModel = Workspace:FindFirstChild("Pets") and Workspace.Pets:FindFirstChild(petName)
+    if not petModel then
+        warn("Pet not found in workspace!")
+        return false
+    end
+
+    -- Focus on the pet
+    local argsFocus = { petModel }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(argsFocus))
+    end)
+    if not success then
+        warn("Failed to focus pet: " .. tostring(err))
+        return false
+    end
+    print("Successfully focused pet")
+
+    -- Replicate active performances (e.g., petting)
+    local argsReplicate = {
+        petModel,
+        {
+            FocusPet = true
+        }
+    }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(argsReplicate))
+    end)
+    if not success then
+        warn("Failed to replicate active performances: " .. tostring(err))
+        return false
+    end
+    print("Successfully replicated active performances")
+
+    -- Replicate performance modifiers (e.g., animations)
+    local argsModifiers = {
+        petModel,
+        {
+            local_anim_name = "DogSit",
+            local_anim_speed = 1,
+            dont_allow_sit_states = true,
+            dont_allow_remote_interaction = true,
+            anim_fade_time = 0.2
+        }
+    }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(argsModifiers))
+    end)
+    if not success then
+        warn("Failed to replicate performance modifiers: " .. tostring(err))
+        return false
+    end
+    print("Successfully replicated performance modifiers")
+
+    return true
+end
+
+-- Function to progress the "Pet Me" ailment
+local function progressPetMeAilment(petUniqueID)
+    local args = { petUniqueID }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AilmentsAPI/ProgressPetMeAilment"):FireServer(unpack(args))
+    end)
+
+    if success then
+        print("Successfully progressed 'Pet Me' ailment")
+        return true
+    else
+        warn("Failed to progress 'Pet Me' ailment: " .. tostring(err))
+        return false
+    end
+end
+
+-- Function to check the current progress of the "Pet Me" ailment
+local function getPetMeProgress(petUniqueID)
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+
+    if success and data and data.ailments_manager and data.ailments_manager.ailments then
+        local petMeData = data.ailments_manager.ailments[petUniqueID] and data.ailments_manager.ailments[petUniqueID].pet_me
+        if petMeData then
+            return petMeData.progress
+        end
+    end
+    return nil
+end
+
+-- Function to finish the "Pet Me" ailment
+local function finishPetMeAilment(petName)
+    local petUniqueID = getPetUniqueID(petName)
+    if not petUniqueID then
+        warn("Failed to get pet unique ID")
+        return
+    end
+
+    print("Starting to finish 'Pet Me' ailment for Pet ID: " .. petUniqueID)
+
+    -- Setup the pet for petting
+    local success = setupPetForPetting(petName)
+    if not success then
+        warn("Failed to setup pet for petting")
+        return
+    end
+
+    -- Progress the ailment until it's fully completed
+    while true do
+        local currentProgress = getPetMeProgress(petUniqueID)
+        if currentProgress == nil then
+            warn("Failed to get current progress for 'Pet Me' ailment")
+            break
+        end
+
+        print("Current progress: " .. currentProgress)
+
+        -- Check if the ailment is already fully progressed
+        if currentProgress >= 1 then
+            print("'Pet Me' ailment is fully progressed!")
+            break
+        end
+
+        -- Progress the ailment
+        local success = progressPetMeAilment(petUniqueID)
+        if not success then
+            warn("Failed to progress 'Pet Me' ailment")
+            break
+        end
+
+        wait(1) -- Wait a second before progressing again
+    end
+end
+
+-- Example usage:
+local petName = "Dog"  -- Replace with your pet's name
+
+-- Start finishing the "Pet Me" ailment
+finishPetMeAilment(petName)
