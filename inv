@@ -1,6 +1,6 @@
--- Function to detect and print pet rarities from inventory
-local function detectAndPrintPetRarities()
-    debugPrint("🔍 DETECTING PET RARITIES...")
+-- Function to examine pet data structure and find rarity
+local function examinePetDataStructure()
+    debugPrint("🔍 EXAMINING PET DATA STRUCTURE...")
     
     local success, data = pcall(function()
         return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
@@ -16,327 +16,262 @@ local function detectAndPrintPetRarities()
         return
     end
 
-    -- First, let's examine one pet to understand the data structure
-    debugPrint("📖 EXAMINING PET DATA STRUCTURE...")
+    debugPrint("📊 Total pets in inventory: " .. table.count(data.inventory.pets))
+    
+    -- Examine first few pets to understand structure
+    local examined = 0
     for petUniqueID, petData in pairs(data.inventory.pets) do
-        debugPrint("🔎 Sample Pet Data Structure:")
-        debugPrint("  Pet ID: " .. tostring(petData.id))
-        debugPrint("  Unique ID: " .. tostring(petUniqueID))
+        examined = examined + 1
+        if examined > 3 then break end -- Only examine first 3 pets
         
-        -- Print all keys in petData
-        debugPrint("  PetData keys:")
+        debugPrint("")
+        debugPrint("🎯 PET #" .. examined .. " ANALYSIS:")
+        debugPrint("Pet Name: " .. tostring(petData.id))
+        debugPrint("Unique ID: " .. tostring(petUniqueID))
+        
+        -- Print all top-level fields
+        debugPrint("📋 Top-level fields:")
         for key, value in pairs(petData) do
-            debugPrint("    " .. tostring(key) .. " = " .. tostring(value))
-        end
-        
-        -- Print all keys in properties
-        if petData.properties then
-            debugPrint("  Properties keys:")
-            for key, value in pairs(petData.properties) do
-                debugPrint("    " .. tostring(key) .. " = " .. tostring(value))
+            if type(value) == "table" then
+                debugPrint("  " .. key .. " = [TABLE]")
+                -- Print sub-fields if it's a table
+                for subKey, subValue in pairs(value) do
+                    debugPrint("    " .. subKey .. " = " .. tostring(subValue))
+                end
+            else
+                debugPrint("  " .. key .. " = " .. tostring(value))
             end
         end
         
-        -- Check for hidden rarity fields
-        if petData.s then
-            debugPrint("  's' field contents:")
-            for key, value in pairs(petData.s) do
-                debugPrint("    " .. tostring(key) .. " = " .. tostring(value))
-            end
-        end
-        
-        break -- Only examine first pet for structure
-    end
-
-    debugPrint("🎯 ANALYZING ALL PETS FOR RARITY...")
-    
-    local rarityStats = {
-        Common = {count = 0, pets = {}},
-        Uncommon = {count = 0, pets = {}},
-        Rare = {count = 0, pets = {}},
-        ["Ultra-Rare"] = {count = 0, pets = {}},
-        Legendary = {count = 0, pets = {}},
-        Unknown = {count = 0, pets = {}}
-    }
-
-    local totalPets = 0
-    
-    for petUniqueID, petData in pairs(data.inventory.pets) do
-        totalPets = totalPets + 1
-        local petName = petData.id or "Unknown"
-        local age = petData.properties and petData.properties.age or 0
-        local isNeon = petData.properties and petData.properties.neon or false
-        local isMegaNeon = petData.properties and petData.properties.mega_neon or false
-        
-        -- Method 1: Check direct rarity field
-        local rarity = petData.rarity
-        
-        -- Method 2: Check properties.rarity
-        if not rarity and petData.properties then
-            rarity = petData.properties.rarity
-        end
-        
-        -- Method 3: Check s.rarity (common in some games)
-        if not rarity and petData.s then
-            rarity = petData.s.rarity
-        end
-        
-        -- Method 4: Check for hidden fields
-        if not rarity then
-            -- Look for any field that might contain rarity info
-            for key, value in pairs(petData) do
-                if type(value) == "string" and (
-                    string.lower(value) == "common" or
-                    string.lower(value) == "uncommon" or 
-                    string.lower(value) == "rare" or
-                    string.lower(value) == "ultra-rare" or
-                    string.lower(value) == "legendary"
-                ) then
-                    rarity = value
-                    debugPrint("Found rarity in field '" .. key .. "': " .. value)
-                    break
+        -- Check for common rarity field names
+        local potentialRarityFields = {}
+        for key, value in pairs(petData) do
+            if type(value) == "string" then
+                local lowerValue = string.lower(value)
+                if string.find(lowerValue, "common") or 
+                   string.find(lowerValue, "uncommon") or 
+                   string.find(lowerValue, "rare") or 
+                   string.find(lowerValue, "legendary") then
+                    table.insert(potentialRarityFields, {key = key, value = value})
                 end
             end
         end
         
-        -- Method 5: Check properties for string values
-        if not rarity and petData.properties then
-            for key, value in pairs(petData.properties) do
-                if type(value) == "string" and (
-                    string.lower(value) == "common" or
-                    string.lower(value) == "uncommon" or 
-                    string.lower(value) == "rare" or
-                    string.lower(value) == "ultra-rare" or
-                    string.lower(value) == "legendary"
-                ) then
-                    rarity = value
-                    debugPrint("Found rarity in properties.'" .. key .. "': " .. value)
-                    break
-                end
+        if #potentialRarityFields > 0 then
+            debugPrint("🎉 POTENTIAL RARITY FOUND:")
+            for _, field in ipairs(potentialRarityFields) do
+                debugPrint("  " .. field.key .. " = " .. field.value)
             end
-        end
-
-        -- Normalize rarity
-        if rarity then
-            rarity = tostring(rarity)
-            -- Capitalize first letter
-            rarity = rarity:gsub("^%l", string.upper)
         else
-            rarity = "Unknown"
-            debugPrint("❓ No rarity found for: " .. petName)
-        end
-
-        -- Categorize the rarity
-        local category = "Unknown"
-        if string.find(string.lower(rarity), "common") then
-            category = "Common"
-        elseif string.find(string.lower(rarity), "uncommon") then
-            category = "Uncommon"
-        elseif string.find(string.lower(rarity), "rare") and not string.find(string.lower(rarity), "ultra") then
-            category = "Rare"
-        elseif string.find(string.lower(rarity), "ultra%-rare") or string.find(string.lower(rarity), "ultra rare") then
-            category = "Ultra-Rare"
-        elseif string.find(string.lower(rarity), "legendary") then
-            category = "Legendary"
-        else
-            category = "Unknown"
-            debugPrint("🔍 Unrecognized rarity '" .. rarity .. "' for: " .. petName)
-        end
-
-        -- Add to stats
-        if rarityStats[category] then
-            rarityStats[category].count = rarityStats[category].count + 1
-            table.insert(rarityStats[category].pets, {
-                name = petName,
-                age = age,
-                neon = isNeon,
-                megaNeon = isMegaNeon,
-                rawRarity = rarity,
-                uniqueID = petUniqueID
-            })
-        else
-            rarityStats.Unknown.count = rarityStats.Unknown.count + 1
-            table.insert(rarityStats.Unknown.pets, {
-                name = petName,
-                age = age,
-                neon = isNeon,
-                megaNeon = isMegaNeon,
-                rawRarity = rarity,
-                uniqueID = petUniqueID
-            })
+            debugPrint("❌ No obvious rarity fields found")
         end
     end
-
-    -- Print results
-    debugPrint("")
-    debugPrint("📊 PET RARITY BREAKDOWN:")
-    debugPrint("========================")
-    debugPrint("Total Pets: " .. totalPets)
-    debugPrint("")
-
-    local categories = {"Common", "Uncommon", "Rare", "Ultra-Rare", "Legendary", "Unknown"}
-    
-    for _, category in ipairs(categories) do
-        local stats = rarityStats[category]
-        if stats.count > 0 then
-            local percentage = math.floor((stats.count / totalPets) * 100)
-            local emoji = "⚪" -- Common
-            
-            if category == "Uncommon" then emoji = "🟢"
-            elseif category == "Rare" then emoji = "🔵" 
-            elseif category == "Ultra-Rare" then emoji = "🟣"
-            elseif category == "Legendary" then emoji = "🟡"
-            elseif category == "Unknown" then emoji = "❓"
-            end
-            
-            debugPrint(emoji .. " " .. category .. ": " .. stats.count .. " pets (" .. percentage .. "%)")
-            
-            -- Count neon/mega neon
-            local neonCount = 0
-            local megaNeonCount = 0
-            for _, pet in ipairs(stats.pets) do
-                if pet.megaNeon then
-                    megaNeonCount = megaNeonCount + 1
-                elseif pet.neon then
-                    neonCount = neonCount + 1
-                end
-            end
-            
-            if neonCount > 0 or megaNeonCount > 0 then
-                debugPrint("   ✨ Neon: " .. neonCount .. " | 🌟 Mega Neon: " .. megaNeonCount)
-            end
-            
-            -- Show sample pets (up to 3)
-            if #stats.pets > 0 then
-                debugPrint("   Sample pets:")
-                for i = 1, math.min(3, #stats.pets) do
-                    local pet = stats.pets[i]
-                    local neonStatus = ""
-                    if pet.megaNeon then
-                        neonStatus = " [MEGA NEON]"
-                    elseif pet.neon then
-                        neonStatus = " [NEON]"
-                    end
-                    debugPrint("     - " .. pet.name .. " (Age: " .. pet.age .. ")" .. neonStatus)
-                end
-                if #stats.pets > 3 then
-                    debugPrint("     ... and " .. (#stats.pets - 3) .. " more")
-                end
-            end
-            debugPrint("")
-        end
-    end
-
-    -- Print summary of valuable pets
-    local valuableCount = rarityStats["Ultra-Rare"].count + rarityStats["Legendary"].count
-    if valuableCount > 0 then
-        debugPrint("💎 VALUABLE PETS SUMMARY:")
-        debugPrint("   Ultra-Rare: " .. rarityStats["Ultra-Rare"].count)
-        debugPrint("   Legendary: " .. rarityStats["Legendary"].count)
-        debugPrint("   Total Valuable: " .. valuableCount .. " pets")
-    end
-
-    debugPrint("🎉 RARITY ANALYSIS COMPLETE!")
 end
 
--- Quick function to just get rarity counts
-local function getQuickRarityCounts()
-    local counts = {
+-- Function to dump all fields of first pet for deep analysis
+local function deepAnalyzePetStructure()
+    debugPrint("🔬 DEEP PET STRUCTURE ANALYSIS...")
+    
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+    
+    if not success or not data then
+        debugPrint("❌ Failed to access player data")
+        return
+    end
+    
+    if not data.inventory or not data.inventory.pets then
+        debugPrint("❌ No pets found in inventory")
+        return
+    end
+
+    -- Get first pet
+    for petUniqueID, petData in pairs(data.inventory.pets) do
+        debugPrint("")
+        debugPrint("🧬 COMPLETE PET DATA DUMP:")
+        debugPrint("Pet: " .. tostring(petData.id))
+        
+        local function dumpTable(t, indent)
+            indent = indent or 0
+            for key, value in pairs(t) do
+                local indentStr = string.rep("  ", indent)
+                if type(value) == "table" then
+                    debugPrint(indentStr .. key .. ": [TABLE]")
+                    dumpTable(value, indent + 1)
+                else
+                    debugPrint(indentStr .. key .. ": " .. tostring(value))
+                end
+            end
+        end
+        
+        dumpTable(petData)
+        break -- Only analyze first pet
+    end
+end
+
+-- Function to try common rarity detection methods
+local function findPetRarity(petData)
+    if not petData then return "Unknown" end
+    
+    -- Method 1: Direct rarity field
+    if petData.rarity then
+        return tostring(petData.rarity)
+    end
+    
+    -- Method 2: Properties.rarity
+    if petData.properties and petData.properties.rarity then
+        return tostring(petData.properties.rarity)
+    end
+    
+    -- Method 3: s.rarity (common in some games)
+    if petData.s and petData.s.rarity then
+        return tostring(petData.s.rarity)
+    end
+    
+    -- Method 4: r field
+    if petData.r then
+        return tostring(petData.r)
+    end
+    
+    -- Method 5: Check all string fields for rarity keywords
+    for key, value in pairs(petData) do
+        if type(value) == "string" then
+            local lowerValue = string.lower(value)
+            if string.find(lowerValue, "common") then return "Common" end
+            if string.find(lowerValue, "uncommon") then return "Uncommon" end
+            if string.find(lowerValue, "rare") then return "Rare" end
+            if string.find(lowerValue, "legendary") then return "Legendary" end
+            if string.find(lowerValue, "ultra") then return "Ultra-Rare" end
+            if string.find(lowerValue, "epic") then return "Epic" end
+            if string.find(lowerValue, "mythic") then return "Mythic" end
+        end
+    end
+    
+    -- Method 6: Check properties table
+    if petData.properties then
+        for key, value in pairs(petData.properties) do
+            if type(value) == "string" then
+                local lowerValue = string.lower(value)
+                if string.find(lowerValue, "common") then return "Common" end
+                if string.find(lowerValue, "uncommon") then return "Uncommon" end
+                if string.find(lowerValue, "rare") then return "Rare" end
+                if string.find(lowerValue, "legendary") then return "Legendary" end
+                if string.find(lowerValue, "ultra") then return "Ultra-Rare" end
+                if string.find(lowerValue, "epic") then return "Epic" end
+                if string.find(lowerValue, "mythic") then return "Mythic" end
+            end
+        end
+    end
+    
+    return "Unknown"
+end
+
+-- Simple function to print pet rarities based on discovered structure
+local function printPetRaritiesSimple()
+    debugPrint("🐾 SIMPLE PET RARITY REPORT")
+    debugPrint("==========================")
+    
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+    
+    if not success or not data then
+        debugPrint("❌ Failed to access player data")
+        return
+    end
+    
+    if not data.inventory or not data.inventory.pets then
+        debugPrint("❌ No pets found in inventory")
+        return
+    end
+
+    local rarityCounts = {
         Common = 0,
         Uncommon = 0,
         Rare = 0,
         ["Ultra-Rare"] = 0,
         Legendary = 0,
-        Unknown = 0,
-        Total = 0
+        Epic = 0,
+        Mythic = 0,
+        Unknown = 0
     }
     
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
+    local totalPets = 0
     
-    if success and data and data.inventory and data.inventory.pets then
-        for _, petData in pairs(data.inventory.pets) do
-            counts.Total = counts.Total + 1
-            
-            local rarity = petData.rarity or (petData.properties and petData.properties.rarity) or "Unknown"
-            rarity = tostring(rarity):lower()
-            
-            if string.find(rarity, "common") then
-                counts.Common = counts.Common + 1
-            elseif string.find(rarity, "uncommon") then
-                counts.Uncommon = counts.Uncommon + 1
-            elseif string.find(rarity, "rare") and not string.find(rarity, "ultra") then
-                counts.Rare = counts.Rare + 1
-            elseif string.find(rarity, "ultra%-rare") or string.find(rarity, "ultra rare") then
-                counts["Ultra-Rare"] = counts["Ultra-Rare"] + 1
-            elseif string.find(rarity, "legendary") then
-                counts.Legendary = counts.Legendary + 1
-            else
-                counts.Unknown = counts.Unknown + 1
+    debugPrint("📋 INDIVIDUAL PET RARITIES:")
+    for petUniqueID, petData in pairs(data.inventory.pets) do
+        totalPets = totalPets + 1
+        local petName = petData.id or "Unknown"
+        local rarity = findPetRarity(petData)
+        
+        -- Categorize the found rarity
+        local lowerRarity = string.lower(rarity)
+        local category = "Unknown"
+        
+        if string.find(lowerRarity, "common") then
+            category = "Common"
+        elseif string.find(lowerRarity, "uncommon") then
+            category = "Uncommon"
+        elseif string.find(lowerRarity, "rare") and not string.find(lowerRarity, "ultra") then
+            category = "Rare"
+        elseif string.find(lowerRarity, "ultra") then
+            category = "Ultra-Rare"
+        elseif string.find(lowerRarity, "legendary") then
+            category = "Legendary"
+        elseif string.find(lowerRarity, "epic") then
+            category = "Epic"
+        elseif string.find(lowerRarity, "mythic") then
+            category = "Mythic"
+        else
+            category = "Unknown"
+        end
+        
+        rarityCounts[category] = rarityCounts[category] + 1
+        
+        local neonStatus = ""
+        if petData.properties then
+            if petData.properties.mega_neon then
+                neonStatus = " 🌟MEGA NEON🌟"
+            elseif petData.properties.neon then
+                neonStatus = " ✨NEON✨"
             end
         end
+        
+        debugPrint("  " .. petName .. " → " .. rarity .. neonStatus)
     end
     
-    return counts
+    -- Print summary
+    debugPrint("")
+    debugPrint("📊 RARITY SUMMARY:")
+    debugPrint("Total Pets: " .. totalPets)
+    debugPrint("")
+    
+    local categories = {"Common", "Uncommon", "Rare", "Ultra-Rare", "Legendary", "Epic", "Mythic", "Unknown"}
+    for _, category in ipairs(categories) do
+        if rarityCounts[category] > 0 then
+            local percentage = math.floor((rarityCounts[category] / totalPets) * 100)
+            local emoji = "❓"
+            if category == "Common" then emoji = "⚪"
+            elseif category == "Uncommon" then emoji = "🟢"
+            elseif category == "Rare" then emoji = "🔵"
+            elseif category == "Ultra-Rare" then emoji = "🟣"
+            elseif category == "Legendary" then emoji = "🟡"
+            elseif category == "Epic" then emoji = "🟠"
+            elseif category == "Mythic" then emoji = "🔴" end
+            
+            debugPrint(emoji .. " " .. category .. ": " .. rarityCounts[category] .. " (" .. percentage .. "%)")
+        end
+    end
 end
 
--- Function to find pets of specific rarity
-local function findPetsByRarity(targetRarity)
-    debugPrint("🔍 Searching for " .. targetRarity .. " pets...")
-    
-    local foundPets = {}
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
-    
-    if success and data and data.inventory and data.inventory.pets then
-        for petUniqueID, petData in pairs(data.inventory.pets) do
-            local rarity = petData.rarity or (petData.properties and petData.properties.rarity) or "Unknown"
-            rarity = tostring(rarity)
-            
-            local normalizedRarity = "Unknown"
-            if string.find(string.lower(rarity), "common") then
-                normalizedRarity = "Common"
-            elseif string.find(string.lower(rarity), "uncommon") then
-                normalizedRarity = "Uncommon"
-            elseif string.find(string.lower(rarity), "rare") and not string.find(string.lower(rarity), "ultra") then
-                normalizedRarity = "Rare"
-            elseif string.find(string.lower(rarity), "ultra%-rare") or string.find(string.lower(rarity), "ultra rare") then
-                normalizedRarity = "Ultra-Rare"
-            elseif string.find(string.lower(rarity), "legendary") then
-                normalizedRarity = "Legendary"
-            end
-            
-            if normalizedRarity == targetRarity then
-                table.insert(foundPets, {
-                    uniqueID = petUniqueID,
-                    name = petData.id or "Unknown",
-                    age = petData.properties and petData.properties.age or 0,
-                    neon = petData.properties and petData.properties.neon or false,
-                    megaNeon = petData.properties and petData.properties.mega_neon or false,
-                    rawRarity = rarity
-                })
-            end
-        end
-    end
-    
-    -- Sort by age (oldest first)
-    table.sort(foundPets, function(a, b)
-        return a.age > b.age
-    end)
-    
-    debugPrint("📋 Found " .. #foundPets .. " " .. targetRarity .. " pets")
-    
-    for i, pet in ipairs(foundPets) do
-        local neonStatus = ""
-        if pet.megaNeon then
-            neonStatus = " [MEGA NEON]"
-        elseif pet.neon then
-            neonStatus = " [NEON]"
-        end
-        debugPrint("   " .. i .. ". " .. pet.name .. " (Age: " .. pet.age .. ")" .. neonStatus)
-    end
-    
-    return foundPets
-end
+-- Add these functions to your script and call them:
+
+-- First, let's examine the data structure
+examinePetDataStructure()
+
+-- If that doesn't show clear rarity, do a deep analysis
+-- deepAnalyzePetStructure()
+
+-- Then try the simple rarity report
+printPetRaritiesSimple()
