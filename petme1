@@ -3,163 +3,308 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
+local petUniqueID = "2_ca817f9348c34cf98be5b67057ca47d5"
 
--- Function to get the pet's unique ID
-local function getPetUniqueID(petName)
+-- Function to get player data
+local function getPlayerData()
     local success, data = pcall(function()
         return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
     end)
+    if not success or not data then
+        warn("Failed to get player data")
+        return nil
+    end
+    return data
+end
 
-    if not success or not data or not data.inventory or not data.inventory.pets then
-        warn("Failed to get pet data")
+-- Function to find the pet model
+local function findPetModel(petUniqueID)
+    print("Searching for pet model with ID: " .. petUniqueID)
+    
+    local data = getPlayerData()
+    if not data or not data.inventory or not data.inventory.pets then
+        warn("Failed to get player data or pet inventory")
         return nil
     end
 
     for petID, petData in pairs(data.inventory.pets) do
-        if petData.id == petName then
-            return petData.unique
+        if petData.unique == petUniqueID then
+            print("Found matching pet in inventory: " .. tostring(petData.id))
+            
+            local petsFolder = Workspace:FindFirstChild("Pets")
+            if not petsFolder then
+                warn("Pets folder not found")
+                return nil
+            end
+
+            -- Try exact match first
+            local petModel = petsFolder:FindFirstChild(petData.id)
+            if petModel then
+                print("Found pet model: " .. petModel.Name)
+                return petModel
+            end
+
+            -- Try case-insensitive search
+            for _, child in pairs(petsFolder:GetChildren()) do
+                if string.lower(child.Name) == string.lower(petData.id) then
+                    print("Found pet model (case-insensitive): " .. child.Name)
+                    return child
+                end
+            end
+
+            warn("Pet model not found. Available pets:")
+            for _, child in pairs(petsFolder:GetChildren()) do
+                print("  - " .. child.Name)
+            end
+            return nil
         end
     end
 
-    warn("Pet not found in inventory")
+    warn("No pet found with unique ID: " .. petUniqueID)
     return nil
 end
 
--- Function to focus on the pet and set up animations
-local function setupPetForPetting(petName)
-    local petModel = Workspace:FindFirstChild("Pets") and Workspace.Pets:FindFirstChild(petName)
+-- Function to focus on the pet using the correct API
+local function focusPet(petModel)
     if not petModel then
-        warn("Pet not found in workspace!")
+        warn("No pet model provided")
         return false
     end
 
-    -- Focus on the pet
-    local argsFocus = { petModel }
-    local success, err = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(argsFocus))
+    print("Focusing pet: " .. petModel.Name)
+    
+    -- Method 1: Basic focus
+    local args1 = { petModel }
+    local success1, err1 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args1))
     end)
-    if not success then
-        warn("Failed to focus pet: " .. tostring(err))
-        return false
-    end
-    print("Successfully focused pet")
 
-    -- Replicate active performances (e.g., petting)
-    local argsReplicate = {
-        petModel,
-        {
-            FocusPet = true
+    if success1 then
+        print("Successfully focused pet using AdoptAPI/FocusPet")
+        
+        -- Wait a bit for focus to apply
+        wait(0.5)
+        
+        -- Method 2: Set performance with focus
+        local args2 = {
+            petModel,
+            {
+                FocusPet = true
+            }
         }
-    }
-    local success, err = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(argsReplicate))
-    end)
-    if not success then
-        warn("Failed to replicate active performances: " .. tostring(err))
+        
+        local success2, err2 = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args2))
+        end)
+        
+        if success2 then
+            print("Successfully set performance with focus")
+        else
+            warn("Failed to set performance: " .. tostring(err2))
+        end
+        
+        return true
+    else
+        warn("Failed to focus pet: " .. tostring(err1))
         return false
     end
-    print("Successfully replicated active performances")
+end
 
-    -- Replicate performance modifiers (e.g., animations)
-    local argsModifiers = {
+-- Function to unfocus the pet
+local function unfocusPet(petModel)
+    if not petModel then
+        warn("No pet model provided for unfocus")
+        return false
+    end
+
+    print("Unfocusing pet: " .. petModel.Name)
+    
+    local args = { petModel }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/UnfocusPet"):FireServer(unpack(args))
+    end)
+
+    if success then
+        print("Successfully unfocused pet")
+        return true
+    else
+        warn("Failed to unfocus pet: " .. tostring(err))
+        return false
+    end
+end
+
+-- Function to set pet in sitting state (like "Pet Me" interaction)
+local function setPetSitting(petModel)
+    if not petModel then
+        warn("No pet model provided")
+        return false
+    end
+
+    print("Setting pet to sit state: " .. petModel.Name)
+    
+    -- Determine the correct sit animation based on pet type
+    local sitAnimation = "DogSit"
+    if string.find(petModel.Name:lower(), "cat") then
+        sitAnimation = "CatSit"
+    end
+    
+    local args = {
         petModel,
         {
-            local_anim_name = "DogSit",
+            local_anim_name = sitAnimation,
             local_anim_speed = 1,
             dont_allow_sit_states = true,
             dont_allow_remote_interaction = true,
             anim_fade_time = 0.2
         }
     }
+    
     local success, err = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(argsModifiers))
-    end)
-    if not success then
-        warn("Failed to replicate performance modifiers: " .. tostring(err))
-        return false
-    end
-    print("Successfully replicated performance modifiers")
-
-    return true
-end
-
--- Function to progress the "Pet Me" ailment
-local function progressPetMeAilment(petUniqueID)
-    local args = { petUniqueID }
-    local success, err = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("AilmentsAPI/ProgressPetMeAilment"):FireServer(unpack(args))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
     end)
 
     if success then
-        print("Successfully progressed 'Pet Me' ailment")
+        print("Successfully set pet to sit state")
         return true
     else
-        warn("Failed to progress 'Pet Me' ailment: " .. tostring(err))
+        warn("Failed to set sit state: " .. tostring(err))
         return false
     end
 end
 
--- Function to check the current progress of the "Pet Me" ailment
-local function getPetMeProgress(petUniqueID)
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
+-- Function to progress the "Pet Me" ailment using the correct API
+local function progressPetMeAilment(petUniqueID, petModel)
+    if not petUniqueID or not petModel then
+        warn("Missing pet ID or model")
+        return false
+    end
 
-    if success and data and data.ailments_manager and data.ailments_manager.ailments then
-        local petMeData = data.ailments_manager.ailments[petUniqueID] and data.ailments_manager.ailments[petUniqueID].pet_me
-        if petMeData then
-            return petMeData.progress
+    print("Attempting to progress 'Pet Me' ailment...")
+    
+    -- First ensure the pet is focused and in sitting state
+    if not focusPet(petModel) then
+        warn("Failed to focus pet for ailment progression")
+        return false
+    end
+    
+    wait(0.5)
+    
+    -- Set the pet to sitting state (this might trigger the "Pet Me" interaction)
+    if not setPetSitting(petModel) then
+        warn("Failed to set pet to sitting state")
+        return false
+    end
+    
+    wait(1)
+    
+    -- Try different possible API endpoints for progressing the ailment
+    local possibleEndpoints = {
+        "AilmentsAPI/ProgressPetMeAilment",
+        "PetAPI/ProgressPetMeAilment",
+        "AdoptAPI/ProgressPetMeAilment",
+        "PetAPI/ReplicateActivePerformances", -- This might handle interactions
+        "PetAPI/ReplicatePerformanceModifiers" -- This might handle interactions
+    }
+    
+    for _, endpoint in pairs(possibleEndpoints) do
+        local remoteEvent = ReplicatedStorage.API:FindFirstChild(endpoint)
+        if remoteEvent then
+            print("Trying endpoint: " .. endpoint)
+            
+            local args = { petUniqueID }
+            local success, err = pcall(function()
+                remoteEvent:FireServer(unpack(args))
+            end)
+            
+            if success then
+                print("Successfully called: " .. endpoint)
+                return true
+            else
+                print("Failed to call " .. endpoint .. ": " .. tostring(err))
+            end
         end
     end
-    return nil
+    
+    -- Alternative: Try with pet model instead of unique ID
+    for _, endpoint in pairs(possibleEndpoints) do
+        local remoteEvent = ReplicatedStorage.API:FindFirstChild(endpoint)
+        if remoteEvent then
+            print("Trying endpoint with model: " .. endpoint)
+            
+            local args = { petModel }
+            local success, err = pcall(function()
+                remoteEvent:FireServer(unpack(args))
+            end)
+            
+            if success then
+                print("Successfully called: " .. endpoint)
+                return true
+            else
+                print("Failed to call " .. endpoint .. ": " .. tostring(err))
+            end
+        end
+    end
+    
+    warn("Could not find working endpoint for ailment progression")
+    return false
 end
 
--- Function to finish the "Pet Me" ailment
-local function finishPetMeAilment(petName)
-    local petUniqueID = getPetUniqueID(petName)
-    if not petUniqueID then
-        warn("Failed to get pet unique ID")
+-- Function to check if pet is focused
+local function isPetFocused(petModel)
+    if not petModel then return false end
+
+    local data = getPlayerData()
+    if not data or not data.pet_interaction then
+        return false
+    end
+
+    return data.pet_interaction.focused_pet == petModel
+end
+
+-- Main function
+local function testPetMeAilment(petUniqueID)
+    print("=== STARTING PET ME AILMENT TEST ===")
+    
+    -- Find the pet model
+    local petModel = findPetModel(petUniqueID)
+    if not petModel then
+        warn("FAILED: Could not find pet model")
         return
     end
 
-    print("Starting to finish 'Pet Me' ailment for Pet ID: " .. petUniqueID)
-
-    -- Setup the pet for petting
-    local success = setupPetForPetting(petName)
-    if not success then
-        warn("Failed to setup pet for petting")
-        return
+    print("Using pet: " .. petModel.Name)
+    
+    -- Progress the ailment
+    local success = progressPetMeAilment(petUniqueID, petModel)
+    
+    if success then
+        print("SUCCESS: Ailment progression attempted")
+        
+        -- Wait and check if anything changed
+        wait(2)
+        print("Check if the 'Pet Me' ailment progressed in the game")
+    else
+        warn("FAILED: Could not progress ailment")
     end
-
-    -- Progress the ailment until it's fully completed
-    while true do
-        local currentProgress = getPetMeProgress(petUniqueID)
-        if currentProgress == nil then
-            warn("Failed to get current progress for 'Pet Me' ailment")
-            break
+    
+    -- Unfocus the pet at the end
+    print("Unfocusing pet...")
+    if not unfocusPet(petModel) then
+        -- Alternative unfocus method using the exact format you provided
+        local args = { Workspace:WaitForChild("Pets"):WaitForChild(petModel.Name) }
+        local success, err = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/UnfocusPet"):FireServer(unpack(args))
+        end)
+        
+        if success then
+            print("Successfully unfocused pet using alternative method")
+        else
+            warn("Failed to unfocus pet using alternative method: " .. tostring(err))
         end
-
-        print("Current progress: " .. currentProgress)
-
-        -- Check if the ailment is already fully progressed
-        if currentProgress >= 1 then
-            print("'Pet Me' ailment is fully progressed!")
-            break
-        end
-
-        -- Progress the ailment
-        local success = progressPetMeAilment(petUniqueID)
-        if not success then
-            warn("Failed to progress 'Pet Me' ailment")
-            break
-        end
-
-        wait(1) -- Wait a second before progressing again
     end
+    
+    print("=== TEST COMPLETED ===")
 end
 
--- Example usage:
-local petName = "Dog"  -- Replace with your pet's name
-
--- Start finishing the "Pet Me" ailment
-finishPetMeAilment(petName)
+-- Run the test
+testPetMeAilment(petUniqueID)
