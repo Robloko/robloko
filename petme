@@ -1,7 +1,66 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
+
+-- Function to focus on the pet and set up animations
+local function setupPetForPetting(petName)
+    local petModel = Workspace:FindFirstChild("Pets") and Workspace.Pets:FindFirstChild(petName)
+    if not petModel then
+        warn("Pet not found in workspace!")
+        return false
+    end
+
+    -- Focus on the pet
+    local argsFocus = { petModel }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(argsFocus))
+    end)
+    if not success then
+        warn("Failed to focus pet: " .. tostring(err))
+        return false
+    end
+    print("Successfully focused pet")
+
+    -- Replicate active performances (e.g., petting)
+    local argsReplicate = {
+        petModel,
+        {
+            FocusPet = true
+        }
+    }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(argsReplicate))
+    end)
+    if not success then
+        warn("Failed to replicate active performances: " .. tostring(err))
+        return false
+    end
+    print("Successfully replicated active performances")
+
+    -- Replicate performance modifiers (e.g., animations)
+    local argsModifiers = {
+        petModel,
+        {
+            local_anim_name = "DogSit",
+            local_anim_speed = 1,
+            dont_allow_sit_states = true,
+            dont_allow_remote_interaction = true,
+            anim_fade_time = 0.2
+        }
+    }
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(argsModifiers))
+    end)
+    if not success then
+        warn("Failed to replicate performance modifiers: " .. tostring(err))
+        return false
+    end
+    print("Successfully replicated performance modifiers")
+
+    return true
+end
 
 -- Function to progress the "Pet Me" ailment
 local function progressPetMeAilment(petUniqueID)
@@ -35,9 +94,17 @@ local function getPetMeProgress(petUniqueID)
 end
 
 -- Function to finish the "Pet Me" ailment
-local function finishPetMeAilment(petUniqueID)
+local function finishPetMeAilment(petName, petUniqueID)
     print("Starting to finish 'Pet Me' ailment for Pet ID: " .. petUniqueID)
 
+    -- Setup the pet for petting
+    local success = setupPetForPetting(petName)
+    if not success then
+        warn("Failed to setup pet for petting")
+        return
+    end
+
+    -- Progress the ailment until it's fully completed
     while true do
         local currentProgress = getPetMeProgress(petUniqueID)
         if currentProgress == nil then
@@ -65,7 +132,8 @@ local function finishPetMeAilment(petUniqueID)
 end
 
 -- Example usage:
-local petUniqueID = "2_36450beb795640eab92dd1d333d8732b"
+local petName = "Dog"  -- Replace with your pet's name
+local petUniqueID = "2_36450beb795640eab92dd1d333d8732b"  -- Replace with your pet's unique ID
 
 -- Start finishing the "Pet Me" ailment
-finishPetMeAilment(petUniqueID)
+finishPetMeAilment(petName, petUniqueID)
