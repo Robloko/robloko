@@ -94,7 +94,7 @@ local function getPetMeProgress(petUniqueID)
 
     local petMeData = data.ailments_manager.ailments[petUniqueID] and data.ailments_manager.ailments[petUniqueID].pet_me
     if petMeData then
-        print("Current 'Pet Me' ailment progress: " .. petMeData.progress)
+        print("Current 'Pet Me' ailment progress: " .. tostring(petMeData.progress))
         return petMeData.progress
     else
         warn("No 'Pet Me' ailment found for Pet ID: " .. petUniqueID)
@@ -102,26 +102,58 @@ local function getPetMeProgress(petUniqueID)
     end
 end
 
--- Function to progress the "Pet Me" ailment
-local function progressPetMeAilment(petUniqueID)
-    if not petUniqueID then
-        warn("No pet unique ID provided to progressPetMeAilment function")
+-- Function to progress the "Pet Me" ailment while ensuring pet is focused
+local function progressPetMeAilment(petUniqueID, petModel)
+    if not petUniqueID or not petModel then
+        warn("Missing petUniqueID or petModel in progressPetMeAilment function")
         return false
     end
 
+    -- Double-check that the pet is still focused before progressing
+    if not isPetFocused(petModel) then
+        warn("Pet is not focused! Re-focusing before progressing ailment...")
+        if not focusPet(petModel) then
+            warn("Failed to re-focus pet for ailment progression")
+            return false
+        end
+        -- Wait a moment for focus to apply
+        wait(0.2)
+        
+        -- Check focus again
+        if not isPetFocused(petModel) then
+            warn("Pet still not focused after re-attempt")
+            return false
+        end
+    end
+
     local args = { petUniqueID }
-    print("Progressing 'Pet Me' ailment...")
+    print("Progressing 'Pet Me' ailment while pet is focused...")
     local success, err = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("AilmentsAPI/ProgressPetMeAilment"):FireServer(unpack(args))
     end)
 
     if success then
-        print("Successfully progressed 'Pet Me' ailment")
+        print("Successfully progressed 'Pet Me' ailment while pet was focused")
         return true
     else
         warn("Failed to progress 'Pet Me' ailment: " .. tostring(err))
         return false
     end
+end
+
+-- Wait for condition with timeout
+local function waitForCondition(conditionFunc, timeout, checkInterval)
+    timeout = timeout or 5
+    checkInterval = checkInterval or 0.1
+    local startTime = tick()
+    
+    while tick() - startTime < timeout do
+        if conditionFunc() then
+            return true
+        end
+        wait(checkInterval)
+    end
+    return false
 end
 
 -- Main function to test each step
@@ -142,12 +174,16 @@ local function testPetMeAilment(petUniqueID)
         return
     end
 
-    -- Check if the pet is focused
-    if not isPetFocused(petModel) then
-        warn("Pet is not focused")
+    -- Wait for focus to be properly applied
+    local focused = waitForCondition(function()
+        return isPetFocused(petModel)
+    end, 3)
+    
+    if not focused then
+        warn("Pet is not focused after waiting")
         return
     end
-    print("Pet is focused")
+    print("Pet is focused and ready for ailment progression")
 
     -- Check the current progress of the "Pet Me" ailment
     local currentProgress = getPetMeProgress(petUniqueID)
@@ -156,17 +192,29 @@ local function testPetMeAilment(petUniqueID)
         return
     end
 
-    -- Progress the ailment
-    success = progressPetMeAilment(petUniqueID)
+    -- Progress the ailment while ensuring pet remains focused
+    success = progressPetMeAilment(petUniqueID, petModel)
     if not success then
         warn("Failed to progress 'Pet Me' ailment")
         return
     end
 
+    -- Wait a moment for the progress to update
+    wait(0.3)
+
     -- Check the progress again
-    currentProgress = getPetMeProgress(petUniqueID)
-    if currentProgress then
-        print("Updated progress: " .. currentProgress)
+    local updatedProgress = getPetMeProgress(petUniqueID)
+    if updatedProgress then
+        print("Updated progress: " .. tostring(updatedProgress))
+        
+        -- Check if progress actually increased
+        if updatedProgress > currentProgress then
+            print("SUCCESS: 'Pet Me' ailment progress increased from " .. tostring(currentProgress) .. " to " .. tostring(updatedProgress))
+        else
+            print("Progress did not increase. Current: " .. tostring(updatedProgress))
+        end
+    else
+        warn("Failed to get updated progress after progression attempt")
     end
 end
 
