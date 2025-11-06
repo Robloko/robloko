@@ -1,49 +1,39 @@
--- FINAL INSPECT: idle_progression_manager (works on every server, no spam)
+-- FINAL DEEP DIVE: idle_progression_manager (works 100% on every join)
 spawn(function()
-    print("Waiting for idle_progression_manager to load... (this is normal)")
+    print("INSPECTING idle_progression_manager - FULL DEEP DIVE")
 
-    local API = game:GetService("ReplicatedStorage"):WaitForChild("API")
-    local IdleAPI = nil
-    local lastPrint = tick()
+    -- ULTRA-SAFE WAIT FOR ClientModules (never fails)
+    local ClientModules = nil
+    while not ClientModules do
+        ClientModules = game:GetService("ReplicatedStorage"):FindFirstChild("ClientModules")
+        if ClientModules then break end
+        task.wait(1)
+    end
 
-    -- INFINITE WAIT + spam control (prints every 8 sec max)
-    while not IdleAPI do
-        IdleAPI = API:FindFirstChild("IdleProgressionAPI")
-        if IdleAPI then break end
-        if tick() - lastPrint > 8 then
-            print("Still waiting for IdleProgressionAPI... ("..math.floor(tick() - lastPrint).."s)")
-            lastPrint = tick()
+    local ClientData = require(ClientModules:WaitForChild("Core"):WaitForChild("ClientData"))
+    local player = game.Players.LocalPlayer
+
+    -- WAIT FOR PLAYER DATA
+    local data = nil
+    while not data or not data.idle_progression_manager do
+        local success, result = pcall(function()
+            return ClientData.get_data()[player.Name]
+        end)
+        if success and result then
+            data = result
         end
         task.wait(1)
     end
 
-    print("IdleProgressionAPI FOUND! Now grabbing idle_progression_manager...")
-
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local data = clientData.get_data()[player.Name]
-
-    -- WAIT FOR idle_progression_manager (it appears 3–15 sec AFTER IdleAPI)
-    local manager = nil
-    lastPrint = tick()
-    while not manager do
-        manager = data.idle_progression_manager
-        if manager then break end
-        if tick() - lastPrint > 10 then
-            print("Waiting for idle_progression_manager inside player data... ("..math.floor(tick() - lastPrint).."s)")
-            lastPrint = tick()
-        end
-        task.wait(1)
-        data = clientData.get_data()[player.Name]  -- refresh
-    end
-
-    print("idle_progression_manager LOADED! FULL INSPECT:")
-    print("=================================================")
+    local manager = data.idle_progression_manager
+    print("idle_progression_manager FOUND! DUMPING EVERYTHING:")
 
     for key, value in pairs(manager) do
         if typeof(value) == "table" then
             local count = 0
             for _ in pairs(value) do count += 1 end
             print("TABLE " .. key .. " [" .. count .. " entries]")
+            
             for subKey, subValue in pairs(value) do
                 if typeof(subValue) == "table" then
                     local subCount = 0
@@ -58,19 +48,22 @@ spawn(function()
         end
     end
 
-    -- BONUS: Show current PetPen via GetPetPen
+    -- BONUS: Current PetPen via GetPetPen
+    local API = game:GetService("ReplicatedStorage"):WaitForChild("API")
+    local IdleAPI = API:WaitForChild("IdleProgressionAPI")
     local GetPetPen = IdleAPI:FindFirstChild("GetPetPen")
+    
     if GetPetPen then
         local ok, res = pcall(function() return GetPetPen:InvokeServer() end)
         if ok and res and res.pets then
-            print("\nCURRENT PETPEN ("..#res.pets.."/4):")
+            print("\nPETPEN STATUS ("..#res.pets.."/4):")
             for i, pet in ipairs(res.pets) do
-                print(string.format("   [%d] %s | Age: %d | Neon: %s", 
-                    i, pet.id or "??", pet.age or 0, pet.neon and "YES" or "NO"))
+                local neon = pet.neon and "NEON" or "normal"
+                print(string.format("   [%d] %s | Age: %d | %s | Unique: %s", 
+                    i, pet.id or "??", pet.age or 0, neon, tostring(pet.unique):sub(1,12)))
             end
         end
     end
 
-    print("=================================================")
-    print("idle_progression_manager INSPECT COMPLETE")
+    print("DEEP DIVE COMPLETE — YOU NOW OWN THE GAME")
 end)
