@@ -5,184 +5,192 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to find and print pet rarities
-local function findAndPrintPetRarities()
+-- Function to deeply examine pet data structure for rarity
+local function deeplyExaminePetRarity()
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         
         if playerData and playerData.inventory and playerData.inventory.pets then
-            print("🎯 FOUND PETS INVENTORY!")
-            print("Total pets: " .. table.count(playerData.inventory.pets))
+            print("🎯 DEEP EXAMINATION OF PET DATA STRUCTURE:")
             
-            local rarityCounts = {
-                Common = 0,
-                Uncommon = 0,
-                Rare = 0,
-                ["Ultra-Rare"] = 0,
-                Legendary = 0,
-                Unknown = 0
-            }
-            
-            -- Check first pet to see data structure
+            -- Examine first pet in detail
             for petUniqueID, petData in pairs(playerData.inventory.pets) do
-                print("🔍 EXAMINING PET: " .. tostring(petData.id))
+                print("")
+                print("🔍 DEEP EXAMINING PET: " .. tostring(petData.id))
                 print("Unique ID: " .. tostring(petUniqueID))
                 
-                -- Print all fields in petData
-                print("📋 Pet data fields:")
-                for key, value in pairs(petData) do
-                    if type(value) == "table" then
-                        print("  " .. key .. " = [TABLE]")
-                        -- Print table contents
-                        for subKey, subValue in pairs(value) do
-                            print("    " .. subKey .. " = " .. tostring(subValue))
-                        end
-                    else
-                        print("  " .. key .. " = " .. tostring(value))
-                    end
-                end
-                
-                -- Try to find rarity
-                local rarity = "Unknown"
-                
-                -- Check common rarity field names
-                if petData.rarity then
-                    rarity = tostring(petData.rarity)
-                    print("🎉 Found rarity in 'rarity' field: " .. rarity)
-                elseif petData.properties and petData.properties.rarity then
-                    rarity = tostring(petData.properties.rarity)
-                    print("🎉 Found rarity in 'properties.rarity' field: " .. rarity)
-                elseif petData.r then
-                    rarity = tostring(petData.r)
-                    print("🎉 Found rarity in 'r' field: " .. rarity)
-                else
-                    print("❌ No obvious rarity field found")
+                -- Function to recursively print table structure
+                local function printTable(t, indent, maxDepth, currentDepth)
+                    indent = indent or 0
+                    currentDepth = currentDepth or 0
+                    maxDepth = maxDepth or 3
                     
-                    -- Check if rarity is in any string field
-                    for key, value in pairs(petData) do
-                        if type(value) == "string" then
-                            local lowerValue = value:lower()
-                            if string.find(lowerValue, "common") or 
-                               string.find(lowerValue, "uncommon") or 
-                               string.find(lowerValue, "rare") or 
-                               string.find(lowerValue, "legendary") then
-                                rarity = value
-                                print("🎉 Found rarity in '" .. key .. "' field: " .. rarity)
-                                break
+                    if currentDepth > maxDepth then
+                        print(string.rep("  ", indent) .. "... (max depth reached)")
+                        return
+                    end
+                    
+                    for key, value in pairs(t) do
+                        local indentStr = string.rep("  ", indent)
+                        if type(value) == "table" then
+                            print(indentStr .. key .. ": [TABLE]")
+                            printTable(value, indent + 1, maxDepth, currentDepth + 1)
+                        else
+                            -- Highlight potential rarity fields
+                            local displayValue = tostring(value)
+                            if type(value) == "string" and (
+                                string.find(string.lower(displayValue), "common") or
+                                string.find(string.lower(displayValue), "uncommon") or
+                                string.find(string.lower(displayValue), "rare") or
+                                string.find(string.lower(displayValue), "legendary") or
+                                string.find(string.lower(displayValue), "basic") or
+                                string.find(string.lower(displayValue), "epic") or
+                                string.find(string.lower(displayValue), "mythic")
+                            ) then
+                                displayValue = "🎉 " .. displayValue .. " 🎉"  -- Highlight potential rarity
                             end
+                            
+                            if key == "rarity" or key == "r" or key == "tier" then
+                                displayValue = "🔥 " .. displayValue .. " 🔥"  -- Highlight rarity fields
+                            end
+                            
+                            print(indentStr .. key .. ": " .. displayValue)
                         end
                     end
                 end
                 
-                -- Categorize rarity
-                local lowerRarity = rarity:lower()
-                if string.find(lowerRarity, "common") then
-                    rarityCounts.Common = rarityCounts.Common + 1
-                elseif string.find(lowerRarity, "uncommon") then
-                    rarityCounts.Uncommon = rarityCounts.Uncommon + 1
-                elseif string.find(lowerRarity, "rare") and not string.find(lowerRarity, "ultra") then
-                    rarityCounts.Rare = rarityCounts.Rare + 1
-                elseif string.find(lowerRarity, "ultra") then
-                    rarityCounts["Ultra-Rare"] = rarityCounts["Ultra-Rare"] + 1
-                elseif string.find(lowerRarity, "legendary") then
-                    rarityCounts.Legendary = rarityCounts.Legendary + 1
-                else
-                    rarityCounts.Unknown = rarityCounts.Unknown + 1
-                end
-                
-                print("🏷️ Final rarity: " .. rarity)
-                print("---")
-                break -- Only check first pet for structure
+                -- Print complete structure of the pet
+                printTable(petData)
+                break -- Only examine first pet
             end
-            
-            -- Print rarity summary
-            print("")
-            print("📊 RARITY SUMMARY:")
-            for rarity, count in pairs(rarityCounts) do
-                if count > 0 then
-                    print("  " .. rarity .. ": " .. count)
-                end
-            end
-            
-            return true
-        else
-            print("❌ No pets found in inventory")
-            return false
         end
     end)
     
     if not success then
         print("❌ Error: " .. tostring(data))
-        return false
     end
 end
 
--- Function to get all pets with their rarities
-local function getAllPetsWithRarities()
-    local pets = {}
-    
+-- Function to search for rarity in all possible field names
+local function searchAllRarityFields()
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         
         if playerData and playerData.inventory and playerData.inventory.pets then
+            print("🔍 SEARCHING ALL POSSIBLE RARITY FIELDS:")
+            
+            local possibleRarityFields = {
+                "rarity", "r", "tier", "grade", "quality", "rank", "type", "kind",
+                "category", "class", "level", "rarityType", "petRarity"
+            }
+            
             for petUniqueID, petData in pairs(playerData.inventory.pets) do
-                local rarity = "Unknown"
+                print("")
+                print("🐾 PET: " .. tostring(petData.id))
                 
-                -- Find rarity using same method as above
-                if petData.rarity then
-                    rarity = tostring(petData.rarity)
-                elseif petData.properties and petData.properties.rarity then
-                    rarity = tostring(petData.properties.rarity)
-                elseif petData.r then
-                    rarity = tostring(petData.r)
+                local foundRarity = false
+                
+                -- Check all possible field names
+                for _, fieldName in pairs(possibleRarityFields) do
+                    if petData[fieldName] then
+                        print("🎉 Found '" .. fieldName .. "' field: " .. tostring(petData[fieldName]))
+                        foundRarity = true
+                    end
+                    
+                    -- Check in properties table
+                    if petData.properties and petData.properties[fieldName] then
+                        print("🎉 Found 'properties." .. fieldName .. "' field: " .. tostring(petData.properties[fieldName]))
+                        foundRarity = true
+                    end
                 end
                 
-                table.insert(pets, {
-                    uniqueID = petUniqueID,
-                    name = petData.id,
-                    rarity = rarity,
-                    age = petData.properties and petData.properties.age or 0,
-                    neon = petData.properties and petData.properties.neon or false,
-                    megaNeon = petData.properties and petData.properties.mega_neon or false
-                })
+                -- If no standard fields found, search all string values
+                if not foundRarity then
+                    print("🔎 Searching all string values for rarity keywords...")
+                    
+                    local function searchStrings(t, prefix)
+                        for key, value in pairs(t) do
+                            if type(value) == "string" then
+                                local lowerValue = string.lower(value)
+                                if string.find(lowerValue, "common") or
+                                   string.find(lowerValue, "uncommon") or
+                                   string.find(lowerValue, "rare") or
+                                   string.find(lowerValue, "legendary") or
+                                   string.find(lowerValue, "basic") or
+                                   string.find(lowerValue, "epic") or
+                                   string.find(lowerValue, "mythic") or
+                                   string.find(lowerValue, "ultra") then
+                                    print("🎉 Found rarity keyword in '" .. prefix .. key .. "': " .. value)
+                                    foundRarity = true
+                                end
+                            elseif type(value) == "table" then
+                                searchStrings(value, prefix .. key .. ".")
+                            end
+                        end
+                    end
+                    
+                    searchStrings(petData, "")
+                end
+                
+                if not foundRarity then
+                    print("❌ No rarity information found for this pet")
+                end
+                
+                break -- Only check first pet
             end
         end
     end)
     
-    return pets
+    if not success then
+        print("❌ Error: " .. tostring(data))
+    end
 end
 
--- Function to print all pets and their rarities
-local function printAllPetRarities()
-    local pets = getAllPetsWithRarities()
-    
-    if #pets == 0 then
-        print("❌ No pets found")
-        return
-    end
-    
-    print("🐾 ALL PETS AND THEIR RARITIES:")
-    print("================================")
-    
-    for i, pet in ipairs(pets) do
-        local neonStatus = ""
-        if pet.megaNeon then
-            neonStatus = " 🌟MEGA NEON🌟"
-        elseif pet.neon then
-            neonStatus = " ✨NEON✨"
-        end
+-- Function to check if rarity might be in the pet name or ID
+local function checkNameForRarity()
+    local success, data = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
         
-        print(string.format("%d. %s", i, pet.name))
-        print(string.format("   Rarity: %s | Age: %d%s", pet.rarity, pet.age, neonStatus))
-        print(string.format("   Unique ID: %s", pet.uniqueID))
-        print("   ---")
-    end
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            print("🔍 CHECKING PET NAMES FOR RARITY PATTERNS:")
+            
+            for petUniqueID, petData in pairs(playerData.inventory.pets) do
+                local petName = tostring(petData.id)
+                local lowerName = string.lower(petName)
+                
+                print("🐾 " .. petName)
+                
+                -- Check for rarity patterns in the name
+                if string.find(lowerName, "legendary") then
+                    print("   🎉 Rarity: Legendary (from name)")
+                elseif string.find(lowerName, "epic") then
+                    print("   🎉 Rarity: Epic (from name)")
+                elseif string.find(lowerName, "rare") then
+                    print("   🎉 Rarity: Rare (from name)")
+                elseif string.find(lowerName, "uncommon") then
+                    print("   🎉 Rarity: Uncommon (from name)")
+                elseif string.find(lowerName, "common") then
+                    print("   🎉 Rarity: Common (from name)")
+                elseif string.find(lowerName, "basic") then
+                    print("   🎉 Rarity: Basic (from name)")
+                elseif string.find(lowerName, "mythic") then
+                    print("   🎉 Rarity: Mythic (from name)")
+                else
+                    print("   ❓ Rarity: Unknown (no pattern in name)")
+                end
+            end
+        end
+    end)
     
-    print("Total pets: " .. #pets)
+    if not success then
+        print("❌ Error: " .. tostring(data))
+    end
 end
 
--- Run the functions
-findAndPrintPetRarities()
-printAllPetRarities()
+-- Run all examination functions
+deeplyExaminePetRarity()
+searchAllRarityFields()
+checkNameForRarity()
