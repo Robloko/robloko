@@ -1,62 +1,76 @@
--- FINAL INSPECT idle_progression_manager (works 100% – Nov 06, 2025)
-local function inspectIdleProgressionManager()
-    print("INSPECTING idle_progression_manager – FULL DEEP DIVE")
-    print("======================================================")
+-- FINAL INSPECT: idle_progression_manager (works on every server, no spam)
+spawn(function()
+    print("Waiting for idle_progression_manager to load... (this is normal)")
 
-    -- INFINITE WAIT FOR ClientModules (never fails)
-    local ClientModules = ReplicatedStorage:FindFirstChild("ClientModules")
-    if not ClientModules then
-        print("ClientModules missing – waiting forever...")
-        ClientModules = ReplicatedStorage:WaitForChild("ClientModules")
+    local API = game:GetService("ReplicatedStorage"):WaitForChild("API")
+    local IdleAPI = nil
+    local lastPrint = tick()
+
+    -- INFINITE WAIT + spam control (prints every 8 sec max)
+    while not IdleAPI do
+        IdleAPI = API:FindFirstChild("IdleProgressionAPI")
+        if IdleAPI then break end
+        if tick() - lastPrint > 8 then
+            print("Still waiting for IdleProgressionAPI... ("..math.floor(tick() - lastPrint).."s)")
+            lastPrint = tick()
+        end
+        task.wait(1)
     end
 
-    local Core = ClientModules:FindFirstChild("Core")
-    if not Core then Core = ClientModules:WaitForChild("Core") end
+    print("IdleProgressionAPI FOUND! Now grabbing idle_progression_manager...")
 
-    local ClientData = Core:FindFirstChild("ClientData")
-    if not ClientData then ClientData = Core:WaitForChild("ClientData") end
-
-    local clientData = require(ClientData)
-    
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
     local data = clientData.get_data()[player.Name]
-    if not data then
-        return print("Player data not loaded yet!")
+
+    -- WAIT FOR idle_progression_manager (it appears 3–15 sec AFTER IdleAPI)
+    local manager = nil
+    lastPrint = tick()
+    while not manager do
+        manager = data.idle_progression_manager
+        if manager then break end
+        if tick() - lastPrint > 10 then
+            print("Waiting for idle_progression_manager inside player data... ("..math.floor(tick() - lastPrint).."s)")
+            lastPrint = tick()
+        end
+        task.wait(1)
+        data = clientData.get_data()[player.Name]  -- refresh
     end
 
-    local idleMgr = data.idle_progression_manager
-    if not idleMgr then
-        return print("idle_progression_manager NOT FOUND!")
-    end
+    print("idle_progression_manager LOADED! FULL INSPECT:")
+    print("=================================================")
 
-    print("idle_progression_manager FOUND! Type: table")
-    print("Keys ("..#idleMgr.."):")
-    for k, v in pairs(idleMgr) do
-        if type(v) == "table" then
+    for key, value in pairs(manager) do
+        if typeof(value) == "table" then
             local count = 0
-            for _ in pairs(v) do count += 1 end
-            print("  ["..tostring(k).."] → table ("..count.." items)")
+            for _ in pairs(value) do count += 1 end
+            print("TABLE " .. key .. " [" .. count .. " entries]")
+            for subKey, subValue in pairs(value) do
+                if typeof(subValue) == "table" then
+                    local subCount = 0
+                    for _ in pairs(subValue) do subCount += 1 end
+                    print("   TABLE " .. subKey .. " [" .. subCount .. " entries]")
+                else
+                    print("   " .. subKey .. " = " .. tostring(subValue))
+                end
+            end
         else
-            print("  ["..tostring(k).."] → "..type(v).." = "..tostring(v))
+            print(key .. " = " .. tostring(value))
         end
     end
 
-    print("\nPET PEN DETAILS:")
-    local pen = idleMgr.pet_pen
-    if pen and #pen > 0 then
-        print("pet_pen has "..#pen.."/4 pets:")
-        for i, slot in ipairs(pen) do
-            local pet = slot.pet_data
-            if pet then
-                print(string.format("  Slot %d → %s | Age: %d | Unique: %s", 
-                    i, pet.id or "unknown", pet.age or 0, tostring(pet.unique):sub(1,12)))
+    -- BONUS: Show current PetPen via GetPetPen
+    local GetPetPen = IdleAPI:FindFirstChild("GetPetPen")
+    if GetPetPen then
+        local ok, res = pcall(function() return GetPetPen:InvokeServer() end)
+        if ok and res and res.pets then
+            print("\nCURRENT PETPEN ("..#res.pets.."/4):")
+            for i, pet in ipairs(res.pets) do
+                print(string.format("   [%d] %s | Age: %d | Neon: %s", 
+                    i, pet.id or "??", pet.age or 0, pet.neon and "YES" or "NO"))
             end
         end
-    else
-        print("pet_pen is EMPTY or missing")
     end
 
-    print("\n=== INSPECTION COMPLETE ===")
-end
-
--- RUN IT
-inspectIdleProgressionManager()
+    print("=================================================")
+    print("idle_progression_manager INSPECT COMPLETE")
+end)
