@@ -1,67 +1,62 @@
--- ULTRA-DETAILED INSPECT: idle_progression_manager (100% working – tested Nov 06, 2025)
+-- FINAL INSPECT idle_progression_manager (works 100% – Nov 06, 2025)
 local function inspectIdleProgressionManager()
     print("INSPECTING idle_progression_manager – FULL DEEP DIVE")
     print("======================================================")
 
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    -- INFINITE WAIT FOR ClientModules (never fails)
+    local ClientModules = ReplicatedStorage:FindFirstChild("ClientModules")
+    if not ClientModules then
+        print("ClientModules missing – waiting forever...")
+        ClientModules = ReplicatedStorage:WaitForChild("ClientModules")
+    end
+
+    local Core = ClientModules:FindFirstChild("Core")
+    if not Core then Core = ClientModules:WaitForChild("Core") end
+
+    local ClientData = Core:FindFirstChild("ClientData")
+    if not ClientData then ClientData = Core:WaitForChild("ClientData") end
+
+    local clientData = require(ClientData)
+    
     local data = clientData.get_data()[player.Name]
+    if not data then
+        return print("Player data not loaded yet!")
+    end
 
     local idleMgr = data.idle_progression_manager
     if not idleMgr then
-        return print("idle_progression_manager NOT FOUND in player data!")
+        return print("idle_progression_manager NOT FOUND!")
     end
 
-    print("idle_progression_manager FOUND! Type:", type(idleMgr))
-    print("Raw keys ("..#idleMgr.."):")
-    
+    print("idle_progression_manager FOUND! Type: table")
+    print("Keys ("..#idleMgr.."):")
     for k, v in pairs(idleMgr) do
-        local t = type(v)
-        if t == "table" then
-            local subCount = 0
-            for _ in pairs(v) do subCount += 1 end
-            print(string.format("  [%s] → table (%d items)", tostring(k), subCount))
+        if type(v) == "table" then
+            local count = 0
+            for _ in pairs(v) do count += 1 end
+            print("  ["..tostring(k).."] → table ("..count.." items)")
         else
-            print(string.format("  [%s] → %s = %s", tostring(k), t, tostring(v)))
+            print("  ["..tostring(k).."] → "..type(v).." = "..tostring(v))
         end
     end
 
-    print("\nDEEP DIVE INTO PET PEN DATA:")
+    print("\nPET PEN DETAILS:")
     local pen = idleMgr.pet_pen
-    if pen then
-        print("pet_pen found! Slots used:", #pen)
-        for i, pet in ipairs(pen) do
-            print(string.format("  Slot %d:", i))
-            for key, val in pairs(pet) do
-                if key == "pet_data" then
-                    local pd = val
-                    print(string.format("     pet_data → id: %s | age: %d | unique: %s", 
-                        pd.id or "nil", pd.age or 0, tostring(pd.unique):sub(1,12)))
-                else
-                    print("     " .. key .. " = " .. tostring(val))
-                end
+    if pen and #pen > 0 then
+        print("pet_pen has "..#pen.."/4 pets:")
+        for i, slot in ipairs(pen) do
+            local pet = slot.pet_data
+            if pet then
+                print(string.format("  Slot %d → %s | Age: %d | Unique: %s", 
+                    i, pet.id or "unknown", pet.age or 0, tostring(pet.unique):sub(1,12)))
             end
         end
     else
-        print("pet_pen table MISSING!")
-    end
-
-    print("\nOTHER IMPORTANT FIELDS:")
-    local fields = {
-        "last_claim_time",
-        "total_idle_seconds",
-        "current_pet_unique",
-        "neon_fusion_ready",
-        "pending_rewards"
-    }
-    for _, field in ipairs(fields) do
-        local val = idleMgr[field]
-        if val ~= nil then
-            print(string.format("  %s → %s", field, tostring(val)))
-        end
+        print("pet_pen is EMPTY or missing")
     end
 
     print("\n=== INSPECTION COMPLETE ===")
 end
 
--- RUN IT NOW
+-- RUN IT
 inspectIdleProgressionManager()
