@@ -5,189 +5,52 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to find numeric or hidden rarity values
-local function findNumericRarity()
+-- Simple function to inspect pets inventory
+local function inspectPets()
+    print("🔍 INSPECTING PETS INVENTORY")
+    print("=============================")
+    
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        
-        if playerData and playerData.inventory and playerData.inventory.pets then
-            print("🔍 SEARCHING FOR NUMERIC/HIDDEN RARITY VALUES:")
-            
-            -- Check first few pets
-            local count = 0
-            for petUniqueID, petData in pairs(playerData.inventory.pets) do
-                count = count + 1
-                if count > 3 then break end -- Check first 3 pets
-                
-                print("")
-                print("🐾 PET: " .. tostring(petData.id))
-                
-                -- Look for numeric values that might represent rarity
-                local numericFields = {}
-                local allFields = {}
-                
-                -- Recursive function to find all fields
-                local function findAllFields(t, prefix)
-                    for key, value in pairs(t) do
-                        local fullKey = prefix .. key
-                        allFields[fullKey] = value
-                        
-                        if type(value) == "number" then
-                            table.insert(numericFields, {key = fullKey, value = value})
-                        elseif type(value) == "table" then
-                            findAllFields(value, fullKey .. ".")
-                        end
-                    end
-                end
-                
-                findAllFields(petData, "")
-                
-                -- Print numeric fields (potential rarity tiers)
-                if #numericFields > 0 then
-                    print("🔢 Numeric fields found:")
-                    for _, field in ipairs(numericFields) do
-                        print("   " .. field.key .. " = " .. field.value)
-                    end
-                else
-                    print("❌ No numeric fields found")
-                end
-                
-                -- Print ALL fields for this pet
-                print("📋 All fields in this pet:")
-                for fieldName, fieldValue in pairs(allFields) do
-                    if type(fieldValue) ~= "table" then
-                        print("   " .. fieldName .. " = " .. tostring(fieldValue))
-                    end
-                end
-            end
-        end
+        return clientData.get_data()[player.Name]
     end)
     
-    if not success then
-        print("❌ Error: " .. tostring(data))
+    if not success or not data then
+        print("❌ Failed to get player data")
+        return
     end
-end
-
--- Function to check if rarity is calculated from other properties
-local function checkRarityFromProperties()
-    local success, data = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
+    
+    if not data.inventory or not data.inventory.pets then
+        print("❌ No pets found in inventory")
+        return
+    end
+    
+    local petCount = 0
+    for _ in pairs(data.inventory.pets) do
+        petCount = petCount + 1
+    end
+    
+    print("📊 Total pets: " .. petCount)
+    print("")
+    
+    -- Show first 10 pets with basic info
+    local count = 0
+    for petUniqueID, petData in pairs(data.inventory.pets) do
+        count = count + 1
+        if count > 10 then
+            print("... and " .. (petCount - 10) .. " more pets")
+            break
+        end
         
-        if playerData and playerData.inventory and playerData.inventory.pets then
-            print("🔍 CHECKING IF RARITY IS CALCULATED FROM PROPERTIES:")
-            
-            for petUniqueID, petData in pairs(playerData.inventory.pets) do
-                print("")
-                print("🐾 PET: " .. tostring(petData.id))
-                
-                if petData.properties then
-                    print("📊 Properties analysis:")
-                    
-                    -- Check for age-based rarity
-                    local age = petData.properties.age or 0
-                    print("   Age: " .. age)
-                    
-                    -- Check neon status
-                    local isNeon = petData.properties.neon or false
-                    local isMegaNeon = petData.properties.mega_neon or false
-                    print("   Neon: " .. tostring(isNeon))
-                    print("   Mega Neon: " .. tostring(isMegaNeon))
-                    
-                    -- Check for other properties that might indicate rarity
-                    local valuableProperties = {}
-                    for propKey, propValue in pairs(petData.properties) do
-                        if type(propValue) == "boolean" and propValue == true then
-                            table.insert(valuableProperties, propKey)
-                        elseif type(propValue) == "number" and propValue > 1 then
-                            table.insert(valuableProperties, propKey .. "=" .. tostring(propValue))
-                        end
-                    end
-                    
-                    if #valuableProperties > 0 then
-                        print("   Special properties: " .. table.concat(valuableProperties, ", "))
-                    end
-                    
-                    -- Try to guess rarity based on properties
-                    local guessedRarity = "Common"
-                    if isMegaNeon then
-                        guessedRarity = "Legendary"
-                    elseif isNeon then
-                        guessedRarity = "Rare"
-                    elseif age >= 5 then
-                        guessedRarity = "Uncommon"
-                    end
-                    
-                    print("   🤔 Guessed rarity from properties: " .. guessedRarity)
-                else
-                    print("❌ No properties table found")
-                end
-                
-                break -- Only check first pet
-            end
-        end
-    end)
-    
-    if not success then
-        print("❌ Error: " .. tostring(data))
+        print("🐾 " .. petData.id)
+        print("   Unique ID: " .. petUniqueID)
+        print("   Age: " .. (petData.properties and petData.properties.age or "?"))
+        print("   Neon: " .. tostring(petData.properties and petData.properties.neon or false))
+        print("   Mega Neon: " .. tostring(petData.properties and petData.properties.mega_neon or false))
+        print("   XP: " .. (petData.properties and petData.properties.xp or "?"))
+        print("   ---")
     end
 end
 
--- Function to check external rarity data (might be in a different module)
-local function checkExternalRarityData()
-    print("🔍 CHECKING FOR EXTERNAL RARITY DATA...")
-    
-    -- Check if there's a pets database or config
-    local possibleConfigPaths = {
-        "ClientModules.Core.PetConfig",
-        "Modules.Core.PetData", 
-        "Core.PetDatabase",
-        "ClientModules.PetConfig",
-        "Modules.PetRarities",
-        "GameModules.PetData"
-    }
-    
-    for _, path in pairs(possibleConfigPaths) do
-        local success, module = pcall(function()
-            local current = ReplicatedStorage
-            for part in path:gmatch("[^%.]+") do
-                current = current:WaitForChild(part)
-            end
-            return require(current)
-        end)
-        
-        if success then
-            print("✅ Found config module: " .. path)
-            -- Check if this module has pet rarity data
-            if type(module) == "table" then
-                for key, value in pairs(module) do
-                    if type(value) == "table" and (value.rarity or value.tier) then
-                        print("🎉 Possible pet config found: " .. key)
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Check if rarity is determined by the pet's appearance in workspace
-    print("🔍 Checking workspace pets for visual clues...")
-    local petsFolder = workspace:FindFirstChild("Pets")
-    if petsFolder then
-        for _, petModel in pairs(petsFolder:GetChildren()) do
-            if petModel:FindFirstChild("Owner") and petModel.Owner.Value == player then
-                print("🐾 Your pet in workspace: " .. petModel.Name)
-                -- Check for particle effects (neon/mega neon)
-                if petModel:FindFirstChildOfClass("ParticleEmitter") then
-                    print("   ✨ Has particle effects (might be neon)")
-                end
-                break
-            end
-        end
-    end
-end
-
--- Run all detection methods
-findNumericRarity()
-checkRarityFromProperties() 
-checkExternalRarityData()
+-- Run the function
+inspectPets()
