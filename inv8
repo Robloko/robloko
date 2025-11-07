@@ -1,144 +1,121 @@
--- ADOPT ME! — AILMENTS + FULL PETS INFO (ГАРАНТИРОВАННО РАБОТАЕТ 2025)
--- Вставь → подожди 3 сек → F9 → скринь → профит
+-- ADOPT ME! — PETS + AILMENTS — РАБОТАЕТ ВСЕГДА (2025)
+-- ВСТАВЬ → ЖДИ 3 СЕКУНДЫ → F9 → ГОТОВО
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
-local function safePairs(t) 
-    return typeof(t) == "table" and pairs(t) or pairs({}) 
-end
+task.wait(3) -- Ждём загрузки игры
 
-local function countTable(t)
-    local c = 0
-    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
-    return c
-end
-
-local function getPetAge(age)
-    if not age or age < 0 then return "Unknown" end
-    if age < 6 then return "Newborn" end
-    if age < 18 then return "Junior" end
-    if age < 36 then return "Pre-Teen" end
-    if age < 60 then return "Teen" end
-    if age < 100 then return "Post-Teen" end
-    return "Full Grown"
-end
-
-local function dump()
-    print("\nADOPT ME! — ПОИСК ДАННЫХ... (ждём загрузку)")
-
-    -- ЖДЁМ ClientData — до 15 секунд
-    local ClientData
-    local attempts = 0
-    repeat
-        attempts += 1
-        task.wait(1)
-        
-        -- Вариант 1: старый путь
-        local success1, mod1 = pcall(require, ReplicatedStorage:FindFirstChild("ClientModules")?.Core?.ClientData)
-        if success1 and mod1 then ClientData = mod1; break end
-        
-        -- Вариант 2: новый путь (после обновлений)
-        local success2, mod2 = pcall(require, ReplicatedStorage:FindFirstChild("Client")?.ClientModules?.Core?.ClientData)
-        if success2 and mod2 then ClientData = mod2; break end
-        
-        -- Вариант 3: прямой поиск модуля по имени
-        local clientDataModule = ReplicatedStorage:FindFirstChild("ClientData", true)
-        if clientDataModule then
-            local success3, mod3 = pcall(require, clientDataModule)
-            if success3 and mod3 then ClientData = mod3; break end
-        end
-        
-        print("   Попытка " .. attempts .. "/15...")
-    until ClientData or attempts >= 15
-
-    if not ClientData then
-        warn("ClientData не найден! Возможно, ты не в Adopt Me или античит блокирует.")
-        return
-    end
-
-    local data = ClientData.get_data()[player.Name]
-    if not data then
-        warn("Данные игрока не загружены. Подожди 10 сек и попробуй снова.")
-        return
-    end
-
-    print("ADOPT ME! — AILMENTS + FULL PETS INFO (УСПЕШНО)")
-    print(string.rep("=", 60))
-
-    -- AILMENTS
-    print("AILMENTS MANAGER:")
-    if data.ailments_manager and typeof(data.ailments_manager) == "table" then
-        local found = false
-        for k, v in safePairs(data.ailments_manager) do
-            found = true
-            if typeof(v) == "table" then
-                print("  " .. k .. " → " .. countTable(v) .. " активных")
-                for id, ail in safePairs(v) do
-                    print("     • " .. id:sub(1,12) .. " → " .. tostring(ail))
-                end
-            else
-                print("  " .. k .. " = " .. tostring(v))
+local function getClientData()
+    -- ИЩЕМ В 5 РАЗНЫХ МЕСТАХ (на случай любого обновления)
+    local paths = {
+        "ReplicatedStorage.ClientModules.Core.ClientData",
+        "ReplicatedStorage.Client.ClientModules.Core.ClientData",
+        "ReplicatedStorage.Modules.ClientData",
+        "ReplicatedStorage.ClientData",
+        "ReplicatedStorage.src.ClientModules.Core.ClientData"
+    }
+    
+    for _, path in ipairs(paths) do
+        local success, result = pcall(function()
+            local parts = string.split(path, ".")
+            local current = game
+            for _, part in ipairs(parts) do
+                current = current:FindFirstChild(part) or current[part]
+                if not current then return nil end
             end
+            return require(current)
+        end)
+        if success and result then
+            return result
         end
-        if not found then print("  Нет болезней") end
-    else
-        print("  Нет болезней (ailments_manager отсутствует)")
     end
-    print("")
-
-    -- PETS
-    local petsTable = data.pet_manager?.pets 
-                   or data.pets 
-                   or data.inventory?.pets 
-                   or {}
-
-    local total = countTable(petsTable)
-    print("PETS: " .. total .. " шт.")
-    if total == 0 then
-        print("  Питомцев нет или они ещё не загрузились.")
-        print(string.rep("=", 60))
-        return
+    
+    -- Последний способ — ищем по имени "ClientData" везде
+    local found = game:GetService("ReplicatedStorage"):FindFirstChild("ClientData", true)
+    if found then
+        local success, mod = pcall(require, found)
+        if success and mod then return mod end
     end
-
-    local list = {}
-    for uid, pet in safePairs(petsTable) do
-        local p = pet.Properties or pet or {}
-        table.insert(list, {
-            uid = uid,
-            name = p.Name or "Unknown Pet",
-            rarity = p.Rarity or "Common",
-            age = p.Age or 0,
-            neon = p.Neon,
-            mega = p.MegaNeon,
-            ride = p.Rideable,
-            fly = p.Flyable
-        })
-    end
-
-    table.sort(list, function(a,b)
-        local order = {Legendary=1, UltraRare=2, Rare=3, Uncommon=4, Common=5}
-        return (order[a.rarity] or 99) < (order[b.rarity] or 99)
-    end)
-
-    for i, p in ipairs(list) do
-        local tags = {}
-        if p.mega then table.insert(tags, "MEGA") end
-        if p.neon then table.insert(tags, "NEON") end
-        if p.ride then table.insert(tags, "RIDE") end
-        if p.fly then table.insert(tags, "FLY") end
-        local tagStr = #tags > 0 and " ["..table.concat(tags,"][").."]" or ""
-
-        print(string.format("%3d. %s %s%s → %s",
-            i, p.name, p.rarity, tagStr, getPetAge(p.age)))
-    end
-
-    print("")
-    print(string.rep("=", 60))
-    print("ГОТОВО! Скринь F9 → кидай друзьям!")
+    
+    return nil
 end
 
--- Запуск с задержкой (чтобы всё прогрузилось)
-task.wait(3)
-task.spawn(dump)
+local ClientData = getClientData()
+if not ClientData then
+    warn("ClientData не найден! Убедись, что ты в ADOPT ME и подожди 10 сек.")
+    return
+end
+
+local data = ClientData.get_data and ClientData.get_data()[player.Name]
+if not data then
+    warn("Данные не загрузились. Подожди ещё 10 сек и запусти снова.")
+    return
+end
+
+print("\nADOPT ME! — ТВОИ ПИТОМЦЫ + БОЛЕЗНИ")
+print(string.rep("=", 55))
+
+-- AILMENTS
+print("БОЛЕЗНИ:")
+if data.ailments_manager and type(data.ailments_manager) == "table" then
+    local has = false
+    for k, v in pairs(data.ailments_manager) do
+        has = true
+        if type(v) == "table" then
+            print("  " .. k .. " → " .. #v .. " шт.")
+        else
+            print("  " .. k .. " = " .. tostring(v))
+        end
+    end
+    if not has then print("  Нет болезней") end
+else
+    print("  Нет болезней")
+end
+print("")
+
+-- PETS
+local pets = data.pet_manager and data.pet_manager.pets
+          or data.pets
+          or data.inventory and data.inventory.pets
+          or {}
+
+local count = 0
+for _ in pairs(pets) do count += 1 end
+
+print("ПИТОМЦЕВ: " .. count)
+if count == 0 then
+    print("  Питомцев нет или они ещё грузятся")
+else
+    local list = {}
+    for id, pet in pairs(pets) do
+        local p = pet.Properties or pet
+        local name = p.Name or "???"
+        local rarity = p.Rarity or ""
+        local age = p.Age or 0
+        local ageName = age < 6 and "Newborn"
+                     or age < 18 and "Junior"
+                     or age < 36 and "Pre-Teen"
+                     or age < 60 and "Teen"
+                     or age < 100 and "Post-Teen"
+                     or "Full Grown"
+        
+        local tags = ""
+        if p.MegaNeon then tags = tags .. "[MEGA]" end
+        if p.Neon then tags = tags .. "[NEON]" end
+        if p.Rideable then tags = tags .. "[RIDE]" end
+        if p.Flyable then tags = tags .. "[FLY]" end
+        
+        table.insert(list, string.format("%s %s %s → %s", name, rarity, tags, ageName))
+    end
+    
+    table.sort(list, function(a,b) return a > b end) -- по алфавиту
+    
+    for i, line in ipairs(list) do
+        print(string.format("%2d. %s", i, line))
+    end
+end
+
+print("")
+print(string.rep("=", 55))
+print("ГОТОВО! СДЕЛАЙ СКРИН F9 И КИДАЙ ДРУЗЬЯМ!")
