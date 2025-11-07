@@ -4,7 +4,7 @@ local function resolveBabyAilments()
     print("Starting baby ailments resolver...")
     
     while true do
-        task.wait(1) -- Wait 1 second between checks
+        task.wait(5) -- Wait 5 second between checks
 
         local success, err = pcall(function()
             -- Get the local player
@@ -63,52 +63,70 @@ local function resolveBabyAilments()
             end
             
             if not playerData.ailments_manager.baby_ailments then
-                error("baby_ailments not found in ailments_manager")
+                print("No baby ailments found - babies are healthy!")
+                return
             end
             
             print("✓ Found baby ailments data structure")
             print("Baby ailments:", playerData.ailments_manager.baby_ailments)
 
-            -- Check if there are any baby ailments
-            local hasAilments = false
-            for ailmentType, _ in pairs(playerData.ailments_manager.baby_ailments) do
-                hasAilments = true
-                break
+            -- Check if there are any active baby ailments
+            local hasActiveAilments = false
+            for ailmentType, ailmentData in pairs(playerData.ailments_manager.baby_ailments) do
+                -- Check if the ailment is actually active (not completed)
+                if ailmentData and type(ailmentData) == "table" and ailmentData.completed ~= true then
+                    hasActiveAilments = true
+                    break
+                end
             end
             
-            if not hasAilments then
-                print("No baby ailments found to resolve")
+            if not hasActiveAilments then
+                print("No active baby ailments found to resolve")
                 return
             end
 
             -- Process baby ailments
             for ailmentType, ailmentData in pairs(playerData.ailments_manager.baby_ailments) do
-                print("Found ailment:", ailmentType, "Data:", ailmentData)
+                print("Checking ailment:", ailmentType, "Data:", ailmentData)
+                
+                -- Skip if ailment is already completed
+                if ailmentData and type(ailmentData) == "table" and ailmentData.completed == true then
+                    print("Skipping completed ailment:", ailmentType)
+                    continue
+                end
                 
                 if table.find(Tasks, ailmentType) then
                     print("Attempting to resolve ailment:", ailmentType)
                     
-                    -- Find the API endpoint
-                    local addAdditive = ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
-                    if addAdditive then
-                        print("✓ Found AddAdditive API, firing...")
+                    -- Use the correct AilmentsAPI instead of MonitorAPI
+                    local completeAilment = ReplicatedStorage.API:FindFirstChild("AilmentsAPI/BabyAilmentCompleted")
+                    if completeAilment then
+                        print("✓ Found AilmentsAPI/BabyAilmentCompleted, firing...")
                         local success2, err2 = pcall(function()
-                            addAdditive:FireServer(ailmentType, 1)
+                            completeAilment:FireServer(ailmentType)
                         end)
                         
                         if success2 then
                             print("✓ Successfully resolved baby ailment:", ailmentType)
                         else
-                            warn("✗ Failed to fire AddAdditive for " .. ailmentType .. ": " .. tostring(err2))
+                            warn("✗ Failed to fire AilmentsAPI for " .. ailmentType .. ": " .. tostring(err2))
                         end
                     else
-                        warn("✗ AddAdditive API not found at path: MonitorAPI/AddAdditive")
-                        -- List available API endpoints for debugging
-                        if ReplicatedStorage:FindFirstChild("API") then
-                            print("Available API endpoints:")
-                            for _, child in ipairs(ReplicatedStorage.API:GetChildren()) do
-                                print("  - " .. child.Name)
+                        -- Alternative: Try using AddAdditive if it exists elsewhere
+                        local addAdditive = ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
+                        if addAdditive then
+                            print("✓ Found MonitorAPI/AddAdditive as alternative, firing...")
+                            local success2, err2 = pcall(function()
+                                addAdditive:FireServer(ailmentType, 1)
+                            end)
+                            
+                            if success2 then
+                                print("✓ Successfully resolved baby ailment via AddAdditive:", ailmentType)
+                            else
+                                warn("✗ Failed to fire AddAdditive for " .. ailmentType .. ": " .. tostring(err2))
                             end
+                        else
+                            warn("✗ Neither AilmentsAPI/BabyAilmentCompleted nor MonitorAPI/AddAdditive found")
                         end
                     end
                 else
@@ -123,53 +141,5 @@ local function resolveBabyAilments()
     end
 end
 
--- Test function to check the game structure
-local function debugGameStructure()
-    print("=== DEBUG GAME STRUCTURE ===")
-    
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Players = game:GetService("Players")
-    local localPlayer = Players.LocalPlayer
-    
-    print("Local Player:", localPlayer and localPlayer.Name or "None")
-    print("ReplicatedStorage contents:")
-    
-    for _, item in ipairs(ReplicatedStorage:GetChildren()) do
-        print("  - " .. item.Name .. " (" .. item.ClassName .. ")")
-    end
-    
-    -- Check if API folder exists
-    if ReplicatedStorage:FindFirstChild("API") then
-        print("API folder found, contents:")
-        for _, api in ipairs(ReplicatedStorage.API:GetChildren()) do
-            print("    - " .. api.Name)
-        end
-    else
-        print("✗ API folder not found in ReplicatedStorage")
-    end
-    
-    -- Check if ClientModules exists
-    if ReplicatedStorage:FindFirstChild("ClientModules") then
-        print("ClientModules found, contents:")
-        for _, module in ipairs(ReplicatedStorage.ClientModules:GetChildren()) do
-            print("    - " .. module.Name)
-            
-            if module:FindFirstChild("Core") then
-                print("      Core module found, contents:")
-                for _, coreItem in ipairs(module.Core:GetChildren()) do
-                    print("        - " .. coreItem.Name)
-                end
-            end
-        end
-    else
-        print("✗ ClientModules not found in ReplicatedStorage")
-    end
-    
-    print("=== END DEBUG ===")
-end
-
--- Run debug first
-debugGameStructure()
-
--- Then start the main function
+-- Start the function
 resolveBabyAilments()
