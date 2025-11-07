@@ -1,31 +1,54 @@
--- Simple PetPen Tracker
-local function trackPetPen()
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local playerData = clientData.get_data()[player.Name]
+local function getPetPenStatus()
+    local ClientData = require(game:GetService("ReplicatedStorage").ClientModules.Core.ClientData)
+    local player = game.Players.LocalPlayer
     
-    if not playerData or not playerData.active_pets then
-        debugPrint("No active_pets data found")
-        return 0
+    local data = ClientData.get_data()[player.Name]
+    if not data then return {} end
+    
+    local manager = data.idle_progression_manager
+    if not manager or not manager.active_pets then return {} end
+    
+    local petPenSlots = {}
+    
+    -- Count pets in active_pets (these are in PetPen)
+    for _, petUnique in pairs(manager.active_pets) do
+        local petData = data.inventory.pets[petUnique]
+        if petData then
+            table.insert(petPenSlots, {
+                name = petData.id,
+                age = petData.properties.age,
+                neon = petData.properties.neon or false,
+                unique = petUnique
+            })
+        end
     end
     
-    local petCount = 0
-    for petId, petData in pairs(playerData.active_pets) do
-        petCount = petCount + 1
-        debugPrint("Pet in Pen: " .. petId)
-    end
-    
-    debugPrint("Total pets in PetPen: " .. petCount .. "/4")
-    return petCount
+    return petPenSlots
 end
 
--- Even simpler one-liner version
+-- Simple usage:
+local function printPetPenStatus()
+    local slots = getPetPenStatus()
+    
+    print("🐾 PETPEN STATUS:")
+    print("Slots used: " .. #slots .. "/4")
+    
+    for i, pet in ipairs(slots) do
+        print(string.format("  [%d] %s | Age: %d | %s", 
+            i, pet.name, pet.age, pet.neon and "NEON 🌟" or "Normal"))
+    end
+    
+    for i = #slots + 1, 4 do
+        print("  [" .. i .. "] EMPTY")
+    end
+end
+
+-- Even simpler one-liner version:
 local function getPetPenCount()
-    local activePets = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name].active_pets or {}
-    local count = 0
-    for _ in pairs(activePets) do count = count + 1 end
-    return count
+    local data = require(game:GetService("ReplicatedStorage").ClientModules.Core.ClientData).get_data()[game.Players.LocalPlayer.Name]
+    return data and data.idle_progression_manager and #data.idle_progression_manager.active_pets or 0
 end
 
 -- Usage examples:
-debugPrint("Pets in Pen: " .. trackPetPen())
-debugPrint("Quick count: " .. getPetPenCount() .. "/4")
+printPetPenStatus() -- Full status
+print("Pets in PetPen: " .. getPetPenCount() .. "/4") -- Just count
