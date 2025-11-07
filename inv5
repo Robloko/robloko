@@ -1,0 +1,89 @@
+local function inspectPetPenSlots()
+    -- Wait for ClientModules and ClientData
+    local ClientModules
+    repeat
+        ClientModules = game:GetService("ReplicatedStorage"):FindFirstChild("ClientModules")
+        task.wait(1)
+    until ClientModules
+
+    local ClientData = require(ClientModules:WaitForChild("Core"):WaitForChild("ClientData"))
+    local player = game.Players.LocalPlayer
+
+    -- Wait for player data and idle_progression_manager
+    local data
+    repeat
+        local success, result = pcall(function()
+            return ClientData.get_data()[player.Name]
+        end)
+        if success and result then
+            data = result
+        end
+        task.wait(1)
+    until data and data.idle_progression_manager
+
+    local manager = data.idle_progression_manager
+    print("Dumping idle_progression_manager:")
+
+    -- Print all keys in idle_progression_manager for debugging
+    for key, value in pairs(manager) do
+        print(string.format("%s: %s", key, typeof(value)))
+        if typeof(value) == "table" then
+            print(string.format("  Dumping table: %s", key))
+            for subKey, subValue in pairs(value) do
+                print(string.format("    %s: %s", subKey, typeof(subValue)))
+            end
+        end
+    end
+
+    -- Check for PetPen data in common locations
+    local petPenSlots = {}
+
+    -- Check active_pets
+    if manager.active_pets and typeof(manager.active_pets) == "table" then
+        print("\nFound active_pets table:")
+        for i, petUnique in ipairs(manager.active_pets) do
+            if data.inventory and data.inventory.pets and data.inventory.pets[petUnique] then
+                local petData = data.inventory.pets[petUnique]
+                table.insert(petPenSlots, {
+                    name = petData.id or "Unknown",
+                    age = petData.properties and petData.properties.age or 0,
+                    neon = petData.properties and petData.properties.neon or false,
+                    unique = petUnique
+                })
+            end
+        end
+    end
+
+    -- Check for other possible PetPen tables
+    for key, value in pairs(manager) do
+        if typeof(value) == "table" and #value > 0 and key ~= "active_pets" then
+            print(string.format("\nChecking table: %s", key))
+            for i, petUnique in ipairs(value) do
+                if data.inventory and data.inventory.pets and data.inventory.pets[petUnique] then
+                    local petData = data.inventory.pets[petUnique]
+                    table.insert(petPenSlots, {
+                        name = petData.id or "Unknown",
+                        age = petData.properties and petData.properties.age or 0,
+                        neon = petData.properties and petData.properties.neon or false,
+                        unique = petUnique
+                    })
+                end
+            end
+        end
+    end
+
+    -- Print PetPen slots
+    print("\nPETPEN SLOTS:")
+    for i = 1, 4 do
+        if petPenSlots[i] then
+            local pet = petPenSlots[i]
+            print(string.format("   [%d] %s | Age: %d | %s | Unique: %s",
+                i, pet.name, pet.age, pet.neon and "NEON" or "normal", tostring(pet.unique):sub(1, 12)))
+        else
+            print(string.format("   [%d] EMPTY SLOT", i))
+        end
+    end
+end
+
+-- Call the function
+inspectPetPenSlots()
