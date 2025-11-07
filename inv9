@@ -1,0 +1,98 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Player
+local player = Players.LocalPlayer
+
+-- Function to safely get player data
+local function getPlayerData()
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
+    if not clientModules then
+        warn("ClientModules not found in ReplicatedStorage!")
+        return nil
+    end
+
+    local coreModule = clientModules:WaitForChild("Core", 5)
+    if not coreModule then
+        warn("Core module not found in ClientModules!")
+        return nil
+    end
+
+    local clientDataModule = coreModule:WaitForChild("ClientData", 5)
+    if not clientDataModule then
+        warn("ClientData module not found in Core!")
+        return nil
+    end
+
+    local clientData
+    local success, err = pcall(function()
+        clientData = require(clientDataModule)
+    end)
+
+    if not success or not clientData then
+        warn("Failed to load ClientData: " .. tostring(err))
+        return nil
+    end
+
+    local playerData
+    success, err = pcall(function()
+        playerData = clientData.get_data()[player.Name]
+    end)
+
+    if not success or not playerData then
+        warn("Failed to get player data: " .. tostring(err))
+        return nil
+    end
+
+    return playerData
+end
+
+-- Function to inspect pets inventory in compact form
+local function inspectPetsCompact()
+    print("🔍 INSPECTING PETS INVENTORY (COMPACT)")
+    print("=====================================")
+
+    local playerData = getPlayerData()
+    if not playerData then
+        print("❌ Failed to get player data")
+        return
+    end
+
+    if not playerData.inventory or not playerData.inventory.pets then
+        print("❌ No pets found in inventory")
+        return
+    end
+
+    local petCount = 0
+    for _ in pairs(playerData.inventory.pets) do
+        petCount = petCount + 1
+    end
+
+    print(string.format("📊 Total pets: %d", petCount))
+    print(string.format("%-25s %-36s %-5s %-8s %-8s", "Name", "Unique ID", "Age", "Neon", "Mega Neon"))
+    print(string.rep("-", 80))
+
+    local count = 0
+    for petUniqueID, petData in pairs(playerData.inventory.pets) do
+        count = count + 1
+        if count <= 10 then
+            local name = petData.id or "Unknown"
+            local age = petData.properties and petData.properties.age or "?"
+            local neon = petData.properties and petData.properties.neon and "✅" or "❌"
+            local megaNeon = petData.properties and petData.properties.mega_neon and "✅" or "❌"
+
+            print(string.format("%-25s %-36s %-5s %-8s %-8s",
+                name:sub(1, 25),
+                petUniqueID:sub(1, 36),
+                age,
+                neon,
+                megaNeon))
+        elseif count == 11 then
+            print(string.format("... and %d more pets", petCount - 10))
+        end
+    end
+end
+
+-- Run the function
+inspectPetsCompact()
