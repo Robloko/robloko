@@ -1,157 +1,62 @@
-local Tasks = {
-    "hungry", "sleepy", "thirsty", "bored", "dirty", 
-    "camping", "sick", "school", "hot_spring", "salon", "pizza_party"
-}
-
-local function resolveBabyAilments()
-    print("Starting baby ailments resolver...")
+local function debugAllAPIs()
+    print("=== DEBUGGING ALL APIs ===")
     
-    while true do
-        task.wait(2) -- Wait 2 seconds between checks
-
-        local success, err = pcall(function()
-            local Players = game:GetService("Players")
-            local localPlayer = Players.LocalPlayer
-            if not localPlayer then return end
-            
-            local ReplicatedStorage = game:GetService("ReplicatedStorage")
-            
-            -- Get player data
-            local clientDataModule = ReplicatedStorage:FindFirstChild("ClientModules")
-            if not clientDataModule then return end
-            
-            local coreModule = clientDataModule:FindFirstChild("Core")
-            if not coreModule then return end
-            
-            local clientDataScript = coreModule:WaitForChild("ClientData")
-            if not clientDataScript then return end
-            
-            local clientData = require(clientDataScript)
-            local allPlayerData = clientData.get_data()
-            if not allPlayerData then return end
-            
-            local playerData = allPlayerData[localPlayer.Name]
-            if not playerData then return end
-
-            -- Check for baby ailments
-            if not playerData.ailments_manager or not playerData.ailments_manager.baby_ailments then
-                print("No baby ailments found")
-                return
-            end
-
-            -- Try different API approaches for each ailment type
-            for ailmentType, ailmentData in pairs(playerData.ailments_manager.baby_ailments) do
-                if table.find(Tasks, ailmentType) then
-                    print("Attempting to fix:", ailmentType)
-                    
-                    -- METHOD 1: Try using AddAdditive with correct parameters
-                    local addAdditive = ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
-                    if addAdditive then
-                        print("Trying AddAdditive for:", ailmentType)
-                        local success1, err1 = pcall(function()
-                            -- Different ailments might need different parameters
-                            if ailmentType == "hungry" then
-                                addAdditive:FireServer("Feed", 1)
-                            elseif ailmentType == "thirsty" then
-                                addAdditive:FireServer("Drink", 1)
-                            elseif ailmentType == "sleepy" then
-                                addAdditive:FireServer("Sleep", 1)
-                            elseif ailmentType == "dirty" then
-                                addAdditive:FireServer("Clean", 1)
-                            else
-                                addAdditive:FireServer(ailmentType, 1)
-                            end
-                        end)
-                        
-                        if success1 then
-                            print("✓ AddAdditive success for:", ailmentType)
-                            task.wait(0.5) -- Small delay between actions
-                        else
-                            print("✗ AddAdditive failed:", err1)
-                        end
-                    end
-
-                    -- METHOD 2: Try different API endpoints
-                    local endpointsToTry = {
-                        "AilmentsAPI/CompleteBabyAilment",
-                        "AilmentsAPI/ResolveAilment", 
-                        "AilmentsAPI/FixAilment",
-                        "BabyAPI/CompleteTask",
-                        "BabyAPI/ResolveNeed"
-                    }
-                    
-                    for _, endpoint in ipairs(endpointsToTry) do
-                        local api = ReplicatedStorage.API:FindFirstChild(endpoint)
-                        if api then
-                            print("Trying endpoint:", endpoint, "for:", ailmentType)
-                            local success2, err2 = pcall(function()
-                                api:FireServer(ailmentType)
-                            end)
-                            
-                            if success2 then
-                                print("✓ Success with", endpoint, "for:", ailmentType)
-                                break
-                            else
-                                print("✗ Failed with", endpoint, ":", err2)
-                            end
-                        end
-                    end
-
-                    -- METHOD 3: Try the original method but with different parameters
-                    local babyAilmentCompleted = ReplicatedStorage.API:FindFirstChild("AilmentsAPI/BabyAilmentCompleted")
-                    if babyAilmentCompleted then
-                        print("Trying BabyAilmentCompleted with baby reference for:", ailmentType)
-                        
-                        -- We might need to provide which baby has the ailment
-                        -- Let's try to find baby data
-                        if playerData.babies then
-                            for babyId, babyData in pairs(playerData.babies) do
-                                local success3, err3 = pcall(function()
-                                    babyAilmentCompleted:FireServer(ailmentType, babyId)
-                                end)
-                                
-                                if success3 then
-                                    print("✓ BabyAilmentCompleted success for", ailmentType, "baby:", babyId)
-                                else
-                                    print("✗ BabyAilmentCompleted failed:", err3)
-                                end
-                            end
-                        else
-                            -- Try without baby ID
-                            local success3, err3 = pcall(function()
-                                babyAilmentCompleted:FireServer(ailmentType, 1) -- Try with count
-                            end)
-                            
-                            if success3 then
-                                print("✓ BabyAilmentCompleted success for:", ailmentType)
-                            else
-                                print("✗ BabyAilmentCompleted failed:", err3)
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-
-        if not success then
-            warn("Error in baby ailments resolver: " .. tostring(err))
-        end
-    end
-end
-
--- Debug function to see what's actually available
-local function debugAvailableAPIs()
-    print("=== AVAILABLE APIs ===")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     
-    if ReplicatedStorage:FindFirstChild("API") then
-        for _, api in ipairs(ReplicatedStorage.API:GetChildren()) do
-            print("API:", api.Name)
+    if not ReplicatedStorage:FindFirstChild("API") then
+        print("❌ API folder not found in ReplicatedStorage")
+        return
+    end
+    
+    print("📁 API folder found. Listing all endpoints:")
+    
+    local apiCount = 0
+    for _, api in ipairs(ReplicatedStorage.API:GetChildren()) do
+        apiCount = apiCount + 1
+        print(apiCount .. ". " .. api.Name)
+    end
+    
+    print("📊 Total APIs found: " .. apiCount)
+    
+    -- Specifically look for MonitorAPI and AilmentsAPI
+    print("\n🔍 Looking for specific APIs:")
+    
+    local monitorAPI = ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
+    if monitorAPI then
+        print("✅ FOUND: MonitorAPI/AddAdditive")
+    else
+        print("❌ NOT FOUND: MonitorAPI/AddAdditive")
+    end
+    
+    local ailmentsAPI = ReplicatedStorage.API:FindFirstChild("AilmentsAPI/BabyAilmentCompleted")
+    if ailmentsAPI then
+        print("✅ FOUND: AilmentsAPI/BabyAilmentCompleted")
+    else
+        print("❌ NOT FOUND: AilmentsAPI/BabyAilmentCompleted")
+    end
+    
+    -- Look for any API containing "Monitor" or "Ailment" or "Baby"
+    print("\n🔎 Searching for related APIs:")
+    
+    local relatedAPIs = {}
+    for _, api in ipairs(ReplicatedStorage.API:GetChildren()) do
+        local apiName = api.Name:lower()
+        if apiName:find("monitor") or apiName:find("ailment") or apiName:find("baby") or apiName:find("add") then
+            table.insert(relatedAPIs, api.Name)
         end
     end
     
-    print("=== END APIs ===")
+    if #relatedAPIs > 0 then
+        print("Related APIs found:")
+        for i, apiName in ipairs(relatedAPIs) do
+            print("  " .. i .. ". " .. apiName)
+        end
+    else
+        print("No related APIs found")
+    end
+    
+    print("=== DEBUG COMPLETE ===")
 end
 
-debugAvailableAPIs()
-resolveBabyAilments()
+-- Run the debug function
+debugAllAPIs()
