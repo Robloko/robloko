@@ -1,34 +1,73 @@
-local function debugSimple()
-    print("=== SIMPLE DEBUG ===")
+local function safeBruteForceAPIs()
+    print("=== SAFE BRUTE FORCE DEBUG ===")
     
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Players = game:GetService("Players")
-    local localPlayer = Players.LocalPlayer
+    local apiFolder = ReplicatedStorage.API
     
-    -- Get basic player data
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local playerData = clientData.get_data()[localPlayer.Name]
+    -- APIs that might cause rejoin/kick - SKIP THESE
+    local dangerousAPIs = {
+        "RejoinAPI", "KickAPI", "BanAPI", "TeleportAPI", 
+        "ServerHopAPI", "ResetAPI", "ShutdownAPI"
+    }
     
-    -- Just show the main keys
-    print("Player data keys:")
-    for key, value in pairs(playerData) do
-        print("- " .. key)
+    local testValues = {"hungry", "thirsty", "sleepy", "dirty", "Feed", "Drink", "Sleep", "Clean"}
+    
+    for _, api in ipairs(apiFolder:GetChildren()) do
+        -- Skip dangerous APIs
+        local skipApi = false
+        for _, dangerousName in ipairs(dangerousAPIs) do
+            if string.find(api.Name:lower(), dangerousName:lower()) then
+                print("🚫 SKIPPING DANGEROUS API: " .. api.Name)
+                skipApi = true
+                break
+            end
+        end
+        
+        if skipApi then
+            continue
+        end
+        
+        print("🔍 Testing API: " .. api.Name)
+        
+        -- Test with 1 parameter
+        for _, v1 in ipairs(testValues) do
+            print("   Trying: " .. api.Name .. "('" .. tostring(v1) .. "')")
+            
+            local success, err = pcall(function()
+                api:FireServer(v1)
+            end)
+            
+            if success then
+                print("   ✅ SUCCESS: " .. api.Name .. "('" .. tostring(v1) .. "')")
+            else
+                print("   ❌ FAILED: " .. tostring(err))
+            end
+            
+            task.wait(0.1) -- Small delay between calls
+        end
+        
+        -- Test with 2 parameters
+        for _, v1 in ipairs(testValues) do
+            print("   Trying: " .. api.Name .. "('" .. tostring(v1) .. "', 1)")
+            
+            local success, err = pcall(function()
+                api:FireServer(v1, 1)
+            end)
+            
+            if success then
+                print("   ✅ SUCCESS: " .. api.Name .. "('" .. tostring(v1) .. "', 1)")
+            else
+                print("   ❌ FAILED: " .. tostring(err))
+            end
+            
+            task.wait(0.1)
+        end
+        
+        print("--- Waiting 1 second before next API ---")
+        task.wait(1)
     end
     
-    -- Check if we have current_baby or similar
-    if playerData.current_baby then
-        print("✅ current_baby:", playerData.current_baby)
-    end
-    
-    if playerData.selected_baby then
-        print("✅ selected_baby:", playerData.selected_baby)
-    end
-    
-    if playerData.baby then
-        print("✅ baby data exists")
-    end
-    
-    print("=== DEBUG COMPLETE ===")
+    print("=== BRUTE FORCE COMPLETE ===")
 end
 
-debugSimple()
+safeBruteForceAPIs()
