@@ -1,102 +1,34 @@
-local function resolveBabyAilmentsProperly()
-    print("=== PROPER AILMENT RESOLUTION ===")
+local function debugSimple()
+    print("=== SIMPLE DEBUG ===")
     
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Players = game:GetService("Players")
     local localPlayer = Players.LocalPlayer
     
-    -- Get player data
-    local clientDataModule = ReplicatedStorage:FindFirstChild("ClientModules")
-    local coreModule = clientDataModule:FindFirstChild("Core")
-    local clientDataScript = coreModule:WaitForChild("ClientData")
-    local clientData = require(clientDataScript)
+    -- Get basic player data
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
     local playerData = clientData.get_data()[localPlayer.Name]
     
-    -- Get the API
-    local ailmentsAPI = ReplicatedStorage.API:FindFirstChild("AilmentsAPI/BabyAilmentCompleted")
-    if not ailmentsAPI then
-        print("❌ API not found")
-        return
+    -- Just show the main keys
+    print("Player data keys:")
+    for key, value in pairs(playerData) do
+        print("- " .. key)
     end
     
-    -- METHOD 1: Try to find babies and resolve ailments per baby
-    if playerData.babies then
-        print("Found babies, trying per-baby resolution...")
-        for babyId, babyData in pairs(playerData.babies) do
-            print("Processing baby:", babyId)
-            
-            -- Get current ailments for this specific baby
-            local success, currentAilments = pcall(function()
-                return clientData.get_current_ailments(babyId)
-            end)
-            
-            if success and currentAilments then
-                print("Baby " .. babyId .. " ailments:", currentAilments)
-                
-                -- Try to resolve each ailment for this specific baby
-                for ailmentType, _ in pairs(currentAilments) do
-                    print("Attempting to resolve " .. ailmentType .. " for baby " .. babyId)
-                    
-                    local success2 = pcall(function()
-                        ailmentsAPI:FireServer(ailmentType, babyId)
-                    end)
-                    
-                    if success2 then
-                        print("✅ Sent: " .. ailmentType .. " for baby " .. babyId)
-                    else
-                        print("❌ Failed: " .. ailmentType .. " for baby " .. babyId)
-                    end
-                    
-                    task.wait(0.2)
-                end
-            else
-                -- If we can't get specific baby ailments, try common ones
-                local commonAilments = {"hungry", "thirsty", "sleepy", "dirty", "bored"}
-                for _, ailment in ipairs(commonAilments) do
-                    print("Trying " .. ailment .. " for baby " .. babyId)
-                    
-                    local success2 = pcall(function()
-                        ailmentsAPI:FireServer(ailment, babyId)
-                    end)
-                    
-                    if success2 then
-                        print("✅ Sent: " .. ailment .. " for baby " .. babyId)
-                    end
-                    
-                    task.wait(0.2)
-                end
-            end
-        end
-    else
-        print("❌ No babies data found")
-        
-        -- METHOD 2: Try alternative API that might work better
-        local progressAPI = ReplicatedStorage.API:FindFirstChild("AilmentsAPI/ProgressDirtyAilment")
-        if progressAPI then
-            print("Trying ProgressDirtyAilment API...")
-            local ailments = playerData.ailments_manager.baby_ailments
-            
-            for ailmentType, ailmentData in pairs(ailments) do
-                print("Progressing ailment:", ailmentType)
-                
-                local success = pcall(function()
-                    if ailmentType == "dirty" then
-                        progressAPI:FireServer(100) -- Max progress
-                    else
-                        -- Try the regular API one more time with different approach
-                        ailmentsAPI:FireServer(ailmentType, 100) -- Try with progress value
-                    end
-                end)
-                
-                if success then
-                    print("✅ Progressed: " .. ailmentType)
-                end
-                
-                task.wait(0.3)
-            end
-        end
+    -- Check if we have current_baby or similar
+    if playerData.current_baby then
+        print("✅ current_baby:", playerData.current_baby)
     end
+    
+    if playerData.selected_baby then
+        print("✅ selected_baby:", playerData.selected_baby)
+    end
+    
+    if playerData.baby then
+        print("✅ baby data exists")
+    end
+    
+    print("=== DEBUG COMPLETE ===")
 end
 
--- Run the proper resolution
-resolveBabyAilmentsProperly()
+debugSimple()
