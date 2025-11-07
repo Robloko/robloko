@@ -1,0 +1,111 @@
+-- ADOPT ME! — PETS + AILMENTS FULL INFO DUMPER (2025)
+-- Вставь в любой эксплойт → F9 → скринь → хвастайся
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+local function safePairs(t) 
+    return typeof(t) == "table" and pairs(t) or pairs({}) 
+end
+
+local function countTable(t)
+    local c = 0
+    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
+    return c
+end
+
+local function dumpPetsAndAilments()
+    print("\nADOPT ME! — AILMENTS + FULL PETS INFO")
+    print(string.rep("=", 60))
+
+    local success, ClientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        warn("ClientData не найден! Убедись, что ты в Adopt Me!")
+        return
+    end
+
+    local data = ClientData.get_data()[player.Name]
+    if not data then warn("Нет данных игрока!") return end
+
+    -- 1. AILMENTS (болезни)
+    print("AILMENTS MANAGER:")
+    if data.ailments_manager then
+        for k, v in safePairs(data.ailments_manager) do
+            if typeof(v) == "table" then
+                local c = countTable(v)
+                print(string.format("  %s → [%d %s]", k, c, c == 1 and "item" or "items"))
+                for id, ailment in safePairs(v) do
+                    print(string.format("     • %s = %s", tostring(id), tostring(ailment)))
+                end
+            else
+                print("  " .. k .. " = " .. tostring(v))
+            end
+        end
+    else
+        print("  Нет активных болезней")
+    end
+    print("")
+
+    -- 2. PETS — ПОЛНАЯ ИНФОРМАЦИЯ
+    local petsTable = data.pet_manager and data.pet_manager.pets 
+                   or data.pets 
+                   or data.inventory and data.inventory.pets 
+                   or {}
+
+    local total = countTable(petsTable)
+    print(string.format("PETS TOTAL: %d", total))
+    print("")
+
+    local sortedPets = {}
+    for uid, pet in safePairs(petsTable) do
+        table.insert(sortedPets, {uid = uid, pet = pet})
+    end
+
+    -- Сортировка по редкости (Legendary → Ultra-Rare → и т.д.)
+    table.sort(sortedPets, function(a, b)
+        local ra = a.pet.Properties and a.pet.Properties.Rarity or ""
+        local rb = b.pet.Properties and b.pet.Properties.Rarity or ""
+        local order = {Legendary=1, UltraRare=2, Rare=3, Uncommon=4, Common=5}
+        return (order[ra] or 6) < (order[rb] or 6)
+    end)
+
+    for i, entry in ipairs(sortedPets) do
+        local uid = entry.uid
+        local p = entry.pet.Properties or entry.pet or {}
+
+        local name   = p.Name or "Unknown Pet"
+        local rarity = p.Rarity or "?"
+        local age    = p.Age and tonumber(p.Age) or -1
+        local ageStr = age == -1 and "?"
+            or age < 6 and "Newborn"
+            or age < 18 and "Junior"
+            or age < 36 and "Pre-Teen"
+            or age < 60 and "Teen"
+            or age < 100 and "Post-Teen"
+            or "Full Grown"
+
+        local neon = p.Neon and "NEON" or ""
+        local mega = p.MegaNeon and "MEGA NEON" or ""
+        local ride = p.Rideable and "RIDE" or ""
+        local fly  = p.Flyable and "FLY" or ""
+
+        local tags = {}
+        if mega ~= "" then table.insert(tags, mega) end
+        if neon ~= "" then table.insert(tags, neon) end
+        if ride ~= "" then table.insert(tags, ride) end
+        if fly ~= "" then table.insert(tags, fly) end
+
+        local tagStr = #tags > 0 and " [" .. table.concat(tags, "][") .. "]" or ""
+
+        print(string.format("%3d. %s %s%s → %s (%s)", 
+            i, name, rarity, tagStr, ageStr, uid:sub(1,12)))
+    end
+
+    print("")
+    print(string.rep("=", 60))
+    print("ГОТОВО! Скринь консоль (F9) → кидай в дискорд")
+end
+
+-- Запуск без крашей
+task.spawn(dumpPetsAndAilments)
