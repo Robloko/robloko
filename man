@@ -5,288 +5,110 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to safely get player data
-local function getPlayerData()
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then
-        print("❌ Failed to load ClientData module")
-        return nil
-    end
-    
-    local playerData = clientData.get_data()
-    if not playerData or not playerData[player.Name] then
-        print("❌ No data found for player: " .. player.Name)
-        return nil
-    end
-    
-    return playerData[player.Name]
+-- Step 1: Safely get the ClientData module
+print("🔍 STEP 1: Loading ClientData module...")
+local clientData
+local success, err = pcall(function()
+    clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+end)
+
+if not success then
+    print("❌ FAILED: " .. tostring(err))
+    return
+else
+    print("✅ SUCCESS: ClientData loaded")
 end
 
--- Function to inspect a specific manager in detail
-local function inspectManagerDetails(managerName, managerData)
+-- Step 2: Safely get player data
+print("🔍 STEP 2: Getting player data...")
+local playerData
+success, err = pcall(function()
+    playerData = clientData.get_data()
+end)
+
+if not success then
+    print("❌ FAILED: " .. tostring(err))
+    return
+else
+    print("✅ SUCCESS: Player data retrieved")
+end
+
+-- Step 3: Check if our player exists in data
+print("🔍 STEP 3: Finding data for player: " .. player.Name)
+if not playerData or not playerData[player.Name] then
+    print("❌ FAILED: No data found for player " .. player.Name)
+    return
+else
+    print("✅ SUCCESS: Player data found")
+end
+
+local data = playerData[player.Name]
+
+-- Step 4: List ALL available categories first
+print("\n📋 STEP 4: Listing ALL available categories:")
+print("==========================================")
+local allCategories = {}
+for categoryName, categoryData in pairs(data) do
+    table.insert(allCategories, categoryName)
+    local itemCount = 0
+    if type(categoryData) == "table" then
+        for _ in pairs(categoryData) do itemCount = itemCount + 1 end
+    end
+    print("📁 " .. categoryName .. " (" .. itemCount .. " items) [" .. type(categoryData) .. "]")
+end
+
+print("\n📊 Total categories: " .. #allCategories)
+
+-- Step 5: Find and list only manager categories
+print("\n🎯 STEP 5: Finding manager categories:")
+print("=====================================")
+local managerCategories = {}
+for _, categoryName in pairs(allCategories) do
+    if string.find(string.lower(categoryName), "manager") then
+        table.insert(managerCategories, categoryName)
+    end
+end
+
+if #managerCategories == 0 then
+    print("❌ No manager categories found!")
+    print("💡 Try searching for categories with different names...")
+else
+    print("✅ Found " .. #managerCategories .. " manager categories:")
+    for i, managerName in pairs(managerCategories) do
+        print(i .. ". " .. managerName)
+    end
+end
+
+-- Step 6: Inspect each manager category
+print("\n🔍 STEP 6: Inspecting manager categories:")
+print("========================================")
+
+for _, managerName in pairs(managerCategories) do
     print("\n🎯 " .. managerName .. ":")
-    print("   Type: " .. type(managerData))
+    local managerData = data[managerName]
     
     if type(managerData) ~= "table" then
         print("   Value: " .. tostring(managerData))
-        return
+        print("   Type: " .. type(managerData))
+    else
+        print("   Type: table")
+        local itemCount = 0
+        for _ in pairs(managerData) do itemCount = itemCount + 1 end
+        print("   Items: " .. itemCount)
+        
+        -- Show each item in the manager
+        for key, value in pairs(managerData) do
+            local valueType = type(value)
+            if valueType == "table" then
+                local subCount = 0
+                for _ in pairs(value) do subCount = subCount + 1 end
+                print("   📁 " .. key .. " [TABLE with " .. subCount .. " items]")
+            else
+                print("   📄 " .. key .. " = " .. tostring(value) .. " [" .. valueType .. "]")
+            end
+        end
     end
-    
-    local itemCount = 0
-    for _ in pairs(managerData) do itemCount = itemCount + 1 end
-    print("   Total Items: " .. itemCount)
     print("   ---")
-    
-    -- Inspect each sub-table in detail
-    for key, value in pairs(managerData) do
-        local valueType = type(value)
-        
-        if valueType == "table" then
-            local subItemCount = 0
-            for _ in pairs(value) do subItemCount = subItemCount + 1 end
-            
-            print("   📁 " .. key .. " [TABLE with " .. subItemCount .. " items]")
-            
-            -- Show first 3 items of each sub-table
-            local count = 0
-            for subKey, subValue in pairs(value) do
-                count = count + 1
-                if count <= 3 then
-                    local subValueType = type(subValue)
-                    if subValueType == "table" then
-                        local deepCount = 0
-                        for _ in pairs(subValue) do deepCount = deepCount + 1 end
-                        print("      └─ 📁 " .. tostring(subKey) .. " [TABLE with " .. deepCount .. " items]")
-                    else
-                        print("      └─ 📄 " .. tostring(subKey) .. " = " .. tostring(subValue) .. " [" .. subValueType .. "]")
-                    end
-                end
-            end
-            if count > 3 then
-                print("      └─ ... and " .. (count - 3) .. " more items")
-            end
-            
-        else
-            print("   📄 " .. key .. " = " .. tostring(value) .. " [" .. valueType .. "]")
-        end
-    end
 end
 
--- Enhanced function to inspect specific manager categories in detail
-local function inspectSpecificManagers()
-    print("🔍 DETAILED INSPECTION OF MANAGER CATEGORIES")
-    print("============================================")
-    
-    local data = getPlayerData()
-    if not data then return end
-    
-    -- List of managers to inspect (from your screenshots)
-    local managersToInspect = {
-        "AILMENTS_MANAGER",
-        "PET_STATE_MANAGERS", 
-        "QUEST_MANAGER",
-        "ADMIN_ABUSE_MANAGER",
-        "STATE_MANAGER_RAW"
-    }
-    
-    for _, managerName in pairs(managersToInspect) do
-        local managerData = data[managerName]
-        
-        if managerData then
-            inspectManagerDetails(managerName, managerData)
-        else
-            -- Try case-insensitive search
-            local found = false
-            for actualName, actualData in pairs(data) do
-                if string.lower(actualName) == string.lower(managerName) then
-                    inspectManagerDetails(actualName, actualData)
-                    found = true
-                    break
-                end
-            end
-            if not found then
-                print("❌ " .. managerName .. " not found in player data")
-            end
-        end
-        print("") -- Empty line for separation
-    end
-end
-
--- Specialized function for AILMENTS_MANAGER
-local function inspectAilmentsManager()
-    print("\n🏥 SPECIAL INSPECTION: AILMENTS_MANAGER")
-    print("=====================================")
-    
-    local data = getPlayerData()
-    if not data then return end
-    
-    local ailmentsManager = data.AILMENTS_MANAGER
-    if not ailmentsManager then
-        print("❌ AILMENTS_MANAGER not found")
-        return
-    end
-    
-    -- Inspect schedules
-    if ailmentsManager.schedules then
-        print("📅 SCHEDULES:")
-        local count = 0
-        for scheduleKey, scheduleData in pairs(ailmentsManager.schedules) do
-            count = count + 1
-            if count <= 5 then
-                print("   " .. tostring(scheduleKey) .. ": " .. tostring(scheduleData))
-            end
-        end
-        if count > 5 then
-            print("   ... and " .. (count - 5) .. " more schedules")
-        end
-    else
-        print("❌ No schedules found")
-    end
-    
-    -- Inspect baby_ailments
-    if ailmentsManager.baby_ailments then
-        print("\n👶 BABY AILMENTS:")
-        local count = 0
-        for ailmentKey, ailmentData in pairs(ailmentsManager.baby_ailments) do
-            count = count + 1
-            if count <= 5 then
-                if type(ailmentData) == "table" then
-                    print("   " .. tostring(ailmentKey) .. " [TABLE]")
-                    for k, v in pairs(ailmentData) do
-                        print("      " .. tostring(k) .. ": " .. tostring(v))
-                    end
-                else
-                    print("   " .. tostring(ailmentKey) .. ": " .. tostring(ailmentData))
-                end
-            end
-        end
-        if count > 5 then
-            print("   ... and " .. (count - 5) .. " more baby ailments")
-        end
-    else
-        print("❌ No baby ailments found")
-    end
-    
-    -- Inspect ailments
-    if ailmentsManager.ailments then
-        print("\n🤒 AILMENTS:")
-        local count = 0
-        for ailmentKey, ailmentData in pairs(ailmentsManager.ailments) do
-            count = count + 1
-            if count <= 5 then
-                if type(ailmentData) == "table" then
-                    print("   " .. tostring(ailmentKey) .. " [TABLE]")
-                    for k, v in pairs(ailmentData) do
-                        print("      " .. tostring(k) .. ": " .. tostring(v))
-                    end
-                else
-                    print("   " .. tostring(ailmentKey) .. ": " .. tostring(ailmentData))
-                end
-            end
-        end
-        if count > 5 then
-            print("   ... and " .. (count - 5) .. " more ailments")
-        end
-    else
-        print("❌ No ailments found")
-    end
-end
-
--- Specialized function for QUEST_MANAGER
-local function inspectQuestManager()
-    print("\n🎯 SPECIAL INSPECTION: QUEST_MANAGER")
-    print("===================================")
-    
-    local data = getPlayerData()
-    if not data then return end
-    
-    local questManager = data.QUEST_MANAGER
-    if not questManager then
-        print("❌ QUEST_MANAGER not found")
-        return
-    end
-    
-    -- Inspect quests_cached
-    if questManager.quests_cached then
-        print("💾 QUESTS CACHED:")
-        local count = 0
-        for questKey, questData in pairs(questManager.quests_cached) do
-            count = count + 1
-            if count <= 5 then
-                if type(questData) == "table" then
-                    print("   " .. tostring(questKey) .. " [TABLE]")
-                    for k, v in pairs(questData) do
-                        print("      " .. tostring(k) .. ": " .. tostring(v))
-                    end
-                else
-                    print("   " .. tostring(questKey) .. ": " .. tostring(questData))
-                end
-            end
-        end
-        if count > 5 then
-            print("   ... and " .. (count - 5) .. " more cached quests")
-        end
-    else
-        print("❌ No quests cached found")
-    end
-    
-    -- Inspect daily_quest_data
-    if questManager.daily_quest_data then
-        print("\n📅 DAILY QUEST DATA:")
-        local count = 0
-        for dailyKey, dailyData in pairs(questManager.daily_quest_data) do
-            count = count + 1
-            if count <= 5 then
-                if type(dailyData) == "table" then
-                    print("   " .. tostring(dailyKey) .. " [TABLE]")
-                    for k, v in pairs(dailyData) do
-                        print("      " .. tostring(k) .. ": " .. tostring(v))
-                    end
-                else
-                    print("   " .. tostring(dailyKey) .. ": " .. tostring(dailyData))
-                end
-            end
-        end
-        if count > 5 then
-            print("   ... and " .. (count - 5) .. " more daily quest items")
-        end
-    else
-        print("❌ No daily quest data found")
-    end
-end
-
--- Simple function to just list all available managers
-local function listAllManagers()
-    print("📋 LISTING ALL MANAGER CATEGORIES")
-    print("=================================")
-    
-    local data = getPlayerData()
-    if not data then return end
-    
-    local managerCount = 0
-    
-    for categoryName, categoryData in pairs(data) do
-        if string.find(string.lower(categoryName), "manager") then
-            managerCount = managerCount + 1
-            local itemCount = 0
-            if type(categoryData) == "table" then
-                for _ in pairs(categoryData) do itemCount = itemCount + 1 end
-            end
-            print("🎯 " .. categoryName .. " (" .. itemCount .. " items)")
-        end
-    end
-    
-    if managerCount == 0 then
-        print("❌ No manager categories found")
-    else
-        print("\n📊 Total manager categories: " .. managerCount)
-    end
-end
-
--- Main execution
-print("🚀 STARTING MANAGER INSPECTION...")
-listAllManagers()
-inspectSpecificManagers()
-inspectAilmentsManager()
-inspectQuestManager()
-print("✅ INSPECTION COMPLETE")
+print("\n✅ INSPECTION COMPLETE!")
