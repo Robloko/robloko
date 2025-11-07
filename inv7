@@ -1,81 +1,95 @@
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
--- Player
 local player = Players.LocalPlayer
 
--- Function to inspect specific categories from screenshots
 local function inspectScreenshotCategories()
-    print("🔍 INSPECTING CATEGORIES")
+    print("INSPECTING CATEGORIES")
     print("=========================================")
-    
+
     local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
     local data = clientData.get_data()[player.Name]
-    
-    -- Inspect house_manager
-    if data.house_manager then
+
+    if not data then warn("No player data!") return end
+
+    -- 1. Ailments (уже работает)
+    if data.ailments_manager then
         print("AILMENTS MANAGER:")
-        for key, value in pairs(data.ailments_manager) do
-            if type(value) == "table" then
-                local count = 0
-                for _ in pairs(value) do count = count + 1 end
-                print("   📁 " .. key .. " [TABLE with " .. count .. " items]")
+        for k, v in pairs(data.ailments_manager) do
+            if type(v) == "table" then
+                local c = 0; for _ in pairs(v) do c += 1 end
+                print(" 📁 " .. k .. " [TABLE with " .. c .. " items]")
             else
-                print("   📄 " .. key .. " = " .. tostring(value))
+                print(" 📄 " .. k .. " = " .. tostring(v))
             end
         end
         print("")
     end
-    
-    -- Inspect pet_state_managers_raw
-    if data.pet_state_managers_raw then
-        print("daily_login_manager:")
-        for petId, petState in pairs(data.daily_login_manager) do
-            print("   Pet ID: " .. tostring(petId))
-            for stateKey, stateValue in pairs(petState) do
-                if type(stateValue) == "table" then
-                    print("     📁 " .. stateKey .. " [TABLE]")
-                else
-                    print("     📄 " .. stateKey .. " = " .. tostring(stateValue))
-                end
-            end
-            print("   ---")
-        end
+
+    -- 2. Daily Login (ЭТО ЧИСЛО, НЕ ТАБЛИЦА!)
+    if data.daily_login_manager then
+        print("DAILY LOGIN MANAGER:")
+        print(" 📅 Login Streak: " .. tostring(data.daily_login_manager))
+        print(" 📅 Claimed Rewards: " .. tostring(data.daily_login_claimed or "nil"))
         print("")
     end
-    
-    -- Inspect playtime_payouts_manager
+
+    -- 3. НАСТОЯЩИЕ ПИТОМЦЫ — вот правильное место!
+    if data.pet_manager then
+        print("PET MANAGER (REAL PETS):")
+        local pets = data.pet_manager.pets or data.pet_manager -- иногда вложено
+        local count = 0
+        for _ in pairs(pets) do count += 1 end
+        print(" Total pets: " .. count)
+
+        local i = 0
+        for uid, petData in pairs(pets) do
+            if i < 10 then -- покажем только первые 10
+                local name = petData.n or petData.pet_name or "Unknown"
+                local power = petData.p or petData.power or 0
+                local huge = petData.h and " [HUGE]" or ""
+                local shiny = petData.s and " [SHINY]" or ""
+                local enchanted = petData.e and " [ENCHANTED]" or ""
+                print(string.format(" %s %s%s%s%s (Power: %s)", uid:sub(1,8), name, huge, shiny, enchanted, tostring(power)))
+                i += 1
+            end
+        end
+        if count > 10 then print(" ... and " .. (count - 10) .. " more") end
+        print("")
+    end
+
+    -- 4. Playtime payouts
     if data.playtime_payouts_manager then
-        print("⏰ PLAYTIME PAYOUTS MANAGER:")
-        for key, value in pairs(data.playtime_payouts_manager) do
-            if type(value) == "table" then
-                print("   📁 " .. key .. " [TABLE]")
-                for subKey, subValue in pairs(value) do
-                    print("     " .. subKey .. " = " .. tostring(subValue))
+        print("PLAYTIME PAYOUTS MANAGER:")
+        for k, v in pairs(data.playtime_payouts_manager) do
+            if type(v) == "table" then
+                print(" 📁 " .. k .. " [TABLE]")
+                for sk, sv in pairs(v) do
+                    print("   ↳ " .. sk .. " = " .. tostring(sv))
                 end
             else
-                print("   📄 " .. key .. " = " .. tostring(value))
+                print(" 📄 " .. k .. " = " .. tostring(v))
             end
         end
         print("")
     end
-    
-    -- Inspect pet_recycler_manager
+
+    -- 5. Pet Recycler
     if data.pet_recycler_manager then
-        print("♻️ PET RECYCLER MANAGER:")
-        for key, value in pairs(data.pet_recycler_manager) do
-            if type(value) == "table" then
-                local count = 0
-                for _ in pairs(value) do count = count + 1 end
-                print("   📁 " .. key .. " [TABLE with " .. count .. " items]")
+        print("PET RECYCLER MANAGER:")
+        for k, v in pairs(data.pet_recycler_manager) do
+            if type(v) == "table" then
+                local c = 0; for _ in pairs(v) do c += 1 end
+                print(" 📁 " .. k .. " [TABLE with " .. c .. " items]")
             else
-                print("   📄 " .. key .. " = " .. tostring(value))
+                print(" 📄 " .. k .. " = " .. tostring(v))
             end
         end
         print("")
     end
+
+    print("Inspection completed successfully!")
 end
 
--- Run the function
-inspectScreenshotCategories()
+-- Запуск без ошибок
+task.spawn(inspectScreenshotCategories)
