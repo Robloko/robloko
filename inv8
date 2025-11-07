@@ -1,100 +1,57 @@
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Player
 local player = Players.LocalPlayer
 
-local function safePairs(t)
-    if typeof(t) == "table" then return pairs(t) else return pairs({}) end
-end
+-- Function to print all available pets in inventory
+local function printAvailablePets()
+    local pets = {}
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
 
-local function countTable(t)
-    local c = 0
-    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
-    return c
-end
+        -- Проверяем разные возможные пути к данным о питомцах
+        local petsData = playerData.pet_manager and playerData.pet_manager.pets
+                      or playerData.pets
+                      or (playerData.inventory and playerData.inventory.pets)
+                      or {}
 
-local function dump()
-    print("\nADOPT ME! — BABY AILMENTS + PETS INFO")
-    print(string.rep("=", 55))
+        for petId, petData in pairs(petsData) do
+            local props = petData.Properties or petData or {}
+            local name = props.Name or props.DisplayName or "Unknown"
+            local age = props.Age or props.Level or "?"
+            local neon = props.Neon and "NEON" or ""
+            local mega = props.MegaNeon and "MEGA" or ""
+            local tags = (neon ~= "" and mega ~= "" and neon .. " " .. mega) or neon or mega or ""
 
-    local success, ClientData = pcall(require, ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+            table.insert(pets, {
+                id = petId,
+                name = name,
+                age = age,
+                tags = tags
+            })
+        end
+    end)
+
     if not success then
-        warn("ClientData не найден!")
+        print("Error reading pets data: " .. tostring(errorMsg))
         return
     end
 
-    local data = ClientData.get_data()[player.Name]
-    if not data then
-        warn("Данные не найдены!")
+    if #pets == 0 then
+        print("No pets found in inventory!")
         return
     end
 
-    -- 1. BABY AILMENTS
-    print("BABY AILMENTS (внутри):")
-    if data.ailments_manager and data.ailments_manager.baby_ailments then
-        local babyAil = data.ailments_manager.baby_ailments
-        local totalBaby = countTable(babyAil)
-        if totalBaby > 0 then
-            for petId, ailment in safePairs(babyAil) do
-                print(" " .. petId:sub(1,12) .. "... → " .. tostring(ailment))
-            end
-        else
-            print(" Нет baby ailments")
-        end
-    else
-        print(" Нет baby ailments")
+    print("=== AVAILABLE PETS IN INVENTORY ===")
+    for i, pet in ipairs(pets) do
+        print(string.format("%d. %s (Age: %s) - %s", i, pet.name, pet.age, pet.tags))
     end
-
-    print("")
-
-    -- 2. PETS — ИМЕНА, ВОЗРАСТ, NEON/MEGA
-    print("PETS (имя | возраст | NEON/MEGA):")
-    local pets = data.pet_manager and data.pet_manager.pets
-              or data.pets
-              or (data.inventory and data.inventory.pets)
-              or {}
-    local total = countTable(pets)
-
-    if total == 0 then
-        print(" Питомцы не найдены")
-    else
-        print(" Всего: " .. total)
-
-        -- Сортировка по имени
-        local sortedPets = {}
-        for id, pet in safePairs(pets) do
-            table.insert(sortedPets, {id = id, pet = pet})
-        end
-        table.sort(sortedPets, function(a, b)
-            local nameA = (a.pet.Properties or a.pet).Name or "Unknown"
-            local nameB = (b.pet.Properties or b.pet).Name or "Unknown"
-            return nameA < nameB
-        end)
-
-        -- Фильтрация и вывод
-        local shown = 0
-        for _, entry in ipairs(sortedPets) do
-            if shown < 50 then
-                local pet = entry.pet
-                local props = pet.Properties or pet or {}
-                local name = props.Name or "Unknown"
-                local age = props.Age or "?"
-                local neon = props.Neon and "NEON" or ""
-                local mega = props.MegaNeon and "MEGA" or ""
-                local tags = (neon ~= "" and mega ~= "" and neon .. " " .. mega) or neon or mega or ""
-
-                -- Фильтр: только NEON или MEGA
-                if neon ~= "" or mega ~= "" then
-                    print(string.format(" %s | %s | %s", name, age, tags))
-                    shown += 1
-                end
-            end
-        end
-
-        if total > 50 then print(" ... ещё " .. (total-50)) end
-    end
-
-    print(string.rep("=", 55))
-    print("ГОТОВО! F9 → скрин")
+    print("Total pets: " .. #pets)
+    print("===================================")
 end
 
-task.spawn(dump)
+-- Run the function
+printAvailablePets()
