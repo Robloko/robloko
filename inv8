@@ -1,38 +1,100 @@
-local function printAvailablePets()
-    local success, errorMsg = pcall(function()
-        local clientData = require(game:GetService("ReplicatedStorage").ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[game:GetService("Players").LocalPlayer.Name]
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-        if not playerData or not playerData.inventory or not playerData.inventory.pets then
-            print("No pets found in inventory!")
-            return
-        end
+-- Player
+local player = Players.LocalPlayer
 
-        print("=== AVAILABLE PETS IN INVENTORY ===")
-        print(string.format("%-5s | %-20s | %-5s | %-10s | %-36s", "No.", "Name", "Age", "Status", "Unique ID"))
+-- Function to safely get player data
+local function getPlayerData()
+    -- Wait for ClientModules to load
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
+    if not clientModules then
+        warn("ClientModules not found in ReplicatedStorage!")
+        return nil
+    end
 
-        local petCount = 0
-        for petIndex, petData in pairs(playerData.inventory.pets) do
-            petCount = petCount + 1
-            local name = petData.id or "Unknown"
-            local age = petData.properties.age or "?"
-            local neonStatus = petData.properties.neon and "NEON" or ""
-            local megaStatus = petData.properties.mega and "MEGA" or ""
-            local status = neonStatus .. (neonStatus ~= "" and megaStatus ~= "" and " " or "") .. megaStatus
-            status = status ~= "" and status or "Normal"
+    -- Wait for Core module
+    local coreModule = clientModules:WaitForChild("Core", 5)
+    if not coreModule then
+        warn("Core module not found in ClientModules!")
+        return nil
+    end
 
-            print(string.format("%-5d | %-20s | %-5s | %-10s | %-36s",
-                petCount, name, age, status, petData.unique))
-        end
+    -- Wait for ClientData module
+    local clientDataModule = coreModule:WaitForChild("ClientData", 5)
+    if not clientDataModule then
+        warn("ClientData module not found in Core!")
+        return nil
+    end
 
-        print("Total pets: " .. petCount)
-        print("=========================================")
+    -- Load ClientData
+    local clientData
+    local success, err = pcall(function()
+        clientData = require(clientDataModule)
     end)
 
-    if not success then
-        print("Error reading pets data: " .. tostring(errorMsg))
+    if not success or not clientData then
+        warn("Failed to load ClientData: " .. tostring(err))
+        return nil
+    end
+
+    -- Get player data
+    local playerData
+    success, err = pcall(function()
+        playerData = clientData.get_data()[player.Name]
+    end)
+
+    if not success or not playerData then
+        warn("Failed to get player data: " .. tostring(err))
+        return nil
+    end
+
+    return playerData
+end
+
+-- Function to inspect pets inventory
+local function inspectPets()
+    print("🔍 INSPECTING PETS INVENTORY")
+    print("=============================")
+
+    local playerData = getPlayerData()
+    if not playerData then
+        print("❌ Failed to get player data")
+        return
+    end
+
+    if not playerData.inventory or not playerData.inventory.pets then
+        print("❌ No pets found in inventory")
+        return
+    end
+
+    local petCount = 0
+    for _ in pairs(playerData.inventory.pets) do
+        petCount = petCount + 1
+    end
+
+    print("📊 Total pets: " .. petCount)
+    print("")
+
+    -- Show first 10 pets with basic info
+    local count = 0
+    for petUniqueID, petData in pairs(playerData.inventory.pets) do
+        count = count + 1
+        if count > 10 then
+            print("... and " .. (petCount - 10) .. " more pets")
+            break
+        end
+
+        print("🐾 " .. (petData.id or "Unknown"))
+        print("   Unique ID: " .. petUniqueID)
+        print("   Age: " .. (petData.properties and petData.properties.age or "?"))
+        print("   Neon: " .. tostring(petData.properties and petData.properties.neon or false))
+        print("   Mega Neon: " .. tostring(petData.properties and petData.properties.mega_neon or false))
+        print("   XP: " .. (petData.properties and petData.properties.xp or "?"))
+        print("   ---")
     end
 end
 
--- Вызовите функцию для вывода информации о питомцах
-printAvailablePets()
+-- Run the function
+inspectPets()
