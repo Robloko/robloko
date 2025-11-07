@@ -22,75 +22,104 @@ local function inspectPetPenSlots()
     until data and data.idle_progression_manager
 
     local manager = data.idle_progression_manager
-    print("Dumping idle_progression_manager:")
 
     -- Check active_pets with the correct structure
     local petPenSlots = {}
     
     if manager.active_pets and typeof(manager.active_pets) == "table" then
-        print("\nFound active_pets table (dictionary structure):")
+        print("\n=== ANALYZING ACTIVE PETS ===")
         
-        -- Convert to array for easier processing
         local slotIndex = 1
         for petUnique, petData in pairs(manager.active_pets) do
-            print(string.format("Slot %d - Pet Unique: %s", slotIndex, petUnique))
-            print(string.format("  Pet Data Type: %s", typeof(petData)))
+            print(string.format("\n--- Slot %d ---", slotIndex))
+            print(string.format("Unique ID: %s", petUnique))
             
             if typeof(petData) == "table" then
-                -- Try to get pet info directly from active_pets table
-                local petName = petData.id or petData.name or "Unknown"
-                local age = petData.age or petData.properties and petData.properties.age or 0
-                local neon = petData.neon or (petData.properties and petData.properties.neon) or false
-                
-                table.insert(petPenSlots, {
-                    slot = slotIndex,
-                    name = petName,
-                    age = age,
-                    neon = neon,
-                    unique = petUnique,
-                    raw_data = petData
-                })
-                
-                -- Also try to cross-reference with inventory
-                if data.inventory and data.inventory.pets and data.inventory.pets[petUnique] then
-                    local inventoryPetData = data.inventory.pets[petUnique]
-                    print(string.format("  Found in inventory: %s", inventoryPetData.id or "Unknown"))
+                -- Dump all available pet data
+                print("Pet data fields:")
+                for key, value in pairs(petData) do
+                    if typeof(value) ~= "table" then
+                        print(string.format("  %s: %s", key, tostring(value)))
+                    else
+                        print(string.format("  %s: [table]", key))
+                        -- If it's a properties table, show its contents
+                        if key == "properties" then
+                            for propKey, propValue in pairs(value) do
+                                print(string.format("    %s: %s", propKey, tostring(propValue)))
+                            end
+                        end
+                    end
                 end
+                
+                -- Extract common pet information
+                local petInfo = {
+                    slot = slotIndex,
+                    unique = petUnique,
+                    name = petData.id or petData.name or "Unknown",
+                    age = petData.age or 0,
+                    neon = false,
+                    rarity = petData.rarity or "Common",
+                    level = petData.level or 1
+                }
+                
+                -- Check for neon status in properties
+                if petData.properties and petData.properties.neon then
+                    petInfo.neon = petData.properties.neon
+                elseif petData.neon then
+                    petInfo.neon = petData.neon
+                end
+                
+                -- Check for age in properties
+                if petData.properties and petData.properties.age then
+                    petInfo.age = petData.properties.age
+                end
+                
+                table.insert(petPenSlots, petInfo)
+            else
+                print(string.format("Unexpected data type: %s", typeof(petData)))
             end
             
             slotIndex = slotIndex + 1
         end
     end
 
-    -- Print detailed pet information
-    print("\nDETAILED PET PEN ANALYSIS:")
-    for i, pet in ipairs(petPenSlots) do
-        print(string.format("\nSlot %d:", i))
-        print(string.format("  Unique ID: %s", pet.unique))
-        print(string.format("  Name: %s", pet.name))
-        print(string.format("  Age: %d", pet.age))
-        print(string.format("  Neon: %s", tostring(pet.neon)))
-        
-        -- Dump all fields in the pet data
-        if pet.raw_data then
-            print("  All data fields:")
-            for key, value in pairs(pet.raw_data) do
-                if typeof(value) ~= "table" then
-                    print(string.format("    %s: %s", key, tostring(value)))
-                else
-                    print(string.format("    %s: [table]", key))
+    -- Also check inventory for additional pet details
+    print("\n=== CROSS-REFERENCING WITH INVENTORY ===")
+    if data.inventory and data.inventory.pets then
+        for i, pet in ipairs(petPenSlots) do
+            if data.inventory.pets[pet.unique] then
+                local invPet = data.inventory.pets[pet.unique]
+                print(string.format("\nInventory data for %s:", pet.unique))
+                for key, value in pairs(invPet) do
+                    if typeof(value) ~= "table" then
+                        print(string.format("  %s: %s", key, tostring(value)))
+                    end
+                end
+                
+                -- Update with inventory data if missing
+                if not pet.name or pet.name == "Unknown" then
+                    pet.name = invPet.id or invPet.name or pet.name
+                end
+                if invPet.properties then
+                    pet.age = invPet.properties.age or pet.age
+                    pet.neon = invPet.properties.neon or pet.neon
                 end
             end
         end
     end
 
-    -- Summary display
-    print("\nPETPEN SLOTS SUMMARY:")
+    -- Final display
+    print("\n" .. string.rep("=", 50))
+    print("FINAL PET PEN SLOTS:")
+    print(string.rep("=", 50))
+    
     for i = 1, 4 do
-        if petPenSlots[i] then
-            local pet = petPenSlots[i]
-            print(string.format("   [%d] %s | Age: %d | %s", 
-                i, pet.name, pet.age, pet.neon and "NEON" or "normal"))
+        local pet = petPenSlots[i]
+        if pet then
+            local neonText = pet.neon and "NEON" or "normal"
+            local ageText = pet.age and string.format("Age: %d", pet.age) or "Age: Unknown"
+            print(string.format("   [%d] %s | %s | %s | Rarity: %s", 
+                i, pet.name, ageText, neonText, pet.rarity))
         else
             print(string.format("   [%d] EMPTY SLOT", i))
         end
@@ -100,4 +129,7 @@ local function inspectPetPenSlots()
 end
 
 -- Call the function
-inspectPetPenSlots()
+local success, result = pcall(inspectPetPenSlots)
+if not success then
+    warn("Error inspecting pet pen slots:", result)
+end
