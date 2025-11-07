@@ -1,95 +1,163 @@
--- Services
-local Players = game:GetService("Players")
+-- // ADOPT ME! — FULL CLIENT DATA DUMPER 2025 \\
+-- Работает в Adopt Me! (Roblox) — вставь в любой эксплойт
+
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local player = Players.LocalPlayer
+local player            = Players.LocalPlayer
 
-local function inspectScreenshotCategories()
-    print("INSPECTING CATEGORIES")
-    print("=========================================")
+-- Защита от ошибок pairs
+local function safePairs(t)
+    if typeof(t) == "table" then return pairs(t) else return pairs({}) end
+end
 
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local data = clientData.get_data()[player.Name]
+local function countTable(t)
+    local c = 0
+    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
+    return c
+end
 
-    if not data then warn("No player data!") return end
+local function dump()
+    print("\n\nADOPT ME! — FULL DATA DUMP (November 2025)")
+    print(string.rep("=", 55))
 
-    -- 1. Ailments (уже работает)
+    local success, ClientData = pcall(require, ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+    if not success then
+        warn("ClientData не найден! Ты точно в Adopt Me!?")
+        return
+    end
+
+    local data = ClientData.get_data()[player.Name]
+    if not data then warn("Данные игрока не найдены!") return end
+
+    -- 1. AILMENTS (болезни питомцев)
     if data.ailments_manager then
-        print("AILMENTS MANAGER:")
-        for k, v in pairs(data.ailments_manager) do
-            if type(v) == "table" then
-                local c = 0; for _ in pairs(v) do c += 1 end
-                print(" 📁 " .. k .. " [TABLE with " .. c .. " items]")
+        print("AILMENTS MANAGER (болезни):")
+        for k, v in safePairs(data.ailments_manager) do
+            if typeof(v) == "table" then
+                print("  [Folder] " .. k .. "  [" .. countTable(v) .. " items]")
             else
-                print(" 📄 " .. k .. " = " .. tostring(v))
+                print("  [Leaf] " .. k .. " = " .. tostring(v))
             end
         end
         print("")
     end
 
-    -- 2. Daily Login (ЭТО ЧИСЛО, НЕ ТАБЛИЦА!)
+    -- 2. DAILY LOGIN STREAK (стрик — это ЧИСЛО!)
     if data.daily_login_manager then
-        print("DAILY LOGIN MANAGER:")
-        print(" 📅 Login Streak: " .. tostring(data.daily_login_manager))
-        print(" 📅 Claimed Rewards: " .. tostring(data.daily_login_claimed or "nil"))
+        print("DAILY LOGIN STREAK:")
+        print("  [Calendar] Дней подряд: " .. tostring(data.daily_login_manager))
+        print("  [Checkmark] Забрал сегодня: " .. tostring(data.daily_login_claimed or "nil"))
         print("")
     end
 
-    -- 3. НАСТОЯЩИЕ ПИТОМЦЫ — вот правильное место!
-    if data.pet_manager then
-        print("PET MANAGER (REAL PETS):")
-        local pets = data.pet_manager.pets or data.pet_manager -- иногда вложено
-        local count = 0
-        for _ in pairs(pets) do count += 1 end
-        print(" Total pets: " .. count)
+    -- 3. ПИТОМЦЫ — главное богатство!
+    if data.pet_manager or data.pets then
+        local pets = data.pet_manager and data.pet_manager.pets or data.pets or {}
+        local total = countTable(pets)
+        print("PETS — " .. total .. " питомцев всего:")
+        local shown = 0
+        for id, pet in safePairs(pets) do
+            if shown < 25 then
+                local name = pet.Properties and pet.Properties.Name or pet.name or "Unknown"
+                local age = pet.Properties and pet.Properties.Age or "?"
+                local rarity = pet.Properties and pet.Properties.Rarity or ""
+                local neon = pet.Properties and pet.Properties.Neon and "[NEON]" or ""
+                local mega = pet.Properties and pet.Properties.MegaNeon and "[MEGA]" or ""
+                local ride = pet.Properties and pet.Properties.Rideable and "[RIDE]" or ""
+                local fly = pet.Properties and pet.Properties.Flyable and "[FLY]" or ""
+                print(string.format("  %s %s %s%s%s%s  |  Age: %s", 
+                    tostring(id):sub(1,8), name, rarity, neon, mega, ride, fly, age))
+                shown += 1
+            end
+        end
+        if total > 25 then print("  ... и ещё " .. (total-25) .. " питомцев") end
+        print("")
+    end
 
+    -- 4. ИНВЕНТАРЬ (яйца, игрушки, еда, транспорт)
+    if data.inventory then
+        print("INVENTORY MANAGER:")
+        for category, items in safePairs(data.inventory) do
+            local c = countTable(items)
+            if c > 0 then
+                print("  [Backpack] " .. category .. "  [" .. c .. " шт.]")
+                local i = 0
+                for itemId, amount in safePairs(items) do
+                    if i < 6 then
+                        print("     → " .. tostring(itemId) .. " × " .. tostring(amount))
+                        i += 1
+                    end
+                end
+            end
+        end
+        print("")
+    end
+
+    -- 5. ВАЛЮТА
+    print("CURRENCY:")
+    print("  [Bucks] Bucks: " .. tostring(data.bucks or data.money or 0))
+    print("  [Robux] Robux потрачено: " .. tostring(data.robux_spent or "неизвестно"))
+    print("")
+
+    -- 6. ЗАДАЧИ (Tasks / Paycheck)
+    if data.tasks then
+        print("TASKS MANAGER:")
+        for task, progress in safePairs(data.tasks) do
+            print("  [Task] " .. task .. " = " .. tostring(progress))
+        end
+        print("")
+    end
+
+    -- 7. ДОМ И МЕБЕЛЬ
+    if data.house_manager then
+        print("HOUSE MANAGER:")
+        for k, v in safePairs(data.house_manager) do
+            if typeof(v) == "table" then
+                print("  [Home] " .. k .. "  [" .. countTable(v) .. " items]")
+            else
+                print("  [Home] " .. k .. " = " .. tostring(v))
+            end
+        end
+        print("")
+    end
+
+    -- 8. PLAYTIME PAYOUTS
+    if data.playtime_payouts_manager then
+        print("PLAYTIME PAYOUTS (зарплата за время):")
+        for k, v in safePairs(data.playtime_payouts_manager) do
+            print("  [Clock] " .. k .. " = " .. tostring(v))
+        end
+        print("")
+    end
+
+    -- 9. PET RECYCLER / AGING
+    if data.pet_recycler_manager then
+        print("PET RECYCLER / AGING:")
+        for k, v in safePairs(data.pet_recycler_manager) do
+            print("  [Recycle] " .. k .. " = " .. tostring(v))
+        end
+        print("")
+    end
+
+    -- 10. FLAGS (важные флаги аккаунта)
+    if data.flags then
+        local flagsCount = countTable(data.flags)
+        print("FLAGS (" .. flagsCount .. " шт.):")
         local i = 0
-        for uid, petData in pairs(pets) do
-            if i < 10 then -- покажем только первые 10
-                local name = petData.n or petData.pet_name or "Unknown"
-                local power = petData.p or petData.power or 0
-                local huge = petData.h and " [HUGE]" or ""
-                local shiny = petData.s and " [SHINY]" or ""
-                local enchanted = petData.e and " [ENCHANTED]" or ""
-                print(string.format(" %s %s%s%s%s (Power: %s)", uid:sub(1,8), name, huge, shiny, enchanted, tostring(power)))
+        for flag, val in safePairs(data.flags) do
+            if i < 20 then
+                print("  [Flag] " .. flag .. " = " .. tostring(val))
                 i += 1
             end
         end
-        if count > 10 then print(" ... and " .. (count - 10) .. " more") end
+        if flagsCount > 20 then print("  ...") end
         print("")
     end
 
-    -- 4. Playtime payouts
-    if data.playtime_payouts_manager then
-        print("PLAYTIME PAYOUTS MANAGER:")
-        for k, v in pairs(data.playtime_payouts_manager) do
-            if type(v) == "table" then
-                print(" 📁 " .. k .. " [TABLE]")
-                for sk, sv in pairs(v) do
-                    print("   ↳ " .. sk .. " = " .. tostring(sv))
-                end
-            else
-                print(" 📄 " .. k .. " = " .. tostring(v))
-            end
-        end
-        print("")
-    end
-
-    -- 5. Pet Recycler
-    if data.pet_recycler_manager then
-        print("PET RECYCLER MANAGER:")
-        for k, v in pairs(data.pet_recycler_manager) do
-            if type(v) == "table" then
-                local c = 0; for _ in pairs(v) do c += 1 end
-                print(" 📁 " .. k .. " [TABLE with " .. c .. " items]")
-            else
-                print(" 📄 " .. k .. " = " .. tostring(v))
-            end
-        end
-        print("")
-    end
-
-    print("Inspection completed successfully!")
+    print(string.rep("=", 55))
+    print("ADOPT ME! DUMP ЗАВЕРШЁН — БЕЗ ОШИБОК!")
+    print("Скринь консоль (F9) → хвастайся в дискорде ;)")
 end
 
--- Запуск без ошибок
-task.spawn(inspectScreenshotCategories)
+-- Запуск без краша игры
+task.spawn(dump)
