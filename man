@@ -5,88 +5,69 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to deeply inspect a specific manager
-local function deepInspectManager(managerName)
-    print("🔍 DEEP INSPECTION: " .. managerName)
-    print("====================================")
+-- Debug function to explore the data structure
+local function debugDataStructure()
+    print("🔍 DEBUGGING DATA STRUCTURE")
+    print("============================")
     
+    -- Try to require ClientData
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
         print("❌ Failed to load ClientData module")
+        print("   Path: ReplicatedStorage.ClientModules.Core.ClientData")
+        return
+    end
+    print("✅ ClientData module loaded successfully")
+    
+    -- Try to call get_data()
+    local success2, playerData = pcall(clientData.get_data)
+    if not success2 then
+        print("❌ Failed to call get_data()")
+        return
+    end
+    print("✅ get_data() called successfully")
+    
+    -- Check if player data exists
+    if not playerData then
+        print("❌ playerData is nil")
         return
     end
     
-    local playerData = clientData.get_data()
-    if not playerData or not playerData[player.Name] then
+    if not playerData[player.Name] then
         print("❌ No data found for player: " .. player.Name)
+        print("   Available players in data:")
+        for playerName, data in pairs(playerData) do
+            print("   - " .. playerName .. " (" .. type(data) .. ")")
+        end
         return
     end
     
     local data = playerData[player.Name]
-    local managerData = data[managerName]
+    print("✅ Found data for player: " .. player.Name)
+    print("   Data type: " .. type(data))
     
-    if not managerData then
-        print("❌ Manager not found: " .. managerName)
-        return
-    end
+    -- List all top-level keys
+    local keyCount = 0
+    local managerKeys = {}
     
-    print("📊 Manager Type: " .. type(managerData))
-    
-    if type(managerData) == "table" then
-        local function inspectTable(tbl, prefix, depth)
-            if depth > 3 then -- Prevent infinite recursion
-                print(prefix .. "📁 [MAX DEPTH REACHED]")
-                return
-            end
-            
-            for key, value in pairs(tbl) do
-                local valueType = type(value)
-                local newPrefix = prefix .. "  "
-                
-                if valueType == "table" then
-                    local tableSize = 0
-                    for _ in pairs(value) do tableSize = tableSize + 1 end
-                    
-                    print(prefix .. "📁 " .. tostring(key) .. " [TABLE with " .. tableSize .. " items]")
-                    
-                    -- Inspect nested table (limited to first 10 items for large tables)
-                    local count = 0
-                    for subKey, subValue in pairs(value) do
-                        count = count + 1
-                        if count <= 10 then
-                            local subType = type(subValue)
-                            if subType == "table" then
-                                local subSize = 0
-                                for _ in pairs(subValue) do subSize = subSize + 1 end
-                                print(newPrefix .. "📁 " .. tostring(subKey) .. " [TABLE with " .. subSize .. " items]")
-                            else
-                                print(newPrefix .. "📄 " .. tostring(subKey) .. " = " .. tostring(subValue) .. " [" .. subType .. "]")
-                            end
-                        else
-                            print(newPrefix .. "... and " .. (tableSize - 10) .. " more items")
-                            break
-                        end
-                    end
-                    
-                    -- Recursively inspect small tables
-                    if tableSize <= 5 and tableSize > 0 then
-                        inspectTable(value, newPrefix, depth + 1)
-                    end
-                else
-                    print(prefix .. "📄 " .. tostring(key) .. " = " .. tostring(value) .. " [" .. valueType .. "]")
-                end
-            end
+    print("\n📋 ALL TOP-LEVEL KEYS:")
+    for key, value in pairs(data) do
+        keyCount = keyCount + 1
+        local valueType = type(value)
+        if string.find(string.lower(key), "manager") then
+            table.insert(managerKeys, key)
+            print("   🎯 " .. key .. " [" .. valueType .. "] - MANAGER")
+        else
+            print("   📄 " .. key .. " [" .. valueType .. "]")
         end
-        
-        inspectTable(managerData, "", 1)
-    else
-        print("📄 Value: " .. tostring(managerData))
     end
-end
-
--- Function to inspect all managers found in your screenshots
-local function inspectAllSpecificManagers()
-    local managersToInspect = {
+    
+    print("\n📊 SUMMARY:")
+    print("   Total keys: " .. keyCount)
+    print("   Manager keys: " .. #managerKeys)
+    
+    -- Now inspect the specific managers we're looking for
+    local targetManagers = {
         "AILMENTS_MANAGER",
         "STATE_MANAGER_RAW", 
         "PET_STATE_MANAGERS",
@@ -94,105 +75,123 @@ local function inspectAllSpecificManagers()
         "QUEST_MANAGER"
     }
     
-    for _, managerName in ipairs(managersToInspect) do
-        deepInspectManager(managerName)
-        print("\n" .. string.rep("=", 50) .. "\n")
-    end
-end
-
--- Function to get specific details about each manager
-local function getManagerSpecificDetails()
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local data = clientData.get_data()[player.Name]
-    
-    -- AILMENTS_MANAGER deep inspection
-    if data.AILMENTS_MANAGER then
-        print("🎯 AILMENTS_MANAGER DEEP DIVE:")
-        local am = data.AILMENTS_MANAGER
-        if am.ailments and type(am.ailments) == "table" then
-            print("   Ailments count: " .. tostring(#am.ailments))
-            for i, ailment in ipairs(am.ailments) do
-                if i <= 5 then -- Show first 5 ailments
-                    print("   🤒 Ailment " .. i .. ": " .. tostring(ailment))
-                end
-            end
-        end
-        if am.baby_ailments and type(am.baby_ailments) == "table" then
-            print("   Baby ailments count: " .. tostring(#am.baby_ailments))
-        end
-        if am.schedules and type(am.schedules) == "table" then
-            print("   Schedules count: " .. tostring(#am.schedules))
-        end
-    end
-    
-    -- QUEST_MANAGER deep inspection
-    if data.QUEST_MANAGER then
-        print("\n🎯 QUEST_MANAGER DEEP DIVE:")
-        local qm = data.QUEST_MANAGER
-        if qm.quests_cached and type(qm.quests_cached) == "table" then
-            print("   Cached quests: " .. tostring(#qm.quests_cached))
-            for i, quest in ipairs(qm.quests_cached) do
-                if i <= 3 then -- Show first 3 quests
-                    print("   🎯 Quest " .. i .. ": " .. tostring(quest))
-                end
-            end
-        end
-        if qm.daily_quest_data and type(qm.daily_quest_data) == "table" then
-            print("   Daily quest data items: " .. tostring(#qm.daily_quest_data))
-        end
-    end
-    
-    -- ADMIN_ABUSE_MANAGER deep inspection
-    if data.ADMIN_ABUSE_MANAGER then
-        print("\n🎯 ADMIN_ABUSE_MANAGER DEEP DIVE:")
-        local aam = data.ADMIN_ABUSE_MANAGER
-        if aam.currency_drops and type(aam.currency_drops) == "table" then
-            print("   Currency drops count: " .. tostring(#aam.currency_drops))
-        end
-        if aam.xp_drops and type(aam.xp_drops) == "table" then
-            print("   XP drops count: " .. tostring(#aam.xp_drops))
-        end
-    end
-    
-    -- PET_STATE_MANAGERS deep inspection
-    if data.PET_STATE_MANAGERS then
-        print("\n🎯 PET_STATE_MANAGERS DEEP DIVE:")
-        local psm = data.PET_STATE_MANAGERS
-        print("   Pet states count: " .. tostring(#psm))
-        for i, petState in ipairs(psm) do
-            if i <= 3 then -- Show first 3 pet states
-                print("   🐾 Pet State " .. i .. " type: " .. type(petState))
-                if type(petState) == "table" then
-                    for key, value in pairs(petState) do
-                        print("      " .. key .. ": " .. tostring(value) .. " [" .. type(value) .. "]")
+    print("\n🎯 CHECKING SPECIFIC MANAGERS:")
+    for _, managerName in ipairs(targetManagers) do
+        if data[managerName] then
+            local managerData = data[managerName]
+            print("   ✅ " .. managerName .. " - FOUND [" .. type(managerData) .. "]")
+            
+            if type(managerData) == "table" then
+                local itemCount = 0
+                for _ in pairs(managerData) do itemCount = itemCount + 1 end
+                print("      Items: " .. itemCount)
+                
+                -- Show first 3 keys
+                local count = 0
+                for key, value in pairs(managerData) do
+                    count = count + 1
+                    if count <= 3 then
+                        print("      - " .. key .. " [" .. type(value) .. "]")
                     end
                 end
+                if count > 3 then
+                    print("      ... and " .. (count - 3) .. " more")
+                end
             end
-        end
-    end
-    
-    -- STATE_MANAGER_RAW deep inspection
-    if data.STATE_MANAGER_RAW then
-        print("\n🎯 STATE_MANAGER_RAW DEEP DIVE:")
-        local smr = data.STATE_MANAGER_RAW
-        if smr.states and type(smr.states) == "table" then
-            print("   States count: " .. tostring(#smr.states))
-            for stateName, stateValue in pairs(smr.states) do
-                print("   🏷️ " .. stateName .. ": " .. tostring(stateValue) .. " [" .. type(stateValue) .. "]")
-            end
-        end
-        if smr.chars_connected_to_me and type(smr.chars_connected_to_me) == "table" then
-            print("   Connected chars: " .. tostring(#smr.chars_connected_to_me))
+        else
+            print("   ❌ " .. managerName .. " - NOT FOUND")
         end
     end
 end
 
--- Run the inspections
-print("🚀 STARTING DEEP MANAGER INSPECTION")
-print("====================================")
+-- Alternative approach: Try different module paths
+local function tryDifferentPaths()
+    print("\n🔄 TRYING DIFFERENT MODULE PATHS")
+    print("================================")
+    
+    local possiblePaths = {
+        "ReplicatedStorage.ClientModules.Core.ClientData",
+        "ReplicatedStorage.Modules.Core.ClientData", 
+        "ReplicatedStorage.ClientData",
+        "ReplicatedStorage.Modules.ClientData",
+        "ReplicatedStorage.Shared.ClientData",
+        "ReplicatedStorage.Common.ClientData"
+    }
+    
+    for _, path in ipairs(possiblePaths) do
+        local parts = string.split(path, ".")
+        local current = game
+        local valid = true
+        
+        for i, part in ipairs(parts) do
+            if current:FindFirstChild(part) then
+                current = current[part]
+            else
+                valid = false
+                break
+            end
+        end
+        
+        if valid then
+            local success, module = pcall(require, current)
+            if success then
+                print("✅ Found: " .. path)
+                if type(module.get_data) == "function" then
+                    print("   📊 Has get_data function!")
+                    return module
+                end
+            end
+        end
+    end
+    
+    print("❌ No valid ClientData module found")
+    return nil
+end
 
--- Choose one of these:
--- inspectAllSpecificManagers()  -- For full deep inspection
-getManagerSpecificDetails()      -- For targeted details
+-- Simple function to just list what's available
+local function quickInspect()
+    print("\n⚡ QUICK INSPECT - ALL MANAGERS")
+    print("===============================")
+    
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local playerData = clientData.get_data()
+    
+    if playerData and playerData[player.Name] then
+        local data = playerData[player.Name]
+        
+        for key, value in pairs(data) do
+            if string.find(string.lower(key), "manager") then
+                print("🎯 " .. key .. ":")
+                if type(value) == "table" then
+                    local count = 0
+                    for k, v in pairs(value) do
+                        count = count + 1
+                        print("   - " .. k .. " = " .. tostring(v) .. " [" .. type(v) .. "]")
+                        if count >= 5 then
+                            print("   ... (showing first 5 items)")
+                            break
+                        end
+                    end
+                else
+                    print("   Value: " .. tostring(value))
+                end
+                print("   ---")
+            end
+        end
+    end
+end
 
-print("\n✅ INSPECTION COMPLETE")
+-- Main execution
+print("🚀 STARTING DEBUG SESSION")
+print("==========================")
+
+-- First try the debug approach
+debugDataStructure()
+
+-- If that doesn't work, try alternative paths
+-- tryDifferentPaths()
+
+-- If you want a quick overview, uncomment this:
+-- quickInspect()
+
+print("\n✅ DEBUG COMPLETE")
