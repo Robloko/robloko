@@ -1,50 +1,45 @@
 local Tasks = {"hungry", "sleepy", "thirsty", "bored", "dirty", "camping", "sick", "school", "hot_spring", "salon", "pizza_party"}
 
-local Toggle1 = Section1:CreateToggle("AutoFarm Baby", Settings.BabyFarm, function(State)
-    Settings.BabyFarm = State
+local function resolveBabyAilments()
+    while true do
+        task.wait(3) -- Задержка в 1 секунду между проверками
 
-    pcall(function()
-        if State then
-            local chooseTeam = ReplicatedStorage:FindFirstChild("API") and ReplicatedStorage.API:FindFirstChild("TeamAPI/ChooseTeam")
-            if chooseTeam then
-                chooseTeam:InvokeServer("Babies", true)
-            end
-        else
-            local chooseTeam = ReplicatedStorage:FindFirstChild("API") and ReplicatedStorage.API:FindFirstChild("TeamAPI/ChooseTeam")
-            if chooseTeam then
-                chooseTeam:InvokeServer("Parents", true)
-            end
-        end
-    end)
+        local success, err = pcall(function()
+            -- Проверка наличия необходимых модулей и объектов
+            local clientDataModule = game:GetService("ReplicatedStorage"):FindFirstChild("ClientModules")
+            if not clientDataModule then error("ClientModules not found") end
 
-    spawn(function()
-        while Settings.BabyFarm and task.wait(1) do
-            pcall(function()
-                local clientDataModule = ReplicatedStorage:FindFirstChild("ClientModules")
-                if not clientDataModule then return end
+            local coreModule = clientDataModule:FindFirstChild("Core")
+            if not coreModule then error("Core module not found") end
 
-                local coreModule = clientDataModule:FindFirstChild("Core")
-                if not coreModule then return end
+            local clientData = require(coreModule:WaitForChild("ClientData"))
+            if not clientData then error("Failed to load ClientData") end
 
-                local clientData = require(coreModule:WaitForChild("ClientData"))
-                if not clientData then return end
+            local playerData = clientData.get_data()[game.Players.LocalPlayer.Name]
+            if not playerData then error("Failed to get player data") end
 
-                local playerData = clientData.get_data()[game.Players.LocalPlayer.Name]
-                if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.baby_ilness then
-                    warn("No baby ailments found.")
-                    return
-                end
+            if not playerData.ailments_manager then error("ailments_manager not found") end
+            if not playerData.ailments_manager.baby_ailments then error("baby_ailments not found") end
 
-                for ailmentType, _ in pairs(playerData.ailments_manager.baby_ilness) do
-                    if table.find(Tasks, ailmentType) then
-                        local addAdditive = ReplicatedStorage:FindFirstChild("API") and ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
-                        if addAdditive then
-                            addAdditive:FireServer(ailmentType, 1)
-                            print("Resolving baby ailment:", ailmentType)
-                        end
+            -- Обработка baby ailments
+            for ailmentType, _ in pairs(playerData.ailments_manager.baby_ailments) do
+                if table.find(Tasks, ailmentType) then
+                    local addAdditive = game:GetService("ReplicatedStorage").API:FindFirstChild("MonitorAPI/AddAdditive")
+                    if addAdditive then
+                        addAdditive:FireServer(ailmentType, 1)
+                        print("Resolving baby ailment:", ailmentType)
+                    else
+                        warn("AddAdditive not found")
                     end
                 end
-            end)
+            end
+        end)
+
+        if not success then
+            warn("Error resolving baby ailments: " .. tostring(err))
         end
-    end)
-end)
+    end
+end
+
+-- Запуск функции
+resolveBabyAilments()
