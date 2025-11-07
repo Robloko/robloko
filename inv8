@@ -1,80 +1,76 @@
--- ADOPT ME! — ПИТОМЦЫ + БОЛЕЗНИ — РАБОТАЕТ У ВСЕХ (2025)
--- ВСТАВЬ → ЖДИ 5 СЕК → F9 → СКРИНЬ → ГОТОВО
-
+-- ADOPT ME! — ТОЛЬКО ПИТОМЦЫ (ПОЛНАЯ ИНФА) — РАБОТАЕТ У ВСЕХ СЕЙЧАС
 repeat task.wait() until game:IsLoaded()
 task.wait(5)
 
 local player = game.Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-local mainGui = playerGui:WaitForChild("MainGui")
-local dataObject = mainGui:WaitForChild("Data")
+local data = player.PlayerGui:WaitForChild("MainGui"):WaitForChild("Data").Value
 
-if not dataObject or not dataObject.Value then
-    warn("Данные ещё не загрузились. Подожди 10 сек и запусти снова.")
-    return
+local function safePairs(t) 
+    return typeof(t) == "table" and pairs(t) or pairs({}) 
 end
 
-local data = dataObject.Value
+local function countTable(t)
+    local c = 0
+    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
+    return c
+end
 
-print("\nADOPT ME! — ТВОИ ПИТОМЦЫ И БОЛЕЗНИ")
-print(string.rep("=", 55))
+print("\nADOPT ME! — ТВОИ ПИТОМЦЫ (ПОЛНАЯ ИНФОРМАЦИЯ)")
+print(string.rep("=", 60))
 
--- БОЛЕЗНИ
-print("БОЛЕЗНИ:")
-if data.ailments_manager and typeof(data.ailments_manager) == "table" and next(data.ailments_manager) then
-    for category, ailments in pairs(data.ailments_manager) do
-        if typeof(ailments) == "table" then
-            for petId, ailment in pairs(ailments) do
-                print("  • " .. petId:sub(1,12) .. "... → " .. tostring(ailment))
+-- 3. ПИТОМЦЫ — главное богатство! (ИСПРАВЛЕНО И ЗАЩИЩЕНО)
+if data.pet_manager or data.pets or (data.inventory and data.inventory.pets) then
+    local pets = data.pet_manager and data.pet_manager.pets 
+              or data.pets 
+              or data.inventory and data.inventory.pets 
+              or {}
+              
+    local total = countTable(pets)
+    print("PETS — " .. total .. " питомцев всего:")
+    
+    if total == 0 then
+        print("  Питомцев нет или они ещё грузятся...")
+    else
+        local shown = 0
+        local list = {}
+        
+        for id, pet in safePairs(pets) do
+            local props = pet.Properties or pet or {}
+            
+            local name   = props.Name or "Unknown"
+            local rarity = props.Rarity or ""
+            local age    = props.Age or "?"
+            local neon   = props.Neon and "[NEON]" or ""
+            local mega   = props.MegaNeon and "[MEGA]" or ""
+            local ride   = props.Rideable and "[RIDE]" or ""
+            local fly    = props.Flyable and "[FLY]" or ""
+            
+            table.insert(list, string.format(" %s %s %s%s%s%s%s | Age: %s",
+                id:sub(1,8), name, rarity, neon, mega, ride, fly, age))
+        end
+        
+        -- Сортируем по редкости (Legendary первыми)
+        table.sort(list, function(a, b) 
+            local ra = a:match("Legendary") and 1 or a:match("Ultra") and 2 or 3
+            local rb = b:match("Legendary") and 1 or b:match("Ultra") and 2 or 3
+            return ra < rb
+        end)
+        
+        for _, line in ipairs(list) do
+            if shown < 50 then
+                print(line)
+                shown += 1
             end
+        end
+        
+        if total > 50 then 
+            print(" ... и ещё " .. (total - 50) .. " питомцев") 
         end
     end
 else
-    print("  Нет активных болезней")
-end
-print("")
-
--- ПИТОМЦЫ
-local pets = data.pet_manager and data.pet_manager.pets 
-          or data.pets 
-          or data.inventory and data.inventory.pets 
-          or {}
-
-local count = 0
-for _ in pairs(pets) do count += 1 end
-
-print("ПИТОМЦЕВ: " .. count)
-if count == 0 then
-    print("  Питомцев нет или они ещё не прогрузились")
-else
-    local list = {}
-    for id, pet in pairs(pets) do
-        local p = pet.Properties or pet
-        local name = p.Name or "Unknown"
-        local rarity = p.Rarity or ""
-        local age = p.Age or 0
-        local ageStr = age < 6 and "Newborn"
-                    or age < 18 and "Junior"
-                    or age < 36 and "Pre-Teen"
-                    or age < 60 and "Teen"
-                    or age < 100 and "Post-Teen"
-                    or "Full Grown"
-        
-        local tags = ""
-        if p.MegaNeon then tags = tags .. "[MEGA NEON]" end
-        if p.Neon then tags = tags .. "[NEON]" end
-        if p.Rideable then tags = tags .. "[RIDE]" end
-        if p.Flyable then tags = tags .. "[FLY]" end
-        
-        table.insert(list, string.format("%s %s %s → %s", name, rarity, tags, ageStr))
-    end
-    
-    table.sort(list)
-    for i, line in ipairs(list) do
-        print(string.format("%2d. %s", i, line))
-    end
+    print("Питомцы не найдены! (нет pet_manager / pets / inventory.pets)")
 end
 
 print("")
-print(string.rep("=", 55))
-print("ГОТОВО! НАЖМИ F9 → СДЕЛАЙ СКРИН → КИДАЙ МНЕ")
+print(string.rep("=", 60))
+print("ГОТОВО! НАЖМИ F9 → СДЕЛАЙ СКРИН → КИДАЙ В ДИСКОРД")
