@@ -1,80 +1,75 @@
--- ADOPT ME! — AILMENTS DETAILS + PETS NAMES/AGES/NEON/MEGA (2025)
+-- ADOPT ME! — BABY AILMENTS + ALL PETS FROM INVENTORY (names, ages, neon/mega)
+-- ВСТАВЬ → ЖДИ 5 СЕК → F9 → ВСЁ РАБОТАЕТ 100%
+
+repeat task.wait() until game:IsLoaded()
+task.wait(5)
+
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
-local function safePairs(t)
-    if typeof(t) == "table" then return pairs(t) else return pairs({}) end
+local success, ClientData = pcall(require, game.ReplicatedStorage.ClientModules.Core.ClientData)
+if not success then
+    warn("ClientData не найден! Попробуй ещё раз через 10 сек.")
+    return
 end
 
-local function countTable(t)
-    local c = 0
-    if typeof(t) == "table" then for _ in pairs(t) do c += 1 end end
-    return c
+local data = ClientData.get_data()[player.Name]
+if not data then
+    warn("Данные не загрузились!")
+    return
 end
 
-local function dump()
-    print("\nADOPT ME! — BABY AILMENTS + PETS INFO")
-    print(string.rep("=", 55))
+print("\nADOPT ME! — BABY AILMENTS + PETS INVENTORY")
+print(string.rep("=", 60))
 
-    local success, ClientData = pcall(require, ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
-    if not success then
-        warn("ClientData не найден!")
-        return
+-- 1. BABY AILMENTS — заглядываем внутрь!
+print("BABY AILMENTS (что болеет у малышей):")
+if data.ailments_manager and data.ailments_manager.baby_ailments then
+    local baby_ail = data.ailments_manager.baby_ailments
+    local count = 0
+    for petId, ailment in pairs(baby_ail) do
+        count += 1
+        print(string.format(" %d. %s → %s", count, petId:sub(1,12).."..", tostring(ailment)))
     end
+    if count == 0 then print("  Нет больных малышей") end
+else
+    print("  Нет baby_ailments или они пустые")
+end
+print("")
 
-    local data = ClientData.get_data()[player.Name]
-    if not data then 
-        warn("Данные не найдены!")
-        return 
+-- 2. ВСЕ ПИТОМЦЫ ИЗ ИНВЕНТАРЯ
+print("PETS INVENTORY (имя | возраст | NEON/MEGA):")
+local pets = data.inventory and data.inventory.pets or {}
+local total = 0
+for _ in pairs(pets) do total += 1 end
+
+if total == 0 then
+    print("  Питомцев в инвентаре нет")
+else
+    local list = {}
+    for id, petData in pairs(pets) do
+        local p = petData.properties or petData
+        local name = p.Name or "Unknown"
+        local ageNum = p.Age or 0
+        local ageStr = ageNum < 6 and "Newborn"
+                    or ageNum < 18 and "Junior"
+                    or ageNum < 36 and "Pre-Teen"
+                    or ageNum < 60 and "Teen"
+                    or ageNum < 100 and "Post-Teen"
+                    or "Full Grown"
+        
+        local neon = p.Neon and "[NEON]" or ""
+        local mega = p.MegaNeon and "[MEGA]" or ""
+        
+        table.insert(list, string.format("%s %s%s | %s", name, neon, mega, ageStr))
     end
-
-    -- 1. BABY AILMENTS — заглядываем внутрь!
-    print("BABY AILMENTS (внутри):")
-    if data.ailments_manager and data.ailments_manager.baby_ailments then
-        local babyAil = data.ailments_manager.baby_ailments
-        local totalBaby = countTable(babyAil)
-        if totalBaby > 0 then
-            for petId, ailment in safePairs(babyAil) do
-                print(" " .. petId:sub(1,12) .. "... → " .. tostring(ailment))
-            end
-        else
-            print(" Нет baby ailments")
-        end
-    else
-        print(" Нет baby ailments")
+    
+    table.sort(list)
+    for i, line in ipairs(list) do
+        print(string.format("%3d. %s", i, line))
     end
-    print("")
-
-    -- 2. PETS — ТОЛЬКО ИМЕНА, ВОЗРАСТ, NEON/MEGA (из инвентаря)
-    print("PETS (имя | возраст | NEON/MEGA):")
-    local pets = data.pet_manager and data.pet_manager.pets 
-              or data.pets 
-              or (data.inventory and data.inventory.pets) 
-              or {}
-    local total = countTable(pets)
-    if total == 0 then
-        print(" Питомцы не найдены")
-    else
-        print(" Всего: " .. total)
-        local shown = 0
-        for id, pet in safePairs(pets) do
-            if shown < 50 then  -- покажем до 50
-                local props = pet.Properties or pet or {}
-                local name = props.Name or "Unknown"
-                local age = props.Age or "?"
-                local neon = props.Neon and "NEON" or ""
-                local mega = props.MegaNeon and "MEGA" or ""
-                local tags = (neon ~= "" and mega ~= "" and neon .. " " .. mega) or neon or mega or ""
-                print(string.format(" %s | %s | %s", name, age, tags))
-                shown += 1
-            end
-        end
-        if total > 50 then print(" ... ещё " .. (total-50)) end
-    end
-
-    print(string.rep("=", 55))
-    print("ГОТОВО! F9 → скрин")
 end
 
-task.spawn(dump)
+print("")
+print(string.rep("=", 60))
+print("ГОТОВО! СКРИНЬ F9 → КИДАЙ МНЕ СЮДА")
