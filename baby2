@@ -1,0 +1,175 @@
+local Tasks = {"hungry", "sleepy", "thirsty", "bored", "dirty", "camping", "sick", "school", "hot_spring", "salon", "pizza_party"}
+
+local function resolveBabyAilments()
+    print("Starting baby ailments resolver...")
+    
+    while true do
+        task.wait(1) -- Wait 1 second between checks
+
+        local success, err = pcall(function()
+            -- Get the local player
+            local Players = game:GetService("Players")
+            local localPlayer = Players.LocalPlayer
+            if not localPlayer then
+                error("Local player not found")
+            end
+            
+            print("Checking player:", localPlayer.Name)
+
+            -- Check for required modules and objects
+            local ReplicatedStorage = game:GetService("ReplicatedStorage")
+            
+            -- Check ClientModules
+            local clientDataModule = ReplicatedStorage:FindFirstChild("ClientModules")
+            if not clientDataModule then 
+                error("ClientModules not found in ReplicatedStorage")
+            end
+            print("✓ Found ClientModules")
+
+            -- Check Core module
+            local coreModule = clientDataModule:FindFirstChild("Core")
+            if not coreModule then 
+                error("Core module not found in ClientModules")
+            end
+            print("✓ Found Core module")
+
+            -- Load ClientData
+            local clientDataScript = coreModule:WaitForChild("ClientData")
+            if not clientDataScript then
+                error("ClientData script not found in Core module")
+            end
+            
+            local clientData = require(clientDataScript)
+            if not clientData then 
+                error("Failed to load ClientData module")
+            end
+            print("✓ Loaded ClientData")
+
+            -- Get player data
+            local allPlayerData = clientData.get_data()
+            if not allPlayerData then
+                error("Failed to get player data table")
+            end
+            
+            local playerData = allPlayerData[localPlayer.Name]
+            if not playerData then
+                error("Failed to get data for player: " .. localPlayer.Name)
+            end
+            print("✓ Retrieved player data")
+
+            -- Check ailments manager structure
+            if not playerData.ailments_manager then
+                error("ailments_manager not found in player data")
+            end
+            
+            if not playerData.ailments_manager.baby_ailments then
+                error("baby_ailments not found in ailments_manager")
+            end
+            
+            print("✓ Found baby ailments data structure")
+            print("Baby ailments:", playerData.ailments_manager.baby_ailments)
+
+            -- Check if there are any baby ailments
+            local hasAilments = false
+            for ailmentType, _ in pairs(playerData.ailments_manager.baby_ailments) do
+                hasAilments = true
+                break
+            end
+            
+            if not hasAilments then
+                print("No baby ailments found to resolve")
+                return
+            end
+
+            -- Process baby ailments
+            for ailmentType, ailmentData in pairs(playerData.ailments_manager.baby_ailments) do
+                print("Found ailment:", ailmentType, "Data:", ailmentData)
+                
+                if table.find(Tasks, ailmentType) then
+                    print("Attempting to resolve ailment:", ailmentType)
+                    
+                    -- Find the API endpoint
+                    local addAdditive = ReplicatedStorage.API:FindFirstChild("MonitorAPI/AddAdditive")
+                    if addAdditive then
+                        print("✓ Found AddAdditive API, firing...")
+                        local success2, err2 = pcall(function()
+                            addAdditive:FireServer(ailmentType, 1)
+                        end)
+                        
+                        if success2 then
+                            print("✓ Successfully resolved baby ailment:", ailmentType)
+                        else
+                            warn("✗ Failed to fire AddAdditive for " .. ailmentType .. ": " .. tostring(err2))
+                        end
+                    else
+                        warn("✗ AddAdditive API not found at path: MonitorAPI/AddAdditive")
+                        -- List available API endpoints for debugging
+                        if ReplicatedStorage:FindFirstChild("API") then
+                            print("Available API endpoints:")
+                            for _, child in ipairs(ReplicatedStorage.API:GetChildren()) do
+                                print("  - " .. child.Name)
+                            end
+                        end
+                    end
+                else
+                    print("Ailment not in Tasks list:", ailmentType)
+                end
+            end
+        end)
+
+        if not success then
+            warn("Error in baby ailments resolver: " .. tostring(err))
+        end
+    end
+end
+
+-- Test function to check the game structure
+local function debugGameStructure()
+    print("=== DEBUG GAME STRUCTURE ===")
+    
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local localPlayer = Players.LocalPlayer
+    
+    print("Local Player:", localPlayer and localPlayer.Name or "None")
+    print("ReplicatedStorage contents:")
+    
+    for _, item in ipairs(ReplicatedStorage:GetChildren()) do
+        print("  - " .. item.Name .. " (" .. item.ClassName .. ")")
+    end
+    
+    -- Check if API folder exists
+    if ReplicatedStorage:FindFirstChild("API") then
+        print("API folder found, contents:")
+        for _, api in ipairs(ReplicatedStorage.API:GetChildren()) do
+            print("    - " .. api.Name)
+        end
+    else
+        print("✗ API folder not found in ReplicatedStorage")
+    end
+    
+    -- Check if ClientModules exists
+    if ReplicatedStorage:FindFirstChild("ClientModules") then
+        print("ClientModules found, contents:")
+        for _, module in ipairs(ReplicatedStorage.ClientModules:GetChildren()) do
+            print("    - " .. module.Name)
+            
+            if module:FindFirstChild("Core") then
+                print("      Core module found, contents:")
+                for _, coreItem in ipairs(module.Core:GetChildren()) do
+                    print("        - " .. coreItem.Name)
+                end
+            end
+        end
+    else
+        print("✗ ClientModules not found in ReplicatedStorage")
+    end
+    
+    print("=== END DEBUG ===")
+end
+
+-- Run debug first
+debugGameStructure()
+
+-- Then start the main function
+resolveBabyAilments()
