@@ -1,26 +1,229 @@
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- Player
 local player = Players.LocalPlayer
 
--- Simple test
-print("🧪 SIMPLE TEST")
-local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-local playerData = clientData.get_data()
-
-if playerData then
-    print("✅ playerData exists")
-    if playerData[player.Name] then
-        print("✅ Player data found for: " .. player.Name)
-        local data = playerData[player.Name]
-        
-        -- Just list all keys
-        for key, value in pairs(data) do
-            print("🔑 " .. key .. " = " .. type(value))
-        end
-    else
-        print("❌ No data for player: " .. player.Name)
+-- Enhanced function to inspect specific manager categories in detail
+local function inspectSpecificManagers()
+    print("🔍 DETAILED INSPECTION OF MANAGER CATEGORIES")
+    print("============================================")
+    
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        print("❌ Failed to load ClientData module")
+        return
     end
-else
-    print("❌ playerData is nil")
+    
+    local playerData = clientData.get_data()
+    if not playerData or not playerData[player.Name] then
+        print("❌ No data found for player: " .. player.Name)
+        return
+    end
+    
+    local data = playerData[player.Name]
+    
+    -- List of managers to inspect (from your screenshots)
+    local managersToInspect = {
+        "AILMENTS_MANAGER",
+        "PET_STATE_MANAGERS", 
+        "QUEST_MANAGER",
+        "ADMIN_ABUSE_MANAGER",
+        "STATE_MANAGER_RAW"
+    }
+    
+    for _, managerName in pairs(managersToInspect) do
+        if data[managerName] then
+            inspectManagerDetails(managerName, data[managerName])
+        else
+            -- Try case-insensitive search
+            local found = false
+            for actualName, managerData in pairs(data) do
+                if string.lower(actualName) == string.lower(managerName) then
+                    inspectManagerDetails(actualName, managerData)
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                print("❌ " .. managerName .. " not found in player data")
+            end
+        end
+        print("") -- Empty line for separation
+    end
 end
+
+-- Function to inspect a specific manager in detail
+local function inspectManagerDetails(managerName, managerData)
+    print("\n🎯 " .. managerName .. ":")
+    print("   Type: " .. type(managerData))
+    
+    if type(managerData) ~= "table" then
+        print("   Value: " .. tostring(managerData))
+        return
+    end
+    
+    local itemCount = 0
+    for _ in pairs(managerData) do itemCount = itemCount + 1 end
+    print("   Total Items: " .. itemCount)
+    print("   ---")
+    
+    -- Inspect each sub-table in detail
+    for key, value in pairs(managerData) do
+        local valueType = type(value)
+        
+        if valueType == "table" then
+            local subItemCount = 0
+            for _ in pairs(value) do subItemCount = subItemCount + 1 end
+            
+            print("   📁 " .. key .. " [TABLE with " .. subItemCount .. " items]")
+            
+            -- Show first 3-5 items of each sub-table
+            local count = 0
+            for subKey, subValue in pairs(value) do
+                count = count + 1
+                if count <= 3 then
+                    local subValueType = type(subValue)
+                    if subValueType == "table" then
+                        local deepCount = 0
+                        for _ in pairs(subValue) do deepCount = deepCount + 1 end
+                        print("      └─ 📁 " .. tostring(subKey) .. " [TABLE with " .. deepCount .. " items]")
+                    else
+                        print("      └─ 📄 " .. tostring(subKey) .. " = " .. tostring(subValue) .. " [" .. subValueType .. "]")
+                    end
+                end
+            end
+            if count > 3 then
+                print("      └─ ... and " .. (count - 3) .. " more items")
+            end
+            
+        else
+            print("   📄 " .. key .. " = " .. tostring(value) .. " [" .. valueType .. "]")
+        end
+    end
+end
+
+-- Specialized function for AILMENTS_MANAGER
+local function inspectAilmentsManager()
+    print("\n🏥 SPECIAL INSPECTION: AILMENTS_MANAGER")
+    print("=====================================")
+    
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local data = clientData.get_data()[player.Name]
+    
+    local ailmentsManager = data.AILMENTS_MANAGER
+    if not ailmentsManager then
+        print("❌ AILMENTS_MANAGER not found")
+        return
+    end
+    
+    -- Inspect schedules
+    if ailmentsManager.schedules then
+        print("📅 SCHEDULES:")
+        for scheduleKey, scheduleData in pairs(ailmentsManager.schedules) do
+            print("   " .. tostring(scheduleKey) .. ": " .. tostring(scheduleData))
+        end
+    end
+    
+    -- Inspect baby_ailments
+    if ailmentsManager.baby_ailments then
+        print("👶 BABY AILMENTS:")
+        for ailmentKey, ailmentData in pairs(ailmentsManager.baby_ailments) do
+            if type(ailmentData) == "table" then
+                print("   " .. tostring(ailmentKey) .. " [TABLE]")
+                for k, v in pairs(ailmentData) do
+                    print("      " .. tostring(k) .. ": " .. tostring(v))
+                end
+            else
+                print("   " .. tostring(ailmentKey) .. ": " .. tostring(ailmentData))
+            end
+        end
+    end
+    
+    -- Inspect ailments
+    if ailmentsManager.ailments then
+        print("🤒 AILMENTS:")
+        for ailmentKey, ailmentData in pairs(ailmentsManager.ailments) do
+            if type(ailmentData) == "table" then
+                print("   " .. tostring(ailmentKey) .. " [TABLE]")
+                for k, v in pairs(ailmentData) do
+                    print("      " .. tostring(k) .. ": " .. tostring(v))
+                end
+            else
+                print("   " .. tostring(ailmentKey) .. ": " .. tostring(ailmentData))
+            end
+        end
+    end
+end
+
+-- Specialized function for QUEST_MANAGER
+local function inspectQuestManager()
+    print("\n🎯 SPECIAL INSPECTION: QUEST_MANAGER")
+    print("===================================")
+    
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local data = clientData.get_data()[player.Name]
+    
+    local questManager = data.QUEST_MANAGER
+    if not questManager then
+        print("❌ QUEST_MANAGER not found")
+        return
+    end
+    
+    -- Inspect quests_cached
+    if questManager.quests_cached then
+        print("💾 QUESTS CACHED:")
+        for questKey, questData in pairs(questManager.quests_cached) do
+            if type(questData) == "table" then
+                print("   " .. tostring(questKey) .. " [TABLE]")
+                for k, v in pairs(questData) do
+                    print("      " .. tostring(k) .. ": " .. tostring(v))
+                end
+            else
+                print("   " .. tostring(questKey) .. ": " .. tostring(questData))
+            end
+        end
+    end
+    
+    -- Inspect daily_quest_data
+    if questManager.daily_quest_data then
+        print("📅 DAILY QUEST DATA:")
+        for dailyKey, dailyData in pairs(questManager.daily_quest_data) do
+            if type(dailyData) == "table" then
+                print("   " .. tostring(dailyKey) .. " [TABLE]")
+                for k, v in pairs(dailyData) do
+                    print("      " .. tostring(k) .. ": " .. tostring(v))
+                end
+            else
+                print("   " .. tostring(dailyKey) .. ": " .. tostring(dailyData))
+            end
+        end
+    end
+end
+
+-- Run the inspections
+inspectSpecificManagers()
+inspectAilmentsManager()
+inspectQuestManager()
+
+-- Additional function to search for any manager
+local function searchManager(managerName)
+    print("\n🔍 SEARCHING FOR: " .. managerName)
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local data = clientData.get_data()[player.Name]
+    
+    for key, value in pairs(data) do
+        if string.find(string.lower(key), string.lower(managerName)) then
+            print("✅ FOUND: " .. key)
+            inspectManagerDetails(key, value)
+            return
+        end
+    end
+    print("❌ No manager found containing: " .. managerName)
+end
+
+-- Uncomment to search for specific managers:
+-- searchManager("pet")
+-- searchManager("state")
+-- searchManager("admin")
