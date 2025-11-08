@@ -1,15 +1,94 @@
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+local ContentProvider = game:GetService("ContentProvider")
 
-local icon = Instance.new("ImageLabel")
-icon.Size = UDim2.new(0, 100, 0, 100)
-icon.Position = UDim2.new(0.5, -50, 0.5, -50)
-icon.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-icon.Image = "rbxasset://textures/ui/controls/robux_icon.png"
-icon.Parent = screenGui
+-- Function to get all assets from ContentProvider
+local function scanContent()
+    print("=== SCANNING GAME CONTENT ===")
+    
+    -- Get all preloaded content
+    local preloadedAssets = ContentProvider:GetPreloadedAssets()
+    print("Preloaded Assets: " .. #preloadedAssets)
+    
+    for i, asset in ipairs(preloadedAssets) do
+        print("Asset " .. i .. ": " .. tostring(asset))
+    end
+    
+    -- Try to get base URL to see what's available
+    local baseUrl = ContentProvider.BaseUrl
+    print("Base URL: " .. baseUrl)
+end
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 12)
-corner.Parent = icon
+-- Function to scan game for Decals and Textures
+local function scanGameObjects()
+    print("\n=== SCANNING GAME OBJECTS ===")
+    
+    local placesToCheck = {
+        game:GetService("Workspace"),
+        game:GetService("Lighting"),
+        game:GetService("StarterPack"),
+        game:GetService("StarterGui"),
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ServerStorage"),
+        game:GetService("SoundService"),
+    }
+    
+    for _, place in ipairs(placesToCheck) do
+        print("\nScanning: " .. place:GetFullName())
+        
+        -- Find Decals
+        local decals = place:GetDescendants()
+        local foundDecals = {}
+        
+        for _, descendant in ipairs(decals) do
+            if descendant:IsA("Decal") then
+                table.insert(foundDecals, descendant.Texture)
+            elseif descendant:IsA("Texture") then
+                table.insert(foundDecals, descendant.Texture)
+            elseif descendant:IsA("ImageLabel") and descendant.Image ~= "" then
+                table.insert(foundDecals, descendant.Image)
+            elseif descendant:IsA("ImageButton") and descendant.Image ~= "" then
+                table.insert(foundDecals, descendant.Image)
+            end
+        end
+        
+        if #foundDecals > 0 then
+            for i, texture in ipairs(foundDecals) do
+                print("Found: " .. texture)
+            end
+        else
+            print("No textures found")
+        end
+    end
+end
 
-print("Testing with Robux icon - this should work!")
+-- Function to scan for Meshes with textures
+local function scanMeshes()
+    print("\n=== SCANNING MESHES ===")
+    
+    local meshes = game:GetDescendants()
+    local foundTextures = {}
+    
+    for _, descendant in ipairs(meshes) do
+        if descendant:IsA("MeshPart") or descendant:IsA("Part") then
+            for _, child in ipairs(descendant:GetChildren()) do
+                if child:IsA("Texture") or child:IsA("Decal") then
+                    local texture = child.Texture
+                    if texture ~= "" then
+                        table.insert(foundTextures, texture)
+                        print("Mesh Texture: " .. texture .. " in " .. descendant:GetFullName())
+                    end
+                end
+            end
+        end
+    end
+    
+    if #foundTextures == 0 then
+        print("No mesh textures found")
+    end
+end
+
+-- Run all scans
+scanContent()
+scanGameObjects() 
+scanMeshes()
+
+print("\n=== SCAN COMPLETE ===")
