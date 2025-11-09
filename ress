@@ -1,4 +1,4 @@
--- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (COMPLETE WORKING VERSION)
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (PRE-CHECK INVENTORY)
 -- Press ♻️ or R key → START / STOP
 -- SMART RELEASE: 18 pets OR 2 neons OR 4500+ points
 
@@ -106,9 +106,6 @@ local targetPetNames = {
     "basic_egg_2022_parakeet", 
     "basic_egg_2022_robot",
     "basic_egg_2022_corgi",
-    "basic_egg_2022_ant",
-    "basic_egg_2022_donkey",
-    "basic_egg_2022_poodle"
 }
 
 -- 🔍 Get ALL pets from inventory
@@ -127,19 +124,22 @@ local function getAllPets()
     return pets
 end
 
--- 🟢 Get Neon pets (any age)
+-- 🟢 Get Neon pets (age 6+ for massive boost)
 local function getNeonPets()
     local pets = getAllPets()
     local neons = {}
     for _, pet in ipairs(pets) do
         local isNeon = pet.properties and pet.properties.neon
         local age = pet.properties and pet.properties.age or 0
-        if isNeon then
+        if isNeon and age >= 6 then  -- CHANGED: Only age 6+ neons
             table.insert(neons, {
                 uniqueId = pet.uniqueId,
                 age = age,
                 id = pet.id
             })
+            print("🌟 Neon 6+ Found: " .. pet.id .. " (Age: " .. age .. ")")
+        elseif isNeon then
+            print("💡 Young Neon: " .. pet.id .. " (Age: " .. age .. ") - Not using")
         end
     end
     return neons
@@ -201,7 +201,7 @@ local function countCrystalEggs()
 end
 
 --------------------------------------------------------------
--- SMART RELEASE DECISION SYSTEM
+-- SMART RELEASE DECISION SYSTEM (PRE-CHECK)
 --------------------------------------------------------------
 local function shouldReleaseNow()
     local targetDupes = getTargetDupes()
@@ -237,8 +237,23 @@ local function shouldReleaseNow()
     return false, targetDupes, neonPets
 end
 
+-- NEW: Pre-check before teleporting
+local function hasEnoughResources()
+    local targetDupes = getTargetDupes()
+    local neonPets = getNeonPets()
+    local savedPoints = getSavedPoints()
+    
+    local totalPets = #targetDupes
+    local totalNeons = #neonPets
+    local hasEnoughPoints = savedPoints >= RELEASE_CONDITIONS.MIN_POINTS
+    
+    return (totalPets >= RELEASE_CONDITIONS.MIN_PETS) or
+           (totalNeons >= RELEASE_CONDITIONS.MIN_NEONS) or
+           (hasEnoughPoints)
+end
+
 --------------------------------------------------------------
--- COMPLETE RELEASE PROCESS (WORKING LOGIC)
+-- COMPLETE RELEASE PROCESS
 --------------------------------------------------------------
 local function releasePets()
     -- Check release conditions
@@ -252,12 +267,12 @@ local function releasePets()
     local petIds = {}
     local usedNeons = 0
 
-    -- Priority 1: Neon pets
+    -- Priority 1: Neon pets (age 6+ only)
     for i, neon in ipairs(neonPets) do
-        if i <= 2 then
+        if i <= 2 and neon.age >= 6 then  -- CHANGED: Only use age 6+ neons
             table.insert(petIds, neon.uniqueId)
             usedNeons = usedNeons + 1
-            log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
+            log("🚀 Adding Neon 6+: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
         end
     end
 
@@ -482,18 +497,30 @@ local function goToNursery()
 end
 
 --------------------------------------------------------------
--- MAIN FARMING CYCLE
+-- MAIN FARMING CYCLE (WITH PRE-CHECK)
 --------------------------------------------------------------
 local function farmCycle()
     log("Starting smart farm cycle...")
     countCrystalEggs()
+    
+    -- PRE-CHECK: Only teleport if we have enough resources
+    if not hasEnoughResources() then
+        log("❌ Not enough resources. Waiting 60 seconds...")
+        for i = 1, 60 do
+            if not running then break end
+            task.wait(1)
+        end
+        return
+    end
+    
+    log("✅ Enough resources found! Teleporting to Nursery...")
     
     if not goToNursery() then
         log("Failed to reach Nursery")
         return
     end
     
-    -- Immediate release process (no waiting)
+    -- Immediate release process
     if releasePets() then
         log("🎉 Farm cycle completed successfully!")
     else
@@ -520,7 +547,10 @@ local function toggleFarm()
                 pcall(farmCycle)
                 if running then 
                     log("Waiting 30 seconds before next cycle...")
-                    task.wait(30)  -- Cooldown between cycles
+                    for i = 1, 30 do
+                        if not running then break end
+                        task.wait(1)
+                    end
                 end
             end
         end)
@@ -548,6 +578,6 @@ end
 btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
-log("COMPLETE Pet Releaser Loaded! Press Recycle or R")
-log("Release Conditions: 18 pets OR 2 neons OR 4500+ points")
-log("Process: Visit → Open Backpack → Release → Claim")
+log("SMART Pet Releaser Loaded! Press Recycle or R")
+log("Release Conditions: 18 pets OR 2 neons (age 6+) OR 4500+ points")
+log("Pre-check: Will only teleport when resources available")
