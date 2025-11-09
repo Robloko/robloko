@@ -1,6 +1,6 @@
--- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (ENGLISH + OPTIMIZED)
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (SMART PRIORITY SYSTEM)
 -- Press ♻️ or R key → START / STOP
--- ABSOLUTELY STABLE - NO nil ERRORS
+-- RELEASES WHEN: 18 pets found OR 2 neon pets OR 4500+ saved points
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -23,20 +23,14 @@ local function safeWaitForChild(parent, childName, timeout)
     local startTime = tick()
     while tick() - startTime < timeout do
         local child = parent:FindFirstChild(childName)
-        if child then
-            return child
-        end
+        if child then return child end
         task.wait(0.5)
     end
     return nil
 end
 
--- Wait for essential objects
 local API = safeWaitForChild(ReplicatedStorage, "API")
-if not API then
-    warn("API not found! Script stopping.")
-    return
-end
+if not API then warn("API not found!") return end
 
 local ClientDataModule
 local core = safeWaitForChild(ReplicatedStorage, "ClientModules")
@@ -47,21 +41,11 @@ if core then
     end
 end
 
-if not ClientDataModule then
-    warn("ClientDataModule not found! Script stopping.")
-    return
-end
+if not ClientDataModule then warn("ClientDataModule not found!") return end
 
--- Safe require
 local clientData
-local success, err = pcall(function()
-    clientData = require(ClientDataModule)
-end)
-
-if not success then
-    warn("ClientData load error: " .. tostring(err))
-    return
-end
+local success, err = pcall(function() clientData = require(ClientDataModule) end)
+if not success then warn("ClientData error: " .. tostring(err)) return end
 
 --------------------------------------------------------------
 -- CENTRAL UI BUTTON
@@ -102,51 +86,63 @@ status.Font = Enum.Font.GothamBold
 status.Parent = screenGui
 
 --------------------------------------------------------------
--- VARIABLES
+-- VARIABLES & CONFIG
 --------------------------------------------------------------
 local running = false
 local farmThread = nil
 
+-- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
+local RELEASE_CONDITIONS = {
+    MIN_PETS = 18,          -- Condition 1: 18 basic pets
+    MIN_NEONS = 2,          -- Condition 2: 2 neon pets  
+    MIN_POINTS = 4500,      -- Condition 3: 4500+ saved points
+}
+
 --------------------------------------------------------------
--- PET MANAGEMENT SYSTEM (OPTIMIZED FROM PROVIDED CODE)
+-- PET MANAGEMENT SYSTEM (ENHANCED)
 --------------------------------------------------------------
 local targetPetNames = {
     "basic_egg_2022_orangutan",
     "basic_egg_2022_parakeet", 
     "basic_egg_2022_robot",
-    "basic_egg_2022_corgi"
+    "basic_egg_2022_corgi",
 }
 
--- 🔍 Get ALL pets from inventory.pets
+-- 🔍 Get ALL pets from inventory
 local function getAllPets()
     local playerData = clientData.get_data()[player.Name]
     local pets = {}
     if playerData and playerData.inventory and playerData.inventory.pets then
         for uniqueId, petData in pairs(playerData.inventory.pets) do
-            petData.uniqueId = uniqueId -- Key for release
-            petData.unique = petData.unique or uniqueId -- Fallback for ToolAPI
-            table.insert(pets, petData)
+            if type(petData) == "table" then
+                petData.uniqueId = uniqueId
+                petData.unique = petData.unique or uniqueId
+                table.insert(pets, petData)
+            end
         end
     end
     return pets
 end
 
--- 🟢 Neon 6+ years old (Full Grown Neon = MASSIVE points)
-local function getNeonOldPets()
+-- 🟢 Get Neon pets (age 6+ for massive boost)
+local function getNeonPets()
     local pets = getAllPets()
-    local oldNeons = {}
+    local neons = {}
     for _, pet in ipairs(pets) do
         local isNeon = pet.properties and pet.properties.neon
         local age = pet.properties and pet.properties.age or 0
-        if isNeon and age >= 6 then
-            table.insert(oldNeons, pet.uniqueId)
-            print("✅ Neon Old Found: " .. pet.id .. " (Age: " .. age .. ")")
+        if isNeon then
+            table.insert(neons, {
+                uniqueId = pet.uniqueId,
+                age = age,
+                id = pet.id
+            })
         end
     end
-    return oldNeons
+    return neons
 end
 
--- 🔍 Target: 18x Basic Egg 2022 dupes
+-- 🔍 Get all target dupes (any target pet)
 local function getTargetDupes()
     local pets = getAllPets()
     local dupes = {}
@@ -157,23 +153,36 @@ local function getTargetDupes()
         counts[name] = 0
     end
     
-    -- Collect target pets
+    -- Collect ALL target pets (no limit)
     for _, pet in ipairs(pets) do
         for _, targetName in ipairs(targetPetNames) do
             if pet.id == targetName then
                 table.insert(dupes, pet.uniqueId)
                 counts[targetName] = (counts[targetName] or 0) + 1
-                if #dupes >= 18 then break end
+                break  -- Stop checking other names once found
             end
         end
-        if #dupes >= 18 then break end
     end
     
-    print("📊 Dupe Counts: " .. HttpService:JSONEncode(counts))
-    return dupes
+    print("📊 Inventory Scan: " .. HttpService:JSONEncode(counts))
+    print("📦 Total Target Pets: " .. #dupes)
+    return dupes, counts
 end
 
--- 🥚 Count Crystal Eggs (NEW FEATURE)
+-- 💰 Get Saved Points (Nursery progress)
+local function getSavedPoints()
+    local points = 0
+    pcall(function()
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.nursery then
+            points = playerData.nursery.saved_points or 0
+        end
+    end)
+    print("💰 Saved Points: " .. points)
+    return points
+end
+
+-- 🥚 Count Crystal Eggs
 local function countCrystalEggs()
     local playerData = clientData.get_data()[player.Name]
     local count = 0
@@ -184,52 +193,135 @@ local function countCrystalEggs()
             end
         end
     end
-    print("🥚 CRYSTAL EGGS OWNED: " .. count)
+    print("🥚 CRYSTAL EGGS: " .. count)
     return count
 end
 
 --------------------------------------------------------------
--- UTILITIES
+-- SMART RELEASE DECISION SYSTEM
 --------------------------------------------------------------
-local function log(msg) 
-    print("[Nursery Farmer] " .. tostring(msg))
+local function shouldReleaseNow()
+    local targetDupes = getTargetDupes()
+    local neonPets = getNeonPets()
+    local savedPoints = getSavedPoints()
+    
+    local totalPets = #targetDupes
+    local totalNeons = #neonPets
+    local hasEnoughPoints = savedPoints >= RELEASE_CONDITIONS.MIN_POINTS
+    
+    print("🤔 Release Check:")
+    print("   Pets: " .. totalPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
+    print("   Neons: " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS) 
+    print("   Points: " .. savedPoints .. "/" .. RELEASE_CONDITIONS.MIN_POINTS)
+    
+    -- PRIORITY-BASED RELEASE CONDITIONS
+    if totalPets >= RELEASE_CONDITIONS.MIN_PETS then
+        print("✅ REASON: Enough pets (" .. totalPets .. ")")
+        return true, targetDupes, neonPets
+    end
+    
+    if totalNeons >= RELEASE_CONDITIONS.MIN_NEONS then
+        print("✅ REASON: Enough neons (" .. totalNeons .. ")")
+        return true, targetDupes, neonPets
+    end
+    
+    if hasEnoughPoints then
+        print("✅ REASON: Enough points (" .. savedPoints .. ")")
+        return true, targetDupes, neonPets
+    end
+    
+    print("❌ Not enough resources for release")
+    return false, targetDupes, neonPets
 end
 
-local function getChar()
-    local char = player.Character
-    if not char then
-        char = player.CharacterAdded:Wait()
+--------------------------------------------------------------
+-- RELEASE OPTIMIZATION
+--------------------------------------------------------------
+local function releasePets()
+    local shouldRelease, targetDupes, neonPets = shouldReleaseNow()
+    
+    if not shouldRelease then
+        return false
     end
-    return char
+    
+    -- STRATEGY: Use available pets efficiently
+    local petIds = {}
+    local usedNeons = 0
+    
+    -- PRIORITY 1: Add neon pets first (massive point boost)
+    for i, neon in ipairs(neonPets) do
+        if i <= 2 then  -- Use up to 2 neons for optimal boost
+            table.insert(petIds, neon.uniqueId)
+            usedNeons = usedNeons + 1
+            print("🚀 Adding Neon: " .. neon.id .. " (Age: " .. neon.age .. ")")
+        end
+    end
+    
+    -- PRIORITY 2: Fill remaining slots with target dupes
+    local slotsRemaining = 18 - usedNeons
+    for i = 1, math.min(slotsRemaining, #targetDupes) do
+        table.insert(petIds, targetDupes[i])
+    end
+    
+    print("🎯 Release Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " dupes")
+    
+    if #petIds < 1 then
+        print("❌ No pets selected for release")
+        return false
+    end
+    
+    -- Create uniques table for API
+    local uniques = {}
+    for _, petId in ipairs(petIds) do
+        uniques[petId] = true
+    end
+    
+    -- Primary release method
+    local success, err = pcall(function()
+        return API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
+            "nursery_releaser",
+            "UseBlock", 
+            {action = "release", uniques = uniques},
+            player.Character
+        )
+    end)
+    
+    if success then
+        print("🚀 RELEASED " .. #petIds .. " PETS! Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " regular")
+        return true
+    else
+        print("❌ Release failed: " .. tostring(err))
+        -- Fallback methods
+        pcall(function() API.PetAPI.ReleasePets:FireServer(petIds) end)
+        pcall(function() API.PetReleaserAPI.ReleaseBatch:FireServer(petIds) end)
+        return false
+    end
 end
+
+--------------------------------------------------------------
+-- UTILITIES (KEEP FROM BEFORE)
+--------------------------------------------------------------
+local function log(msg) print("[Nursery Farmer] " .. tostring(msg)) end
+local function getChar() return player.Character or player.CharacterAdded:Wait() end
 
 local function safeTp(pos)
-    local success = pcall(function()
+    return pcall(function()
         local hrp = getChar():FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(pos)
-            task.wait(0.3)
-        end
+        if hrp then hrp.CFrame = CFrame.new(pos); task.wait(0.3) end
     end)
-    return success
 end
 
 local function setCam(pos, look)
     pcall(function()
         local cam = Workspace.CurrentCamera
-        if cam then
-            cam.CameraType = Enum.CameraType.Scriptable
-            cam.CFrame = CFrame.new(pos, look)
-        end
+        if cam then cam.CameraType = Enum.CameraType.Scriptable; cam.CFrame = CFrame.new(pos, look) end
     end)
 end
 
 local function resetCam()
     pcall(function()
         local cam = Workspace.CurrentCamera
-        if cam then 
-            cam.CameraType = Enum.CameraType.Custom 
-        end
+        if cam then cam.CameraType = Enum.CameraType.Custom end
     end)
 end
 
@@ -248,128 +340,61 @@ local function isNear(pos, dist)
     dist = dist or 60
     local success, result = pcall(function()
         local hrp = getChar():FindFirstChild("HumanoidRootPart")
-        if hrp then
-            return (hrp.Position - pos).Magnitude < dist
-        end
-        return false
+        return hrp and (hrp.Position - pos).Magnitude < dist
     end)
     return success and result or false
 end
 
 --------------------------------------------------------------
--- TELEPORT TO NURSERY
+-- TELEPORT TO NURSERY (OPTIMIZED)
 --------------------------------------------------------------
 local function goToNursery()
     for attempt = 1, 3 do
-        log("Attempt "..attempt.." - teleport to Nursery")
-
-        -- Exit house
-        pcall(function()
-            API.HousingAPI.UnsubscribeFromHouse:InvokeServer(player, true)
-        end)
+        log("Teleport attempt " .. attempt)
+        
+        pcall(function() API.HousingAPI.UnsubscribeFromHouse:InvokeServer(player, true) end)
         task.wait(3)
-
-        -- First stage
+        
         if safeTp(Vector3.new(-3023.66, 6529.58, -8975.54)) then
             setCam(Vector3.new(-3023.48, 6536.96, -8975.54), Vector3.new(-3023.48, 6536.96, -8875.54))
             pressW()
             task.wait(10)
-
+            
             if isNear(Vector3.new(-255.10, 30.89, -1831.46), 50) then
                 if safeTp(Vector3.new(-247.17, 31.50, -1481.08)) then
                     setCam(Vector3.new(-247.18, 39.65, -1491.06), Vector3.new(-247.18, 39.65, -1391.06))
                     pressW()
                     task.wait(10)
-
+                    
                     if isNear(Vector3.new(8975.76, 6933.83, 11953.16), 100) then
                         resetCam()
-                        log("Successfully in Nursery!")
+                        log("In Nursery! Checking resources...")
                         return true
                     end
                 end
             end
         end
-        
         resetCam()
         task.wait(2)
     end
     return false
 end
 
---------------------------------------------------------------
--- PET RELEASE SYSTEM (OPTIMIZED)
---------------------------------------------------------------
-local function releasePets()
-    local neonOld = getNeonOldPets()
-    local bulkDupes = getTargetDupes()
-   
-    if #bulkDupes < 18 then
-        print("❌ INSUFFICIENT DUPES! Need 18 Basic 2022. Found: " .. #bulkDupes)
-        return false
-    end
-   
-    -- BOOST: Replace 1 dupe with Neon 6+ (if available)
-    local petIds = bulkDupes
-    if #neonOld > 0 then
-        petIds[1] = neonOld[1] -- Swap first pet
-        print("🚀 BOOSTED: Added Neon 6+ year pet!")
-    end
-   
-    -- Create uniques table for HousingAPI
-    local uniques = {}
-    for _, petId in ipairs(petIds) do
-        uniques[petId] = true
-    end
-   
-    -- Primary method: HousingAPI
-    local success, err = pcall(function()
-        return API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser",
-            "UseBlock", 
-            {action = "release", uniques = uniques},
-            getChar()
-        )
-    end)
-   
-    if success then
-        print("🚀 RELEASED 18 PETS! Timer started (7 min)...")
-        return true
-    else
-        print("❌ RELEASE FAILED: " .. tostring(err))
-        
-        -- Alternative methods
-        pcall(function()
-            API.PetAPI.ReleasePets:FireServer(petIds)
-        end)
-        
-        pcall(function()
-            API.PetReleaserAPI.ReleaseBatch:FireServer(petIds)
-        end)
-        
-        return false
-    end
-end
-
 local function claimReward()
     pcall(function()
         API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser", 
-            "UseBlock", 
-            {action = "claim"}, 
-            getChar()
+            "nursery_releaser", "UseBlock", {action = "claim"}, getChar()
         )
     end)
-    log("Rewards claimed! Checking Crystal Eggs...")
+    log("Rewards claimed!")
     countCrystalEggs()
 end
 
 --------------------------------------------------------------
--- MAIN FARMING CYCLE
+-- MAIN FARMING CYCLE (SMART)
 --------------------------------------------------------------
 local function farmCycle()
-    log("Starting farm cycle...")
-    
-    -- Count eggs before starting
+    log("Starting smart farm cycle...")
     countCrystalEggs()
     
     if not goToNursery() then
@@ -377,49 +402,41 @@ local function farmCycle()
         return
     end
     
+    -- Check current resources and release if conditions met
     if releasePets() then
         log("Waiting 7 minutes for rewards...")
-        for i = 1, 420 do  -- 420 seconds = 7 minutes
+        for i = 1, 420 do
             if not running then break end
             task.wait(1)
         end
-        
-        if running then
-            claimReward()
-        end
+        if running then claimReward() end
+    else
+        log("Not enough resources yet. Waiting...")
+        -- Could add inventory scanning loop here
     end
 end
 
 --------------------------------------------------------------
--- FARMER CONTROL SYSTEM
+-- CONTROL SYSTEM (SAME AS BEFORE)
 --------------------------------------------------------------
 local function toggleFarm()
     running = not running
 
     if running then
-        -- START FARMING
         btn.Text = "STOP"
         btn.TextColor3 = Color3.fromRGB(255, 0, 0)
         stroke.Color = Color3.fromRGB(255, 0, 0)
         status.Text = "RUNNING..."
         status.TextColor3 = Color3.fromRGB(0, 255, 0)
-        log("Farmer started! Goal: Crystal Eggs 🥚")
+        log("Smart Farmer started! Monitoring resources...")
         
-        -- Start farm thread
         farmThread = task.spawn(function()
             while running do
-                local success = pcall(farmCycle)
-                if not success then
-                    log("Error in farm cycle")
-                end
-                
-                if running then
-                    task.wait(5)  -- Cooldown between cycles
-                end
+                pcall(farmCycle)
+                if running then task.wait(5) end
             end
         end)
         
-        -- Button animation
         pcall(function()
             TweenService:Create(btn, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
                 Size = UDim2.new(0, 100, 0, 100)
@@ -427,41 +444,21 @@ local function toggleFarm()
         end)
         
     else
-        -- STOP FARMING
         btn.Text = "Recycle"
         btn.TextColor3 = Color3.fromRGB(0, 255, 0)
         stroke.Color = Color3.fromRGB(0, 255, 0)
         status.Text = "OFF"
         status.TextColor3 = Color3.fromRGB(255, 0, 0)
         
-        -- Stop farm thread
-        if farmThread then
-            task.cancel(farmThread)
-            farmThread = nil
-        end
-        
-        -- Reset animation
-        pcall(function()
-            btn.Size = UDim2.new(0, 90, 0, 90)
-        end)
-        
+        if farmThread then task.cancel(farmThread) end
+        pcall(function() btn.Size = UDim2.new(0, 90, 0, 90) end)
         resetCam()
         log("Farmer stopped")
     end
 end
 
---------------------------------------------------------------
--- CONTROL SETUP
---------------------------------------------------------------
-btn.MouseButton1Click:Connect(function()
-    pcall(toggleFarm)
-end)
+btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
+player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
-local mouse = player:GetMouse()
-mouse.KeyDown:Connect(function(key)
-    if key:lower() == "r" then
-        pcall(toggleFarm)
-    end
-end)
-
-log("Pet Releaser Farmer Loaded! Press Recycle or R to start")
+log("SMART Pet Releaser Loaded! Press Recycle or R")
+log("Release Conditions: 18 pets OR 2 neons OR 4500+ points")
