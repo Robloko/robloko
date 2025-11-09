@@ -1,6 +1,6 @@
--- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (SMART PRIORITY SYSTEM)
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (FIXED API STRUCTURE)
 -- Press ♻️ or R key → START / STOP
--- RELEASES WHEN: 18 pets found OR 2 neon pets OR 4500+ saved points
+-- SMART RELEASE: 18 pets OR 2 neons OR 4500+ points
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -31,6 +31,11 @@ end
 
 local API = safeWaitForChild(ReplicatedStorage, "API")
 if not API then warn("API not found!") return end
+
+-- Find the specific API endpoints
+local HousingAPIFunction = API:FindFirstChild("HousingAPI/ActivateInteriorFurniture")
+local PetAPIEvent = API:FindFirstChild("PetAPI/ReleasePets")
+local PetReleaserAPIEvent = API:FindFirstChild("PetReleaserAPI/ReleaseBatch")
 
 local ClientDataModule
 local core = safeWaitForChild(ReplicatedStorage, "ClientModules")
@@ -99,13 +104,16 @@ local RELEASE_CONDITIONS = {
 }
 
 --------------------------------------------------------------
--- PET MANAGEMENT SYSTEM (ENHANCED)
+-- PET MANAGEMENT SYSTEM
 --------------------------------------------------------------
 local targetPetNames = {
     "basic_egg_2022_orangutan",
     "basic_egg_2022_parakeet", 
     "basic_egg_2022_robot",
     "basic_egg_2022_corgi",
+    "basic_egg_2022_ant",
+    "basic_egg_2022_donkey",
+    "basic_egg_2022_poodle"
 }
 
 -- 🔍 Get ALL pets from inventory
@@ -124,7 +132,7 @@ local function getAllPets()
     return pets
 end
 
--- 🟢 Get Neon pets (age 6+ for massive boost)
+-- 🟢 Get Neon pets (any age)
 local function getNeonPets()
     local pets = getAllPets()
     local neons = {}
@@ -159,7 +167,7 @@ local function getTargetDupes()
             if pet.id == targetName then
                 table.insert(dupes, pet.uniqueId)
                 counts[targetName] = (counts[targetName] or 0) + 1
-                break  -- Stop checking other names once found
+                break
             end
         end
     end
@@ -235,71 +243,117 @@ local function shouldReleaseNow()
 end
 
 --------------------------------------------------------------
--- RELEASE OPTIMIZATION
+-- CORRECTED RELEASE FUNCTION (YOUR VERSION)
 --------------------------------------------------------------
 local function releasePets()
+    -- Check if we should release pets
     local shouldRelease, targetDupes, neonPets = shouldReleaseNow()
-    
+
     if not shouldRelease then
+        log("Not enough resources for release.")
         return false
     end
-    
-    -- STRATEGY: Use available pets efficiently
+
+    -- Form the list of pet unique IDs for release
     local petIds = {}
     local usedNeons = 0
-    
-    -- PRIORITY 1: Add neon pets first (massive point boost)
+
+    -- Priority 1: Add neon pets (up to 2)
     for i, neon in ipairs(neonPets) do
-        if i <= 2 then  -- Use up to 2 neons for optimal boost
+        if i <= 2 then
             table.insert(petIds, neon.uniqueId)
             usedNeons = usedNeons + 1
-            print("🚀 Adding Neon: " .. neon.id .. " (Age: " .. neon.age .. ")")
+            log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
         end
     end
-    
-    -- PRIORITY 2: Fill remaining slots with target dupes
+
+    -- Priority 2: Add regular pets (duplicates)
     local slotsRemaining = 18 - usedNeons
     for i = 1, math.min(slotsRemaining, #targetDupes) do
         table.insert(petIds, targetDupes[i])
     end
-    
-    print("🎯 Release Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " dupes")
-    
+
+    log("🎯 Release Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " dupes")
+
     if #petIds < 1 then
-        print("❌ No pets selected for release")
+        log("❌ No pets selected for release")
         return false
     end
-    
+
     -- Create uniques table for API
     local uniques = {}
     for _, petId in ipairs(petIds) do
         uniques[petId] = true
     end
-    
-    -- Primary release method
+
+    -- Main call to release pets
+    local args = {
+        "f-27", -- Pet Releaser identifier
+        "UseBlock",
+        {
+            action = "use", -- or "release" if needed
+            uniques = uniques
+        },
+        player.Character
+    }
+
+    -- Check if API exists
+    local housingAPI = ReplicatedStorage:FindFirstChild("API") and
+                       ReplicatedStorage.API:FindFirstChild("HousingAPI/ActivateInteriorFurniture")
+
+    if not housingAPI then
+        log("❌ HousingAPI not found!")
+        return false
+    end
+
+    -- Try to release pets
     local success, err = pcall(function()
-        return API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser",
-            "UseBlock", 
-            {action = "release", uniques = uniques},
-            player.Character
-        )
+        return housingAPI:InvokeServer(unpack(args))
     end)
-    
+
     if success then
-        print("🚀 RELEASED " .. #petIds .. " PETS! Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " regular")
+        log("🚀 RELEASED " .. #petIds .. " PETS! Strategy: " .. usedNeons .. " neons + " .. (#petIds - usedNeons) .. " regular")
         return true
     else
-        print("❌ Release failed: " .. tostring(err))
-        -- Fallback methods
-        pcall(function() API.PetAPI.ReleasePets:FireServer(petIds) end)
-        pcall(function() API.PetReleaserAPI.ReleaseBatch:FireServer(petIds) end)
+        log("❌ Release failed: " .. tostring(err))
+
+        -- Fallback: try alternative methods
+        local fallbackMethods = {
+            function()
+                -- Method 1: PetAPI.ReleasePets
+                local petAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/ReleasePets")
+                if petAPI then
+                    pcall(function() petAPI:FireServer(petIds) end)
+                    return true
+                end
+                return false
+            end,
+            function()
+                -- Method 2: PetReleaserAPI.ReleaseBatch
+                local releaserAPI = ReplicatedStorage.API:FindFirstChild("PetReleaserAPI/ReleaseBatch")
+                if releaserAPI then
+                    pcall(function() releaserAPI:FireServer(petIds) end)
+                    return true
+                end
+                return false
+            end
+        }
+
+        -- Try fallbacks
+        for _, method in ipairs(fallbackMethods) do
+            if method() then
+                log("✅ Fallback method succeeded!")
+                return true
+            end
+        end
+
+        log("❌ All fallback methods failed.")
         return false
     end
 end
 
 --------------------------------------------------------------
--- UTILITIES (KEEP FROM BEFORE)
+-- UTILITIES
 --------------------------------------------------------------
 local function log(msg) print("[Nursery Farmer] " .. tostring(msg)) end
 local function getChar() return player.Character or player.CharacterAdded:Wait() end
@@ -346,13 +400,23 @@ local function isNear(pos, dist)
 end
 
 --------------------------------------------------------------
--- TELEPORT TO NURSERY (OPTIMIZED)
+-- TELEPORT TO NURSERY
 --------------------------------------------------------------
 local function goToNursery()
     for attempt = 1, 3 do
         log("Teleport attempt " .. attempt)
         
-        pcall(function() API.HousingAPI.UnsubscribeFromHouse:InvokeServer(player, true) end)
+        -- Exit house using correct API
+        pcall(function() 
+            local unsubscribeAPI = ReplicatedStorage.API:FindFirstChild("HousingAPI/UnsubscribeFromHouse")
+            if unsubscribeAPI then
+                if unsubscribeAPI:IsA("RemoteFunction") then
+                    unsubscribeAPI:InvokeServer(player, true)
+                elseif unsubscribeAPI:IsA("RemoteEvent") then
+                    unsubscribeAPI:FireServer(player, true)
+                end
+            end
+        end)
         task.wait(3)
         
         if safeTp(Vector3.new(-3023.66, 6529.58, -8975.54)) then
@@ -382,16 +446,27 @@ end
 
 local function claimReward()
     pcall(function()
-        API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser", "UseBlock", {action = "claim"}, getChar()
-        )
+        local housingAPI = ReplicatedStorage.API:FindFirstChild("HousingAPI/ActivateInteriorFurniture")
+        if housingAPI then
+            local args = {
+                "f-27", -- Pet Releaser identifier
+                "UseBlock",
+                { action = "claim" },
+                player.Character
+            }
+            if housingAPI:IsA("RemoteFunction") then
+                housingAPI:InvokeServer(unpack(args))
+            elseif housingAPI:IsA("RemoteEvent") then
+                housingAPI:FireServer(unpack(args))
+            end
+        end
     end)
     log("Rewards claimed!")
     countCrystalEggs()
 end
 
 --------------------------------------------------------------
--- MAIN FARMING CYCLE (SMART)
+-- MAIN FARMING CYCLE
 --------------------------------------------------------------
 local function farmCycle()
     log("Starting smart farm cycle...")
@@ -402,7 +477,6 @@ local function farmCycle()
         return
     end
     
-    -- Check current resources and release if conditions met
     if releasePets() then
         log("Waiting 7 minutes for rewards...")
         for i = 1, 420 do
@@ -411,13 +485,12 @@ local function farmCycle()
         end
         if running then claimReward() end
     else
-        log("Not enough resources yet. Waiting...")
-        -- Could add inventory scanning loop here
+        log("Release failed or not enough resources")
     end
 end
 
 --------------------------------------------------------------
--- CONTROL SYSTEM (SAME AS BEFORE)
+-- CONTROL SYSTEM
 --------------------------------------------------------------
 local function toggleFarm()
     running = not running
@@ -459,6 +532,12 @@ end
 
 btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
+
+-- Debug: List available APIs
+print("🔍 Available API Endpoints:")
+for _, child in pairs(ReplicatedStorage.API:GetChildren()) do
+    print("   - " .. child.Name .. " (" .. child.ClassName .. ")")
+end
 
 log("SMART Pet Releaser Loaded! Press Recycle or R")
 log("Release Conditions: 18 pets OR 2 neons OR 4500+ points")
