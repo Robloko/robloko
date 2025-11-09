@@ -1,405 +1,285 @@
--- ♻️ ADOPT ME! NURSERY AUTO-FARMER + ЦЕНТРАЛЬНАЯ КНОПКА (ИСПРАВЛЕННАЯ ВЕРСИЯ)
--- Нажми ♻️ или клавишу R → START / STOP
--- БЕЗОПАСНАЯ ВЕРСИЯ БЕЗ ОШИБОК
-
-repeat task.wait() until game:IsLoaded()
-repeat task.wait() until game.Players.LocalPlayer
+-- 🐾 Adopt Me! Pet Releaser Auto-Farmer (CORRECTED LOGIC)
+-- ✅ START releasing pets ONLY when confirmed at Nursery
+-- ✅ Proper nursery detection and timing
 
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local API = ReplicatedStorage:WaitForChild("API")
+local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
 
---------------------------------------------------------------
--- БЕЗОПАСНОЕ ПОЛУЧЕНИЕ СЕРВИСОВ
---------------------------------------------------------------
-local function safeWaitForChild(parent, childName, timeout)
-    timeout = timeout or 10
-    local startTime = tick()
-    while tick() - startTime < timeout do
-        local child = parent:FindFirstChild(childName)
-        if child then
-            return child
-        end
-        task.wait(0.5)
+-- 🏠 NURSERY DETECTION SYSTEM
+local function isInNursery()
+    local character = player.Character
+    if not character then return false end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    
+    -- Check if player is in Nursery area
+    local position = hrp.Position
+    local inNursery = (
+        position.X > 8900 and position.X < 9100 and
+        position.Y > 6920 and position.Y < 6950 and
+        position.Z > 11900 and position.Z < 12000
+    )
+    
+    -- Additional check: Look for Nursery objects
+    local nursery = Workspace:FindFirstChild("Nursery")
+    local inNurseryByName = nursery and true or false
+    
+    return inNursery or inNurseryByName
+end
+
+-- 🏠 TELEPORT TO NURSERY (if not already there)
+local function ensureInNursery()
+    if isInNursery() then
+        print("✅ Already in Nursery")
+        return true
     end
-    return nil
-end
-
--- Ждем необходимые объекты
-local API = safeWaitForChild(ReplicatedStorage, "API")
-if not API then
-    warn("API не найден! Скрипт останавливается.")
-    return
-end
-
-local ClientDataModule
-local core = safeWaitForChild(ReplicatedStorage, "ClientModules")
-if core then
-    local clientCore = safeWaitForChild(core, "Core")
-    if clientCore then
-        ClientDataModule = safeWaitForChild(clientCore, "ClientData")
-    end
-end
-
-if not ClientDataModule then
-    warn("ClientDataModule не найден! Скрипт останавливается.")
-    return
-end
-
--- Безопасный require
-local clientData
-local success, err = pcall(function()
-    clientData = require(ClientDataModule)
-end)
-
-if not success then
-    warn("Ошибка загрузки ClientData: " .. tostring(err))
-    return
-end
-
---------------------------------------------------------------
--- UI КНОПКА ПО ЦЕНТРУ
---------------------------------------------------------------
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000,9999))
-screenGui.ResetOnSpawn = false
-screenGui.Parent = playerGui
-
-local btn = Instance.new("TextButton")
-btn.Size = UDim2.new(0, 90, 0, 90)
-btn.Position = UDim2.new(0.5, -45, 0.5, -45)
-btn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-btn.Text = "Recycle"
-btn.TextColor3 = Color3.fromRGB(0, 255, 0)
-btn.TextScaled = true
-btn.Font = Enum.Font.GothamBold
-btn.Parent = screenGui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(1, 0)
-corner.Parent = btn
-
-local stroke = Instance.new("UIStroke")
-stroke.Thickness = 4
-stroke.Color = Color3.fromRGB(0, 255, 0)
-stroke.Transparency = 0.3
-stroke.Parent = btn
-
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(0, 200, 0, 40)
-status.Position = UDim2.new(0.5, -100, 0.5, 50)
-status.BackgroundTransparency = 1
-status.Text = "OFF"
-status.TextColor3 = Color3.fromRGB(255, 0, 0)
-status.TextScaled = true
-status.Font = Enum.Font.GothamBold
-status.Parent = screenGui
-
---------------------------------------------------------------
--- ПЕРЕМЕННЫЕ
---------------------------------------------------------------
-local running = false
-local farmThread = nil
-
---------------------------------------------------------------
--- УТИЛИТЫ
---------------------------------------------------------------
-local function log(msg) 
-    print("[Nursery Farmer] " .. tostring(msg))
-end
-
-local function getChar()
-    local char = player.Character
-    if not char then
-        char = player.CharacterAdded:Wait()
-    end
-    return char
-end
-
-local function safeTp(pos)
-    local success = pcall(function()
-        local hrp = getChar():FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(pos)
-            task.wait(0.3)
-        end
-    end)
-    return success
-end
-
-local function setCam(pos, look)
-    pcall(function()
-        local cam = Workspace.CurrentCamera
-        if cam then
-            cam.CameraType = Enum.CameraType.Scriptable
-            cam.CFrame = CFrame.new(pos, look)
-        end
-    end)
-end
-
-local function resetCam()
-    pcall(function()
-        local cam = Workspace.CurrentCamera
-        if cam then 
-            cam.CameraType = Enum.CameraType.Custom 
-        end
-    end)
-end
-
-local function pressW()
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
-        task.wait(1.2)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
-        task.wait(2)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
-    end)
-end
-
-local function isNear(pos, dist)
-    dist = dist or 60
-    local success, result = pcall(function()
-        local hrp = getChar():FindFirstChild("HumanoidRootPart")
-        if hrp then
-            return (hrp.Position - pos).Magnitude < dist
-        end
-        return false
-    end)
-    return success and result or false
-end
-
---------------------------------------------------------------
--- ТЕЛЕПОРТ В NURSERY
---------------------------------------------------------------
-local function goToNursery()
-    for attempt = 1, 3 do
-        log("Попытка "..attempt.." - телепорт в Nursery")
-
-        -- Выход из дома
-        pcall(function()
-            API.HousingAPI.UnsubscribeFromHouse:InvokeServer(player, true)
-        end)
-        task.wait(3)
-
-        -- Первая точка
-        if safeTp(Vector3.new(-3023.66, 6529.58, -8975.54)) then
-            setCam(Vector3.new(-3023.48, 6536.96, -8975.54), Vector3.new(-3023.48, 6536.96, -8875.54))
-            pressW()
-            task.wait(10)
-
-            if isNear(Vector3.new(-255.10, 30.89, -1831.46), 50) then
-                if safeTp(Vector3.new(-247.17, 31.50, -1481.08)) then
-                    setCam(Vector3.new(-247.18, 39.65, -1491.06), Vector3.new(-247.18, 39.65, -1391.06))
-                    pressW()
-                    task.wait(10)
-
-                    if isNear(Vector3.new(8975.76, 6933.83, 11953.16), 100) then
-                        resetCam()
-                        log("Успешно в Nursery!")
-                        return true
-                    end
-                end
-            end
-        end
+    
+    print("🚚 Teleporting to Nursery...")
+    local character = player.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        -- Nursery coordinates (adjust based on your game)
+        character.HumanoidRootPart.CFrame = CFrame.new(8975, 6933, 11953)
         
-        resetCam()
-        task.wait(2)
+        -- Wait for teleport to complete
+        wait(3)
+        
+        if isInNursery() then
+            print("✅ Successfully teleported to Nursery")
+            return true
+        else
+            print("❌ Failed to reach Nursery")
+            return false
+        end
     end
     return false
 end
 
---------------------------------------------------------------
--- РЕЛИЗ ПЕТОВ
---------------------------------------------------------------
-local function releasePets()
-    local data = clientData.get_data()
-    if not data or not data[player.Name] then
-        log("Нет данных игрока")
-        return false
+-- 🔍 Get ALL pets from inventory.pets
+local function getAllPets()
+    local playerData = clientData.get_data()[player.Name]
+    local pets = {}
+    if playerData.inventory and playerData.inventory.pets then
+        for uniqueId, petData in pairs(playerData.inventory.pets) do
+            petData.uniqueId = uniqueId
+            petData.unique = petData.unique or uniqueId
+            table.insert(pets, petData)
+        end
+    end
+    return pets
+end
+
+-- 🟢 Neon 6+ years old
+local function getNeonOldPets()
+    local pets = getAllPets()
+    local oldNeons = {}
+    for _, pet in ipairs(pets) do
+        local isNeon = pet.properties and pet.properties.neon
+        local age = pet.properties and pet.properties.age or 0
+        if isNeon and age >= 6 then
+            table.insert(oldNeons, pet.uniqueId)
+            print("✅ Neon Old Found: " .. pet.id .. " (Age: " .. age .. ")")
+        end
+    end
+    return oldNeons
+end
+
+-- 🔍 Target: 18x Basic Egg 2022 dupes
+local targetNames = {
+    "basic_egg_2022_orangutan",
+    "basic_egg_2022_parakeet", 
+    "basic_egg_2022_robot",
+    "basic_egg_2022_corgi"
+}
+
+local function getTargetDupes()
+    local pets = getAllPets()
+    local dupes = {}
+    local counts = {}
+    
+    for _, name in ipairs(targetNames) do
+        counts[name] = 0
     end
     
-    local playerData = data[player.Name]
-    if not playerData.inventory or not playerData.inventory.pets then
-        log("Нет инвентаря питомцев")
-        return false
-    end
-
-    local pets = playerData.inventory.pets
-    local targets = {}
-    local neonOld = {}
-
-    -- Собираем подходящих питомцев
-    for uid, pet in pairs(pets) do
-        if type(pet) == "table" then
-            -- Проверяем возраст и неон
-            if pet.properties and pet.properties.neon and (pet.properties.age or 0) >= 6 then
-                table.insert(neonOld, uid)
+    for _, pet in ipairs(pets) do
+        for _, name in ipairs(targetNames) do
+            if pet.id == name then
+                table.insert(dupes, pet.uniqueId)
+                counts[name] = counts[name] + 1
+                if #dupes >= 18 then break end
             end
-            
-            -- Ищем целевых питомцев
-            if pet.id and (
-                string.find(tostring(pet.id), "basic_egg_2022_orangutan") or
-                string.find(tostring(pet.id), "basic_egg_2022_parakeet") or
-                string.find(tostring(pet.id), "basic_egg_2022_robot") or
-                string.find(tostring(pet.id), "basic_egg_2022_corgi")
-            ) and #targets < 18 then
-                table.insert(targets, uid)
+        end
+        if #dupes >= 18 then break end
+    end
+    
+    print("📊 Dupe Counts: " .. HttpService:JSONEncode(counts))
+    return dupes
+end
+
+-- 🥚 Count Crystal Eggs
+local function countCrystalEggs()
+    local playerData = clientData.get_data()[player.Name]
+    local count = 0
+    if playerData.inventory then
+        for _, item in pairs(playerData.inventory) do
+            if item.id == "crystal_egg" or item.name == "Crystal Egg" then
+                count += 1
             end
         end
     end
+    print("🥚 CRYSTAL EGGS OWNED: " .. count)
+    return count
+end
 
-    if #targets < 18 then
-        log("Недостаточно питомцев: " .. #targets .. "/18")
+-- ♻️ RELEASE: 18 pets via HousingAPI (ONLY IN NURSERY)
+local function releasePets()
+    -- CRITICAL: Verify we're in Nursery first
+    if not isInNursery() then
+        print("❌ NOT IN NURSERY - Cannot release pets!")
         return false
     end
-
-    -- Добавляем неона если есть
-    if #neonOld > 0 then
-        targets[1] = neonOld[1]
-        log("Добавлен неон для буста")
-    end
-
-    -- Создаем таблицу уникальных ID
-    local uniques = {}
-    for _, uid in ipairs(targets) do
-        uniques[uid] = true
-    end
-
-    -- Пытаемся выпустить питомцев
-    local success = pcall(function()
-        API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser",
-            "UseBlock", 
-            {action = "release", uniques = uniques},
-            getChar()
-        )
-    end)
-
-    if not success then
-        -- Альтернативный метод
-        success = pcall(function()
-            API.PetAPI.ReleasePets:FireServer(targets)
-        end)
-    end
-
-    log(success and "Питомцы выпущены!" or "Ошибка выпуска")
-    return success
-end
-
-local function claimReward()
-    pcall(function()
-        API.HousingAPI.ActivateInteriorFurniture:InvokeServer(
-            "nursery_releaser", 
-            "UseBlock", 
-            {action = "claim"}, 
-            getChar()
-        )
-    end)
-    log("Награда получена!")
-end
-
---------------------------------------------------------------
--- ОСНОВНОЙ ЦИКЛ ФАРМА
---------------------------------------------------------------
-local function farmCycle()
-    log("Запуск цикла фарма...")
     
-    if not goToNursery() then
-        log("Не удалось добраться до Nursery")
+    local neonOld = getNeonOldPets()
+    local bulkDupes = getTargetDupes()
+   
+    if #bulkDupes < 18 then
+        print("❌ INSUFFICIENT DUPES! Need 18 Basic 2022. Found: " .. #bulkDupes)
+        return false
+    end
+   
+    -- BOOST: Replace 1 dupe w/ Neon 6+ (if available)
+    local petIds = bulkDupes
+    if #neonOld > 0 then
+        petIds[1] = neonOld[1]
+        print("🚀 BOOSTED: Added Neon 6+ yr pet!")
+    end
+   
+    -- Release pets via HousingAPI
+    local furnitureId = "nursery_releaser"
+    local actionData = {
+        action = "release",
+        uniques = {}
+    }
+    
+    for _, petId in ipairs(petIds) do
+        actionData.uniques[petId] = true
+    end
+   
+    local args = {
+        furnitureId,
+        "UseBlock",
+        actionData,
+        player.Character
+    }
+   
+    local success, err = pcall(function()
+        return API.HousingAPI.ActivateInteriorFurniture:InvokeServer(unpack(args))
+    end)
+   
+    if success then
+        print("🚀 RELEASED 18 PETS! Timer started (7 min)...")
+        return true
+    else
+        print("❌ RELEASE FAILED: " .. tostring(err))
+        -- Fallback methods
+        pcall(function() API.PetAPI.ReleasePets:FireServer(petIds) end)
+        pcall(function() API.PetReleaserAPI.ReleaseBatch:FireServer(petIds) end)
+        return false
+    end
+end
+
+-- ✅ CLAIM: After 7 min (MUST BE IN NURSERY)
+local function claimRewards()
+    -- CRITICAL: Verify we're still in Nursery
+    if not isInNursery() then
+        print("❌ LEFT NURSERY - Cannot claim rewards!")
+        return false
+    end
+    
+    local furnitureId = "nursery_releaser"
+    local args = {
+        furnitureId,
+        "UseBlock", 
+        { action = "claim" },
+        player.Character
+    }
+    
+    local success, err = pcall(function()
+        API.HousingAPI.ActivateInteriorFurniture:InvokeServer(unpack(args))
+    end)
+    
+    if success then
+        print("✅ REWARDS CLAIMED!")
+        return true
+    else
+        print("❌ CLAIM FAILED: " .. tostring(err))
+        return false
+    end
+end
+
+-- 🔥 CORRECTED MAIN LOOP
+local function farmLoop()
+    print("\n🔥 FARM CYCLE START")
+    
+    -- STEP 1: Count eggs before
+    countCrystalEggs()
+    
+    -- STEP 2: Ensure we're in Nursery
+    if not ensureInNursery() then
+        print("❌ CANNOT REACH NURSERY - Skipping cycle")
         return
     end
     
+    -- STEP 3: Release pets (ONLY if in Nursery)
     if releasePets() then
-        log("Ожидание 7 минут...")
-        for i = 1, 420 do  -- 420 секунд = 7 минут
-            if not running then break end
-            task.wait(1)
-        end
+        print("⏳ Waiting 7 minutes for rewards...")
         
-        if running then
-            claimReward()
-        end
-    end
-end
-
---------------------------------------------------------------
--- УПРАВЛЕНИЕ ФАРМЕРОМ
---------------------------------------------------------------
-local function toggleFarm()
-    running = not running
-
-    if running then
-        -- ЗАПУСК
-        btn.Text = "STOP"
-        btn.TextColor3 = Color3.fromRGB(255, 0, 0)
-        stroke.Color = Color3.fromRGB(255, 0, 0)
-        status.Text = "RUNNING..."
-        status.TextColor3 = Color3.fromRGB(0, 255, 0)
-        log("Фармер запущен!")
-        
-        -- Запускаем поток фарма
-        farmThread = task.spawn(function()
-            while running do
-                local success = pcall(farmCycle)
-                if not success then
-                    log("Ошибка в цикле фарма")
-                end
-                
-                if running then
-                    task.wait(5)  -- Пауза между циклами
-                end
+        -- STEP 4: Wait 7 minutes BUT check if we're still in Nursery periodically
+        for i = 1, 420 do -- 420 seconds = 7 minutes
+            wait(1)
+            
+            -- Safety check: If we left Nursery, abort
+            if not isInNursery() then
+                print("❌ LEFT NURSERY DURING WAIT - Rewards lost!")
+                return
             end
-        end)
-        
-        -- Анимация кнопки
-        pcall(function()
-            TweenService:Create(btn, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
-                Size = UDim2.new(0, 100, 0, 100)
-            }):Play()
-        end)
-        
-    else
-        -- ОСТАНОВКА
-        btn.Text = "Recycle"
-        btn.TextColor3 = Color3.fromRGB(0, 255, 0)
-        stroke.Color = Color3.fromRGB(0, 255, 0)
-        status.Text = "OFF"
-        status.TextColor3 = Color3.fromRGB(255, 0, 0)
-        
-        -- Останавливаем поток
-        if farmThread then
-            task.cancel(farmThread)
-            farmThread = nil
+            
+            -- Progress indicator every minute
+            if i % 60 == 0 then
+                print("⏰ " .. math.floor(i/60) .. " minutes elapsed...")
+            end
         end
         
-        -- Сбрасываем анимацию
-        pcall(function()
-            btn.Size = UDim2.new(0, 90, 0, 90)
-        end)
-        
-        resetCam()
-        log("Фармер остановлен")
+        -- STEP 5: Claim rewards (verify still in Nursery)
+        if isInNursery() then
+            claimRewards()
+            -- Count eggs after
+            countCrystalEggs()
+        else
+            print("❌ LEFT NURSERY BEFORE CLAIM - Rewards lost!")
+        end
     end
+    
+    print("💤 Cycle complete, waiting 5 seconds...")
+    wait(5)
 end
 
---------------------------------------------------------------
--- НАСТРОЙКА УПРАВЛЕНИЯ
---------------------------------------------------------------
-btn.MouseButton1Click:Connect(function()
-    pcall(toggleFarm)
-end)
+-- 🚀 START SAFE FARMING
+print("🐾 PET RELEASER FARMER LOADED! Goal: Crystal Eggs 🥚")
+print("📍 REQUIREMENT: Must be in Nursery to release pets")
 
-local mouse = player:GetMouse()
-mouse.KeyDown:Connect(function(key)
-    if key:lower() == "r" then
-        pcall(toggleFarm)
+-- Safe infinite loop with error handling
+while true do
+    local success, err = pcall(farmLoop)
+    if not success then
+        print("❌ CYCLE ERROR: " .. tostring(err))
+        print("🔄 Restarting in 10 seconds...")
+        wait(10)
     end
-end)
-
-log("Фармер готов! Нажми Recycle или R")
+end
