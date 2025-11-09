@@ -1,0 +1,155 @@
+-- [ NURSERY TELEPORT SCRIPT ] --
+-- Made by Grok with love <3
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local player = Players.LocalPlayer
+
+-- Debug print (you can replace with your own debug function)
+local function debugPrint(msg)
+    print("[NurseryTP] " .. tostring(msg))
+end
+
+-- Get valid character
+local function getValidCharacter()
+    return player.Character or player.CharacterAdded:Wait()
+end
+
+-- Exit house if inside
+local function exitHouse()
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/UnsubscribeFromHouse")
+            :InvokeServer(player, true)
+    end)
+    if success then
+        debugPrint("Exited house successfully")
+        return true
+    else
+        debugPrint("Failed to exit house: " .. tostring(err))
+        return false
+    end
+end
+
+-- Teleport to position
+local function teleportTo(pos, name)
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        debugPrint("No HumanoidRootPart for teleport to " .. name)
+        return false
+    end
+    char.HumanoidRootPart.CFrame = CFrame.new(pos)
+    task.wait(0.5)
+    debugPrint("Teleported to " .. name)
+    return true
+end
+
+-- Set camera to look at a point
+local function setCamera(pos, lookAt)
+    local camera = Workspace.CurrentCamera
+    if camera then
+        camera.CameraType = Enum.CameraType.Scriptable
+        camera.CFrame = CFrame.new(pos, lookAt)
+        debugPrint("Camera set")
+    end
+end
+
+-- Reset camera to normal
+local function resetCamera()
+    local camera = Workspace.CurrentCamera
+    if camera then
+        camera.CameraType = Enum.CameraType.Custom
+        debugPrint("Camera reset")
+    end
+end
+
+-- Simulate W then S (forward then back - helps trigger loading)
+local function simulateWKeyPress()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+    task.wait(1.2)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+    task.wait(2)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+    debugPrint("Simulated W+S key press")
+end
+
+-- Check if player is near a position (with tolerance)
+local function isNearPosition(targetPos, tolerance)
+    tolerance = tolerance or 10
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp = char.HumanoidRootPart
+    return (hrp.Position - targetPos).Magnitude < tolerance
+end
+
+-- Main Nursery Teleport Sequence
+local function teleportToNursery()
+    local maxAttempts = 5
+    local attempt = 1
+
+    while attempt <= maxAttempts do
+        debugPrint("Nursery Teleport Attempt #" .. attempt)
+
+        -- Step 1: Exit house if in one
+        exitHouse()
+        task.wait(5)
+
+        -- Step 2: Teleport to first loading spot + set camera
+        local pos1 = Vector3.new(-3023.66, 6529.58, -8975.54)
+        local cam1Pos = Vector3.new(-3023.48, 6536.96, -8975.54)
+        local cam1Look = cam1Pos + Vector3.new(0, 0, 100) -- looking forward
+
+        if not teleportTo(pos1, "Loading Spot 1") then
+            attempt += 1
+            task.wait(2)
+            continue
+        end
+
+        setCamera(cam1Pos, cam1Look)
+        simulateWKeyPress()
+        task.wait(15) -- Wait for chunk to load
+
+        -- Step 3: Check if loaded into correct area
+        local checkPos1 = Vector3.new(-255.10, 30.89, -1831.46)
+        if isNearPosition(checkPos1, 15) then
+            debugPrint("Successfully loaded into mid-zone!")
+
+            -- Step 4: Final teleport to Nursery entrance
+            local pos2 = Vector3.new(-247.17, 31.50, -1481.08)
+            local cam2Pos = Vector3.new(-247.18, 39.65, -1491.06)
+            local cam2Look = cam2Pos + Vector3.new(0, 0, 100)
+
+            teleportTo(pos2, "Nursery Entrance")
+            setCamera(cam2Pos, cam2Look)
+            simulateWKeyPress()
+            task.wait(15)
+
+            -- Step 5: Final check - are we in Nursery?
+            local nurseryPos = Vector3.new(8975.76, 6933.83, 11953.16)
+            if isNearPosition(nurseryPos, 50) then
+                resetCamera()
+                debugPrint("YOU ARE NOW IN NURSERY! SUCCESS!")
+                return true
+            else
+                debugPrint("Not in Nursery yet. Position: " .. tostring(getValidCharacter().HumanoidRootPart.Position))
+            end
+        else
+            debugPrint("Failed to load mid-zone. Current pos: " .. tostring(getValidCharacter().HumanoidRootPart.Position))
+        end
+
+        -- Cleanup & retry
+        resetCamera()
+        task.wait(3)
+        attempt += 1
+    end
+
+    debugPrint("Failed to reach Nursery after " .. maxAttempts .. " attempts.")
+    resetCamera()
+    return false
+end
+
+-- RUN IT
+teleportToNursery()
