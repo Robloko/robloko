@@ -1,0 +1,83 @@
+--------------------------------------------------------------
+-- GO TO NURSERY v2025.11.10 — 100% NIL-SAFE + ALREADY-IN-GAME FIX
+--------------------------------------------------------------
+local function goToNursery()
+    for attempt = 1, 3 do
+        log("Teleport attempt " .. attempt .. "/3")
+
+        -- === 1. EXIT HOUSE ONLY IF WE ARE IN ONE ===
+        local inHouse = false
+        pcall(function()
+            local houseData = clientData.get_data()[player.Name].housing
+            if houseData and houseData.current_house_id then
+                inHouse = true
+            end
+        end)
+
+        if inHouse then
+            log("In house → exiting...")
+            pcall(function()
+                local leave = ReplicatedStorage.API:FindFirstChild("HousingAPI/LeaveHouse")
+                if leave then
+                    if leave:IsA("RemoteFunction") then leave:InvokeServer()
+                    else leave:FireServer() end
+                end
+            end)
+            task.wait(4)
+        else
+            log("Already in public server / Adoption Island")
+        end
+
+        -- === 2. TP1: Midpoint (safe spawn edge) ===
+        local MIDPOINT = Vector3.new(-3023.66, 6529.58, -8975.54)
+        if safeTp(MIDPOINT) then
+            log("TP1 → Midpoint")
+            setCam(MIDPOINT + Vector3.new(0, 7, 0), MIDPOINT + Vector3.new(0, 0, -100))
+            pressW()
+        end
+
+        -- === 3. DYNAMIC WAIT UNTIL NEAR ENTRANCE + 5s buffer ===
+        local ENTRANCE = Vector3.new(-255.10, 30.89, -1831.46)
+        local start = tick()
+        repeat
+            task.wait(0.5)
+            if isNear(ENTRANCE, 55) then
+                log("Reached Nursery Entrance! (took " .. string.format("%.1f", tick() - start) .. "s)")
+                task.wait(5) -- +5s buffer
+                break
+            end
+        until tick() - start > 22
+
+        if not isNear(ENTRANCE, 55) then
+            log("Entrance timeout")
+            resetCam()
+            task.wait(2)
+            continue
+        end
+
+        -- === 4. TP2: Inside doorway ===
+        local DOORWAY = Vector3.new(-247.17, 31.50, -1481.08)
+        if safeTp(DOORWAY) then
+            log("TP2 → Doorway")
+            setCam(DOORWAY + Vector3.new(0, 8, 0), DOORWAY + Vector3.new(0, 0, -100))
+            pressW()
+            task.wait(9)
+        end
+
+        -- === 5. FINAL CHECK: Inside Pet Recycler room ===
+        local RECYCLER = Vector3.new(8975.76, 6933.83, 11953.16)
+        if isNear(RECYCLER, 120) then
+            resetCam()
+            log("IN NURSERY! Ready for release/claim")
+            return true
+        else
+            log("Not in recycler room yet, retrying...")
+            resetCam()
+            task.wait(2)
+        end
+    end
+
+    log("Failed to reach Nursery after 3 attempts")
+    resetCam()
+    return false
+end
