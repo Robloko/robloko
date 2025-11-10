@@ -1,0 +1,63 @@
+local function farmCycle()
+    log("Starting farm cycle...")
+    countCrystalEggs()
+
+    -- Check if the player's data is accessible
+    local playerData = clientData.get_data()[player.Name]
+    if not playerData then
+        log("❌ Player data not found!")
+        return
+    end
+
+    -- Check release conditions
+    local shouldRelease, releaseReason, allowedPets, neonPets = shouldReleaseNow()
+    log("Should release:", shouldRelease, "Reason:", releaseReason)
+
+    if not shouldRelease then
+        log("Not enough resources. Waiting...")
+        return
+    end
+
+    -- Teleport to Nursery
+    log("Teleporting to Nursery...")
+    local teleportSuccess = goToNursery()
+    if not teleportSuccess then
+        log("❌ Teleport to Nursery failed!")
+        return
+    end
+
+    -- Execute release logic
+    log("Executing release logic...")
+    local releaseSuccess
+    if releaseReason == "points" then
+        releaseSuccess = executePointsOnlyRelease()
+    else
+        releaseSuccess = executePetRelease(allowedPets, neonPets)
+    end
+
+    if not releaseSuccess then
+        log("❌ Release failed!")
+        return
+    end
+
+    -- Wait for cooldown
+    log("Waiting for cooldown...")
+    for i = 1, COOLDOWNS.REWARD_WAIT do
+        if not running then break end
+        task.wait(1)
+    end
+
+    -- Claim reward
+    log("Claiming reward...")
+    local claimSuccess = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+            "f-27", "UseBlock", { action = "claim" }, player.Character
+        )
+    end)
+
+    if not claimSuccess then
+        log("❌ Failed to claim reward!")
+    else
+        log("✅ Successfully claimed reward!")
+    end
+end
