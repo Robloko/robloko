@@ -26,10 +26,9 @@ local function safeTp(position)
         warn("safeTp: Position is nil!")
         return false
     end
-    -- Replace with your actual teleport logic
     local success, err = pcall(function()
+        -- Replace with your game's teleport logic
         -- Example: game.Players.LocalPlayer.Character:SetPrimaryPartCFrame(CFrame.new(position))
-        -- Use your game's teleport method here
     end)
     if not success then
         warn("safeTp failed:", err)
@@ -38,16 +37,40 @@ local function safeTp(position)
     return true
 end
 
+local function respawn()
+    local player = game.Players.LocalPlayer
+    local success, err = pcall(function()
+        local char = player.Character
+        if char then
+            char:BreakJoints()
+        end
+        player:LoadCharacter()
+    end)
+    if not success then
+        warn("Respawn failed:", err)
+        return false
+    end
+    task.wait(5) -- Wait for character to respawn
+    return true
+end
+
 local function goToNursery()
     local player = game.Players.LocalPlayer
+
+    -- === 1. RESPAWN TO ENSURE CLEAN STATE ===
+    log("Respawn to ensure clean state...")
+    if not respawn() then
+        log("❌ Respawn failed!")
+        return false
+    end
+
     for attempt = 1, 3 do
         log("Teleport attempt " .. attempt .. "/3")
 
-        -- === 1. EXIT HOUSE ===
+        -- === 2. EXIT HOUSE ===
         pcall(function()
             local api = safeWaitForChild(ReplicatedStorage, "API", 5)
             if api then
-                -- Correct path: HousingAPI.UnsubscribeFromHouse
                 local housingAPI = safeWaitForChild(api, "HousingAPI", 5)
                 if housingAPI then
                     local unsubscribe = housingAPI:FindFirstChild("UnsubscribeFromHouse")
@@ -65,7 +88,7 @@ local function goToNursery()
         end)
         task.wait(3 + math.random() * 2) -- Jitter: 3-5s
 
-        -- === 2. TELEPORT TO MIDPOINT ===
+        -- === 3. TELEPORT TO MIDPOINT ===
         local MIDPOINT = Vector3.new(-3023.66, 6529.58, -8975.54)
         if safeTp(MIDPOINT) and isNear(MIDPOINT, 10) then
             setCam(
@@ -80,7 +103,7 @@ local function goToNursery()
             continue
         end
 
-        -- === 3. CHECK IF NEAR ENTRANCE ===
+        -- === 4. CHECK IF NEAR ENTRANCE ===
         local ENTRANCE = Vector3.new(-255.10, 30.89, -1831.46)
         if not isNear(ENTRANCE, 50) then
             log("⏰ Entrance not reached, retrying...")
@@ -88,7 +111,7 @@ local function goToNursery()
             continue
         end
 
-        -- === 4. TELEPORT TO DOORWAY ===
+        -- === 5. TELEPORT TO DOORWAY ===
         local DOORWAY = Vector3.new(-247.17, 31.50, -1481.08)
         if safeTp(DOORWAY) and isNear(DOORWAY, 10) then
             setCam(
@@ -103,7 +126,7 @@ local function goToNursery()
             continue
         end
 
-        -- === 5. VERIFY PET RECYCLER ROOM ===
+        -- === 6. VERIFY PET RECYCLER ROOM ===
         local RECYCLER = Vector3.new(8975.76, 6933.83, 11953.16)
         if isNear(RECYCLER, 100) then
             resetCam()
