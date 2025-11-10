@@ -1,6 +1,5 @@
 local function farmCycle()
     log("Starting farm cycle...")
-    countCrystalEggs()
 
     -- Check if the player's data is accessible
     local playerData = clientData.get_data()[player.Name]
@@ -9,55 +8,109 @@ local function farmCycle()
         return
     end
 
-    -- Check release conditions
-    local shouldRelease, releaseReason, allowedPets, neonPets = shouldReleaseNow()
-    log("Should release:", shouldRelease, "Reason:", releaseReason)
+    -- Count crystal eggs
+    local crystalEggs = countCrystalEggs()
+    log("🥚 Crystal Eggs Counted: " .. crystalEggs)
 
-    if not shouldRelease then
-        log("Not enough resources. Waiting...")
+    -- Check if we should release
+    local shouldRelease, releaseReason, allowedPets, neonPets
+    local success, err = pcall(function()
+        shouldRelease, releaseReason, allowedPets, neonPets = shouldReleaseNow()
+    end)
+
+    if not success then
+        log("❌ Error in shouldReleaseNow: " .. tostring(err))
         return
     end
 
+    if not shouldRelease then
+        log("❌ Not enough resources. Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds...")
+        for i = 1, COOLDOWNS.RESOURCE_CHECK do
+            if not running then break end
+            task.wait(1)
+        end
+        return
+    end
+
+    log("✅ Release conditions met! Reason: " .. releaseReason .. " - Teleporting to Nursery...")
+
     -- Teleport to Nursery
-    log("Teleporting to Nursery...")
     local teleportSuccess = goToNursery()
     if not teleportSuccess then
-        log("❌ Teleport to Nursery failed!")
+        log("❌ Failed to reach Nursery")
         return
     end
 
     -- Execute release logic
-    log("Executing release logic...")
     local releaseSuccess
     if releaseReason == "points" then
-        releaseSuccess = executePointsOnlyRelease()
+        log("Executing points-only release...")
+        releaseSuccess, err = pcall(executePointsOnlyRelease)
+        if not releaseSuccess then
+            log("❌ Error in executePointsOnlyRelease: " .. tostring(err))
+            return
+        end
     else
-        releaseSuccess = executePetRelease(allowedPets, neonPets)
-    end
-
-    if not releaseSuccess then
-        log("❌ Release failed!")
-        return
+        log("Executing pet release...")
+        releaseSuccess, err = pcall(function()
+            return executePetRelease(allowedPets, neonPets)
+        end)
+        if not releaseSuccess then
+            log("❌ Error in executePetRelease: " .. tostring(err))
+            return
+        end
     end
 
     -- Wait for cooldown
-    log("Waiting for cooldown...")
+    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds for rewards cooldown...")
     for i = 1, COOLDOWNS.REWARD_WAIT do
         if not running then break end
+        if i % 60 == 0 then
+            local minutesLeft = math.floor((COOLDOWNS.REWARD_WAIT - i) / 60)
+            local secondsLeft = (COOLDOWNS.REWARD_WAIT - i) % 60
+            log("   " .. minutesLeft .. "m " .. secondsLeft .. "s remaining...")
+        end
         task.wait(1)
     end
 
+    if not running then return end
+
     -- Claim reward
-    log("Claiming reward...")
-    local claimSuccess = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
-            "f-27", "UseBlock", { action = "claim" }, player.Character
-        )
+    log("🔹 Claiming Reward...")
+    local claimSuccess, claimErr = pcall(function()
+        local claimArgs = {
+            "f-27",
+            "UseBlock",
+            {
+                action = "claim"
+            },
+            player.Character
+        }
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
     end)
 
     if not claimSuccess then
-        log("❌ Failed to claim reward!")
+        log("❌ Failed to claim reward: " .. tostring(claimErr))
+        -- Try alternative claim method
+        local altClaimSuccess, altClaimErr = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer("f-27", "UseBlock", {action = "claim"}, player.Character)
+        end)
+        if not altClaimSuccess then
+            log("❌ Alternative claim method also failed: " .. tostring(altClaimErr))
+        else
+            log("✅ Alternative claim method succeeded!")
+        end
     else
-        log("✅ Successfully claimed reward!")
+        log("🎉 Successfully claimed reward!")
+    end
+
+    -- Count crystal eggs after claiming
+    countCrystalEggs()
+
+    -- Wait before next cycle
+    log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
+    for i = 1, COOLDOWNS.AFTER_CLAIM do
+        if not running then break end
+        task.wait(1)
     end
 end
