@@ -1,6 +1,6 @@
 -- ♻️ ADOPT ME! NURSERY AUTO-FARMER + CENTRAL BUTTON (PROPER COOLDOWNS)
 -- Press ♻️ or R key → START / STOP
--- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 4500+ points
+-- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age) OR 4500+ points
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
 local Players = game:GetService("Players")
@@ -91,6 +91,7 @@ local farmThread = nil
 local RELEASE_CONDITIONS = {
     MIN_PETS = 18,          -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2,          -- Condition 2: 2 neon pets (any type, age 6+)
+    MIN_MEGA_NEONS = 1,     -- NEW: 1 mega neon pet (any age)
     MIN_POINTS = 4500,      -- Condition 3: 4500+ saved points
 }
 
@@ -128,14 +129,24 @@ local function getAllPets()
     return pets
 end
 
--- 🟢 Get Neon pets (ANY type, but age 6+ only)
+-- 🟢 Get Neon and Mega Neon pets (ANY type)
 local function getNeonPets()
     local pets = getAllPets()
     local neons = {}
+    local megaNeons = {}
     for _, pet in ipairs(pets) do
         local isNeon = pet.properties and pet.properties.neon
+        local isMegaNeon = pet.properties and pet.properties.mega_neon
         local age = pet.properties and pet.properties.age or 0
-        if isNeon and age >= 6 then
+
+        if isMegaNeon then
+            table.insert(megaNeons, {
+                uniqueId = pet.uniqueId,
+                age = age,
+                id = pet.id
+            })
+            print("🌟 MEGA NEON Found: " .. pet.id)
+        elseif isNeon and age >= 6 then
             table.insert(neons, {
                 uniqueId = pet.uniqueId,
                 age = age,
@@ -146,7 +157,7 @@ local function getNeonPets()
             print("💡 Young Neon: " .. pet.id .. " (Age: " .. age .. ") - Too young, skipping")
         end
     end
-    return neons
+    return neons, megaNeons
 end
 
 -- 🔍 Get ONLY allowed target pets (strict filter)
@@ -209,36 +220,43 @@ end
 --------------------------------------------------------------
 local function shouldReleaseNow()
     local allowedPets, counts = getAllowedTargetPets()
-    local neonPets = getNeonPets()
+    local neonPets, megaNeonPets = getNeonPets()
     local savedPoints = getSavedPoints()
 
     local totalAllowedPets = #allowedPets
     local totalNeons = #neonPets
+    local totalMegaNeons = #megaNeonPets
     local hasEnoughPoints = savedPoints >= RELEASE_CONDITIONS.MIN_POINTS
 
     print("🤔 Release Check:")
     print("   Allowed Pets: " .. totalAllowedPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
     print("   Neons (6+): " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS)
+    print("   Mega Neons: " .. totalMegaNeons .. "/" .. RELEASE_CONDITIONS.MIN_MEGA_NEONS)
     print("   Points: " .. savedPoints .. "/" .. RELEASE_CONDITIONS.MIN_POINTS)
 
     -- PRIORITY-BASED RELEASE CONDITIONS
+    if totalMegaNeons >= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
+        print("✅ REASON: Enough mega neons (" .. totalMegaNeons .. ")")
+        return true, "mega_neons", allowedPets, neonPets, megaNeonPets
+    end
+
     if totalAllowedPets >= RELEASE_CONDITIONS.MIN_PETS then
         print("✅ REASON: Enough allowed pets (" .. totalAllowedPets .. ")")
-        return true, "pets", allowedPets, neonPets
+        return true, "pets", allowedPets, neonPets, megaNeonPets
     end
 
     if totalNeons >= RELEASE_CONDITIONS.MIN_NEONS then
         print("✅ REASON: Enough neons (" .. totalNeons .. ")")
-        return true, "neons", allowedPets, neonPets
+        return true, "neons", allowedPets, neonPets, megaNeonPets
     end
 
     if hasEnoughPoints then
         print("✅ REASON: Enough points (" .. savedPoints .. ")")
-        return true, "points", allowedPets, neonPets
+        return true, "points", allowedPets, neonPets, megaNeonPets
     end
 
     print("❌ Not enough resources for release")
-    return false, "none", allowedPets, neonPets
+    return false, "none", allowedPets, neonPets, megaNeonPets
 end
 
 --------------------------------------------------------------
@@ -272,6 +290,9 @@ local function pressW()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
         task.wait(0.1)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
         task.wait(0.1)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
@@ -356,6 +377,7 @@ local function executePointsOnlyRelease()
         log("✅ Visited Pet Releaser")
     end
     task.wait(1)
+
     -- STEP 2: Use Pet Releaser with EMPTY uniques (points only)
     log("🔹 Step 2: Using Pet Releaser with empty uniques (points only)...")
     local releaseArgs = {
@@ -383,35 +405,56 @@ end
 --------------------------------------------------------------
 -- PET RELEASE LOGIC
 --------------------------------------------------------------
-local function executePetRelease(allowedPets, neonPets)
+local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
 
     -- Form the list of pet unique IDs for release
     local petIds = {}
     local usedNeons = 0
-    -- Priority 1: Add neon pets (ANY type, up to 2, age 6+)
+    local usedMegaNeons = 0
+
+    -- Priority 1: Add mega neon pets (ANY type, any age)
+    for i, megaNeon in ipairs(megaNeonPets) do
+        if i <= 1 then
+            table.insert(petIds, megaNeon.uniqueId)
+            usedMegaNeons = usedMegaNeons + 1
+            log("🚀 Adding MEGA NEON: " .. (megaNeon.id or "Unknown"))
+        end
+    end
+
+    -- Priority 2: Add neon pets (ANY type, up to 2, age 6+)
     for i, neon in ipairs(neonPets) do
-        if i <= 2 then
+        if i <= 2 and usedMegaNeons < 1 then
             table.insert(petIds, neon.uniqueId)
             usedNeons = usedNeons + 1
             log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
         end
     end
-    -- Priority 2: Add ONLY allowed pets (strict filter)
-    local slotsRemaining = 18 - usedNeons
+
+    -- Priority 3: Add ONLY allowed pets (strict filter)
+    local slotsRemaining = 18 - usedNeons - usedMegaNeons
     for i = 1, math.min(slotsRemaining, #allowedPets) do
         table.insert(petIds, allowedPets[i])
     end
-    log("🎯 Release Strategy: " .. usedNeons .. " neons (any type, age 6+) + " .. (#petIds - usedNeons) .. " allowed pets = " .. #petIds .. " total pets")
+
+    log("🎯 Release Strategy: " ..
+        usedMegaNeons .. " mega neons + " ..
+        usedNeons .. " neons (any type, age 6+) + " ..
+        (#petIds - usedNeons - usedMegaNeons) ..
+        " allowed pets = " ..
+        #petIds .. " total pets")
+
     if #petIds < 1 then
         log("❌ No pets selected for release")
         return false
     end
+
     -- Create uniques table for API
     local uniques = {}
     for _, petId in ipairs(petIds) do
         uniques[petId] = true
     end
+
     -- STEP 1: Visit Pet Releaser (Achievement)
     log("🔹 Step 1: Visiting Pet Releaser...")
     local visitArgs = {"visit_the_pet_releaser"}
@@ -424,6 +467,7 @@ local function executePetRelease(allowedPets, neonPets)
         log("✅ Visited Pet Releaser")
     end
     task.wait(1)
+
     -- STEP 2: Open Backpack (Achievement)
     log("🔹 Step 2: Opening Backpack...")
     local openBackpackArgs = {"open_backpack"}
@@ -436,6 +480,7 @@ local function executePetRelease(allowedPets, neonPets)
         log("✅ Opened Backpack")
     end
     task.wait(1)
+
     -- STEP 3: Release Pets (MAIN ACTION)
     log("🔹 Step 3: Releasing " .. #petIds .. " pets...")
     local releaseArgs = {
@@ -501,8 +546,9 @@ local function executePetRelease(allowedPets, neonPets)
     end
     if success then
         log("🚀 SUCCESS: Released " .. #petIds .. " PETS!")
+        log("   - " .. usedMegaNeons .. " mega neons (any type, any age)")
         log("   - " .. usedNeons .. " neons (any type, age 6+)")
-        log("   - " .. (#petIds - usedNeons) .. " allowed pets (orangutan/parakeet/robot/corgi)")
+        log("   - " .. (#petIds - usedNeons - usedMegaNeons) .. " allowed pets (orangutan/parakeet/robot/corgi)")
     end
 
     return true
@@ -515,14 +561,8 @@ local function farmCycle()
     log("Starting farm cycle...")
     countCrystalEggs()
 
-    -- STOP FARM AT THE BEGINNING
-    if running then
-        toggleFarm() -- This will stop the farm
-        task.wait(1) -- Ensure it's fully stopped
-    end
-
     -- Check conditions BEFORE teleporting and get pet data
-    local shouldRelease, releaseReason, allowedPets, neonPets = shouldReleaseNow()
+    local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
 
     if not shouldRelease then
         log("❌ Not enough resources. Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds...")
@@ -544,9 +584,11 @@ local function farmCycle()
 
     -- EXECUTE DIFFERENT LOGIC BASED ON RELEASE REASON
     if releaseReason == "points" then
+        -- POINTS-ONLY RELEASE (no pets needed)
         releaseSuccess = executePointsOnlyRelease()
     else
-        releaseSuccess = executePetRelease(allowedPets, neonPets)
+        -- PET RELEASE (pets, neons, or mega neons)
+        releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets)
     end
 
     if not releaseSuccess then
@@ -554,13 +596,7 @@ local function farmCycle()
         return
     end
 
-    -- RESTART FARM AFTER RELEASING PETS
-    if not running then
-        toggleFarm() -- Restart the farm
-        task.wait(1)
-    end
-
-    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN BEFORE CLAIMING
+    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN BEFORE CLAIMING (FOR ALL REASONS)
     log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT/60) .. " minutes " .. (COOLDOWNS.REWARD_WAIT%60) .. " seconds) for rewards cooldown...")
     for i = 1, COOLDOWNS.REWARD_WAIT do
         if not running then break end
@@ -572,13 +608,9 @@ local function farmCycle()
         task.wait(1)
     end
 
-    -- STOP FARM BEFORE CLAIMING REWARDS
-    if running then
-        toggleFarm() -- Stop the farm
-        task.wait(1)
-    end
+    if not running then return end
 
-    -- STEP 4: Claim Reward
+    -- STEP 4: Claim Reward (FOR ALL RELEASE TYPES)
     log("🔹 Step 4: Claiming Reward...")
     local claimArgs = {
         "f-27",
@@ -593,6 +625,7 @@ local function farmCycle()
     end)
     if not success then
         log("❌ Failed to claim reward: " .. tostring(err))
+        -- Try alternative claim method
         pcall(function()
             ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer("f-27", "UseBlock", {action = "claim"}, player.Character)
         end)
@@ -602,12 +635,6 @@ local function farmCycle()
 
     -- Count crystal eggs after successful release
     countCrystalEggs()
-
-    -- RESTART FARM AFTER CLAIMING REWARDS
-    if not running then
-        toggleFarm() -- Restart the farm
-        task.wait(1)
-    end
 
     -- WAIT 30 SECONDS BEFORE NEXT CYCLE CHECK
     log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
@@ -674,5 +701,5 @@ btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
 log("PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
-log("✅ ALLOWED: 4 specific pets + ANY neon (age 6+) + 4500+ points")
+log("✅ ALLOWED: 4 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age) + 4500+ points")
 log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
