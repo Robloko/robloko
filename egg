@@ -172,11 +172,37 @@ local function getEggCounts()
     return basicEggCount, crystalEggCount
 end
 
--- Create compact special trade UI
+-- Safe function to wait for PlayerGui
+local function waitForPlayerGui()
+    local startTime = os.time()
+    while os.time() - startTime < 10 do
+        local playerGui = player:FindFirstChild("PlayerGui")
+        if playerGui then
+            return playerGui
+        end
+        task.wait(0.5)
+    end
+    return nil
+end
+
+-- Create compact special trade UI with proper error handling
 local function createSpecialTradeUI()
+    -- Wait for PlayerGui to exist
+    local playerGui = waitForPlayerGui()
+    if not playerGui then
+        debugPrint("ERROR: PlayerGui not found after waiting")
+        return nil
+    end
+    
+    -- Check if UI already exists
+    if playerGui:FindFirstChild("SpecialTradeUI") then
+        playerGui.SpecialTradeUI:Destroy()
+    end
+    
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "SpecialTradeUI"
-    screenGui.Parent = player:WaitForChild("PlayerGui")
+    screenGui.Parent = playerGui
+    screenGui.ResetOnSpawn = false
     
     -- Main frame (bottom left position)
     local frame = Instance.new("Frame")
@@ -247,63 +273,114 @@ local function createSpecialTradeUI()
         frame = frame,
         eggCountsLabel = eggCountsLabel,
         tradeButton = tradeButton,
-        autoTradeButton = autoTradeButton
+        autoTradeButton = autoTradeButton,
+        screenGui = screenGui
     }
 end
 
--- Initialize special trade UI
-local specialUI = createSpecialTradeUI()
+-- Initialize special trade UI with error handling
+local specialUI = nil
+
+local function initializeSpecialUI()
+    local success, result = pcall(function()
+        specialUI = createSpecialTradeUI()
+        return specialUI
+    end)
+    
+    if success and specialUI then
+        debugPrint("Special Egg Trader UI loaded successfully!")
+        return true
+    else
+        debugPrint("Failed to create Special Egg Trader UI: " .. tostring(result))
+        -- Retry after a delay
+        task.wait(3)
+        local retrySuccess = pcall(function()
+            specialUI = createSpecialTradeUI()
+            return specialUI
+        end)
+        
+        if retrySuccess and specialUI then
+            debugPrint("Special Egg Trader UI loaded on retry!")
+            return true
+        else
+            debugPrint("Failed to load Special Egg Trader UI after retry")
+            return false
+        end
+    end
+end
 
 -- Function to update egg counts display
 local function updateEggCountsDisplay()
+    if not specialUI or not specialUI.eggCountsLabel then
+        return
+    end
+    
     local basicCount, crystalCount = getEggCounts()
     specialUI.eggCountsLabel.Text = string.format("🥚 Basic: %d | 💎 Crystal: %d", basicCount, crystalCount)
 end
 
--- Connect single trade button
-specialUI.tradeButton.MouseButton1Click:Connect(function()
-    if SpecialTradeMode then
-        debugPrint("Please stop auto trade first!")
-        return
+-- Connect UI buttons with error handling
+local function connectUIButtons()
+    if not specialUI then return end
+    
+    -- Connect single trade button
+    if specialUI.tradeButton then
+        specialUI.tradeButton.MouseButton1Click:Connect(function()
+            if SpecialTradeMode then
+                debugPrint("Please stop auto trade first!")
+                return
+            end
+            
+            debugPrint("Starting single special trade...")
+            local success = tradeSpecificEggsWith2kachalka()
+            if success then
+                specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+                task.wait(2)
+                specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+            else
+                specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+                task.wait(2)
+                specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+            end
+            
+            updateEggCountsDisplay()
+        end)
     end
     
-    debugPrint("Starting single special trade...")
-    local success = tradeSpecificEggsWith2kachalka()
-    if success then
-        specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-        task.wait(2)
-        specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-    else
-        specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-        task.wait(2)
-        specialUI.tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    -- Connect auto trade button
+    if specialUI.autoTradeButton then
+        specialUI.autoTradeButton.MouseButton1Click:Connect(function()
+            toggleSpecialTradeMode()
+            if specialUI.autoTradeButton then
+                specialUI.autoTradeButton.Text = SpecialTradeMode and "Auto Trade [ON]" or "Auto Trade [OFF]"
+                specialUI.autoTradeButton.BackgroundColor3 = SpecialTradeMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+            end
+            
+            if not SpecialTradeMode then
+                updateEggCountsDisplay()
+            end
+        end)
     end
-    
-    updateEggCountsDisplay()
-end)
+end
 
--- Connect auto trade button
-specialUI.autoTradeButton.MouseButton1Click:Connect(function()
-    toggleSpecialTradeMode()
-    specialUI.autoTradeButton.Text = SpecialTradeMode and "Auto Trade [ON]" or "Auto Trade [OFF]"
-    specialUI.autoTradeButton.BackgroundColor3 = SpecialTradeMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-    
-    if not SpecialTradeMode then
-        updateEggCountsDisplay()
-    end
-end)
-
--- Auto-update egg counts display
+-- Initialize the system
 coroutine.wrap(function()
-    while true do
-        updateEggCountsDisplay()
-        task.wait(5) -- Update every 5 seconds
+    task.wait(2) -- Wait for game to fully load
+    
+    local uiLoaded = initializeSpecialUI()
+    if uiLoaded then
+        connectUIButtons()
+        
+        -- Auto-update egg counts display
+        while true do
+            if specialUI and specialUI.eggCountsLabel then
+                updateEggCountsDisplay()
+            end
+            task.wait(5) -- Update every 5 seconds
+        end
     end
 end)()
 
--- Initial update
-updateEggCountsDisplay()
-
-debugPrint("Special Egg Trader UI loaded successfully!")
+debugPrint("Special Egg Trader system initialized!")
 debugPrint("Target: 2kachalka197")
 debugPrint("Eggs: pet_recycler_2025_basic_egg, pet_recycler_2025_crystal_egg")
