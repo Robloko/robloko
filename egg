@@ -1,5 +1,5 @@
 -- ==================================================================
--- SIMPLE EGG TRADING SYSTEM - ERROR FREE VERSION
+-- FIXED EGG TRADING SYSTEM - WORKING VERSION
 -- ==================================================================
 
 -- Services
@@ -42,76 +42,133 @@ local function getEggs()
             local name = string.lower(tostring(pet.id))
             if name == "pet_recycler_2025_basic_egg" or name == "pet_recycler_2025_crystal_egg" then
                 table.insert(eggs, pet.unique)
+                log("Found egg: " .. name)
             end
         end
     end
     
+    log("Total eggs: " .. #eggs)
     return eggs
 end
 
 -- Add eggs to trade
 local function addEggsToTrade()
     local eggs = getEggs()
-    if #eggs == 0 then return 0 end
+    if #eggs == 0 then 
+        log("No eggs to add")
+        return 0 
+    end
     
     local count = math.min(#eggs, 16)
     local added = 0
     
+    log("Adding " .. count .. " eggs to trade...")
+    
     for i = 1, count do
-        pcall(function()
+        local success = pcall(function()
             ReplicatedStorage.API.TradeAPI.AddItemToOffer:FireServer(eggs[i])
             added = added + 1
+            log("Added egg " .. i .. "/" .. count)
         end)
-        waitSec(0.2)
+        if not success then
+            log("Failed to add egg " .. i)
+        end
+        waitSec(0.3)
     end
     
+    log("Added " .. added .. " eggs total")
     return added
 end
 
--- Complete trade process
+-- Complete trade process - FIXED VERSION
 local function doTrade(targetPlayer)
-    if not targetPlayer then return false end
+    if not targetPlayer then 
+        log("No target player")
+        return false 
+    end
     
-    -- Accept trade
-    local success1 = pcall(function()
+    log("Starting trade with " .. targetPlayer.Name)
+    
+    -- STEP 1: Send trade request (this is different from accepting)
+    local requestSuccess = pcall(function()
+        ReplicatedStorage.API.TradeAPI.SendTradeRequest:FireServer(targetPlayer)
+    end)
+    
+    if not requestSuccess then
+        log("Failed to send trade request")
+        return false
+    end
+    
+    log("Trade request sent, waiting 5 seconds...")
+    waitSec(5)
+    
+    -- STEP 2: Accept the trade request (this happens after they accept)
+    local acceptSuccess = pcall(function()
         ReplicatedStorage.API.TradeAPI.AcceptOrDeclineTradeRequest:InvokeServer(targetPlayer, true)
     end)
-    if not success1 then return false end
     
+    if not acceptSuccess then
+        log("Failed to accept trade request - maybe they didn't accept?")
+        return false
+    end
+    
+    log("Trade accepted, waiting 3 seconds...")
     waitSec(3)
     
-    -- Add eggs
-    local added = addEggsToTrade()
-    if added == 0 then return false end
+    -- STEP 3: Add eggs to trade
+    local eggsAdded = addEggsToTrade()
+    if eggsAdded == 0 then
+        log("No eggs added, cancelling trade")
+        return false
+    end
     
+    log("Eggs added, waiting 3 seconds...")
     waitSec(3)
     
-    -- Accept negotiation
-    local success2 = pcall(function()
+    -- STEP 4: Accept negotiation
+    local negotiationSuccess = pcall(function()
         ReplicatedStorage.API.TradeAPI.AcceptNegotiation:FireServer()
     end)
-    if not success2 then return false end
     
+    if not negotiationSuccess then
+        log("Failed to accept negotiation")
+        return false
+    end
+    
+    log("Negotiation accepted, waiting 9 seconds...")
     waitSec(9)
     
-    -- Confirm trade
-    local success3 = pcall(function()
+    -- STEP 5: Confirm trade
+    local confirmSuccess = pcall(function()
         ReplicatedStorage.API.TradeAPI.ConfirmTrade:FireServer()
     end)
     
-    return success3
+    if confirmSuccess then
+        log("Trade confirmed successfully!")
+        return true
+    else
+        log("Failed to confirm trade")
+        return false
+    end
 end
 
 -- Find target player
 local function getTarget()
-    return Players:FindFirstChild(TARGET_PLAYER)
+    local target = Players:FindFirstChild(TARGET_PLAYER)
+    if target and target ~= player then
+        log("Target found: " .. target.Name)
+        return target
+    else
+        log("Target not found or is self")
+        return nil
+    end
 end
 
 -- Trade all eggs
 local function tradeAllEggs()
     local target = getTarget()
     if not target then
-        log("Target player not found")
+        log("Cannot trade - target not available")
         return 0
     end
     
@@ -121,109 +178,140 @@ local function tradeAllEggs()
         return 0
     end
     
-    log("Trading " .. #eggs .. " eggs with " .. TARGET_PLAYER)
+    log("Starting to trade " .. #eggs .. " eggs with " .. TARGET_PLAYER)
     
-    local trades = 0
+    local tradesCompleted = 0
     local maxTrades = math.ceil(#eggs / 16)
+    local failedAttempts = 0
+    local MAX_FAILS = 2
     
-    for i = 1, maxTrades do
-        if not ContinuousMode then break end
-        
-        -- Send trade request
-        pcall(function()
-            ReplicatedStorage.API.TradeAPI.SendTradeRequest:FireServer(target)
-        end)
-        
-        waitSec(2)
-        
-        -- Do trade
-        if doTrade(target) then
-            trades = trades + 1
-            log("Trade " .. trades .. " completed")
-        else
-            log("Trade failed")
+    for tradeNum = 1, maxTrades do
+        if not ContinuousMode then
+            log("Stopped by user")
+            break
         end
         
-        -- Check if more eggs
-        local remaining = #getEggs()
-        if remaining > 0 then
-            waitSec(10)
-        else
+        -- Check if we still have eggs
+        local currentEggs = getEggs()
+        if #currentEggs == 0 then
+            log("No more eggs left")
             break
+        end
+        
+        log("Trade attempt " .. tradeNum .. "/" .. maxTrades .. " - " .. #currentEggs .. " eggs left")
+        
+        -- Do the trade
+        local tradeSuccess = doTrade(target)
+        
+        if tradeSuccess then
+            tradesCompleted = tradesCompleted + 1
+            failedAttempts = 0
+            log("SUCCESS: Trade " .. tradesCompleted .. " completed!")
+            
+            -- Wait before next trade if we have more eggs
+            local remaining = getEggs()
+            if #remaining > 0 then
+                log(#remaining .. " eggs remaining, waiting 10 seconds...")
+                waitSec(10)
+            else
+                log("All eggs traded successfully! 🎉")
+                break
+            end
+        else
+            failedAttempts = failedAttempts + 1
+            log("FAILED: Trade attempt " .. tradeNum)
+            
+            if failedAttempts >= MAX_FAILS then
+                log("Too many failures, stopping")
+                break
+            end
+            
+            log("Waiting 5 seconds before retry...")
+            waitSec(5)
         end
     end
     
-    return trades
+    log("Trading session complete: " .. tradesCompleted .. " successful trades")
+    return tradesCompleted
 end
 
 -- Continuous trading loop
 local function startContinuousTrading()
+    log("🔄 Continuous trading started")
+    
     while ContinuousMode do
         local currentTime = os.time()
         
         if currentTime - lastScanTime >= SCAN_INTERVAL then
-            log("Scanning for eggs...")
+            log("=== SCANNING FOR EGGS ===")
             
             local eggs = getEggs()
             if #eggs > 0 then
-                log("Found " .. #eggs .. " eggs")
-                tradeAllEggs()
+                log("🎯 Found " .. #eggs .. " eggs to trade")
+                local trades = tradeAllEggs()
+                if trades > 0 then
+                    log("✅ Traded eggs in " .. trades .. " trades")
+                end
             else
-                log("No eggs found")
+                log("📭 No eggs found in inventory")
             end
             
             lastScanTime = currentTime
+            log("Next scan in " .. SCAN_INTERVAL .. " seconds")
+            log("=== SCAN COMPLETE ===")
+        else
+            local timeLeft = SCAN_INTERVAL - (currentTime - lastScanTime)
+            if timeLeft % 30 == 0 then -- Log every 30 seconds
+                log("Next scan in " .. timeLeft .. " seconds")
+            end
         end
         
         waitSec(5)
     end
+    
+    log("🛑 Continuous trading stopped")
 end
 
 -- Toggle continuous mode
 local function toggleContinuous()
     ContinuousMode = not ContinuousMode
     if ContinuousMode then
-        log("Continuous mode STARTED")
-        lastScanTime = os.time()
+        log("🚀 CONTINUOUS MODE: ENABLED")
+        lastScanTime = os.time() - SCAN_INTERVAL + 10 -- Start first scan in 10 seconds
         coroutine.wrap(startContinuousTrading)()
     else
-        log("Continuous mode STOPPED")
+        log("⏸️ CONTINUOUS MODE: DISABLED")
     end
 end
 
 -- Test single trade
 local function testSingleTrade()
-    log("Testing single trade...")
+    log("🧪 TESTING SINGLE TRADE...")
     
     local target = getTarget()
     if not target then
-        log("Target not found")
+        log("❌ TEST FAILED: Target player not found")
         return false
     end
     
     local eggs = getEggs()
     if #eggs == 0 then
-        log("No eggs found")
+        log("❌ TEST FAILED: No eggs found")
         return false
     end
     
-    -- Send request
-    pcall(function()
-        ReplicatedStorage.API.TradeAPI.SendTradeRequest:FireServer(target)
-    end)
+    log("✅ Test ready: " .. #eggs .. " eggs, target online")
     
-    waitSec(2)
-    
-    -- Do trade
+    -- Do the trade
     local success = doTrade(target)
     
     if success then
-        log("Test trade SUCCESS")
+        log("🎉 TEST SUCCESS: Trade completed!")
+        return true
     else
-        log("Test trade FAILED")
+        log("❌ TEST FAILED: Trade process failed")
+        return false
     end
-    
-    return success
 end
 
 -- ==================================================================
@@ -235,41 +323,42 @@ local function createUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "EggTradeUI"
     screenGui.Parent = player.PlayerGui
+    screenGui.ResetOnSpawn = false
     
     -- Main frame
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 250, 0, 160)
-    frame.Position = UDim2.new(0.5, -125, 0.5, -80)
+    frame.Size = UDim2.new(0, 280, 0, 180)
+    frame.Position = UDim2.new(0.5, -140, 0.5, -90)
     frame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
     
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 10)
     corner.Parent = frame
     
     -- Title
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Size = UDim2.new(1, 0, 0, 35)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Egg Trading"
+    title.Text = "🥚 Egg Trading"
     title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 16
+    title.TextSize = 18
     title.Parent = frame
     
     local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.CornerRadius = UDim.new(0, 10)
     titleCorner.Parent = title
     
     -- Target label
     local targetLabel = Instance.new("TextLabel")
     targetLabel.Size = UDim2.new(1, -10, 0, 20)
-    targetLabel.Position = UDim2.new(0, 5, 0, 35)
+    targetLabel.Position = UDim2.new(0, 10, 0, 40)
     targetLabel.BackgroundTransparency = 1
     targetLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-    targetLabel.Text = "Target: " .. TARGET_PLAYER
+    targetLabel.Text = "🎯 Target: " .. TARGET_PLAYER
     targetLabel.Font = Enum.Font.SourceSans
     targetLabel.TextSize = 12
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -278,10 +367,10 @@ local function createUI()
     -- Egg count
     local eggLabel = Instance.new("TextLabel")
     eggLabel.Size = UDim2.new(1, -10, 0, 20)
-    eggLabel.Position = UDim2.new(0, 5, 0, 55)
+    eggLabel.Position = UDim2.new(0, 10, 0, 60)
     eggLabel.BackgroundTransparency = 1
     eggLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    eggLabel.Text = "Eggs: 0"
+    eggLabel.Text = "📦 Eggs: 0"
     eggLabel.Font = Enum.Font.SourceSans
     eggLabel.TextSize = 12
     eggLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -289,13 +378,13 @@ local function createUI()
     
     -- Test button
     local testBtn = Instance.new("TextButton")
-    testBtn.Size = UDim2.new(0, 240, 0, 25)
-    testBtn.Position = UDim2.new(0, 5, 0, 80)
+    testBtn.Size = UDim2.new(0, 260, 0, 30)
+    testBtn.Position = UDim2.new(0, 10, 0, 85)
     testBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
     testBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    testBtn.Text = "Test Trade"
+    testBtn.Text = "🧪 Test Single Trade"
     testBtn.Font = Enum.Font.SourceSansBold
-    testBtn.TextSize = 12
+    testBtn.TextSize = 13
     testBtn.Parent = frame
     
     local testCorner = Instance.new("UICorner")
@@ -304,13 +393,13 @@ local function createUI()
     
     -- Continuous button
     local contBtn = Instance.new("TextButton")
-    contBtn.Size = UDim2.new(0, 240, 0, 25)
-    contBtn.Position = UDim2.new(0, 5, 0, 110)
+    contBtn.Size = UDim2.new(0, 260, 0, 30)
+    contBtn.Position = UDim2.new(0, 10, 0, 120)
     contBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 255)
     contBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    contBtn.Text = "Continuous: OFF"
+    contBtn.Text = "🔄 Continuous: OFF"
     contBtn.Font = Enum.Font.SourceSansBold
-    contBtn.TextSize = 12
+    contBtn.TextSize = 13
     contBtn.Parent = frame
     
     local contCorner = Instance.new("UICorner")
@@ -320,10 +409,10 @@ local function createUI()
     -- Status
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(1, -10, 0, 20)
-    status.Position = UDim2.new(0, 5, 0, 140)
+    status.Position = UDim2.new(0, 10, 0, 155)
     status.BackgroundTransparency = 1
     status.TextColor3 = Color3.fromRGB(255, 255, 255)
-    status.Text = "Ready"
+    status.Text = "✅ Ready to trade"
     status.Font = Enum.Font.SourceSans
     status.TextSize = 11
     status.TextXAlignment = Enum.TextXAlignment.Left
@@ -331,16 +420,29 @@ local function createUI()
     
     -- Button functions
     testBtn.MouseButton1Click:Connect(function()
-        status.Text = "Testing..."
+        status.Text = "🔄 Testing trade..."
         local success = testSingleTrade()
-        status.Text = success and "Success!" or "Failed!"
+        if success then
+            status.Text = "✅ Test successful!"
+            status.TextColor3 = Color3.fromRGB(0, 255, 0)
+        else
+            status.Text = "❌ Test failed!"
+            status.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
     end)
     
     contBtn.MouseButton1Click:Connect(function()
         toggleContinuous()
-        contBtn.Text = ContinuousMode and "Continuous: ON" or "Continuous: OFF"
+        contBtn.Text = ContinuousMode and "🔄 Continuous: ON" or "🔄 Continuous: OFF"
         contBtn.BackgroundColor3 = ContinuousMode and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(150, 0, 255)
-        status.Text = ContinuousMode and "Running..." or "Stopped"
+        
+        if ContinuousMode then
+            status.Text = "🔄 Continuous mode ACTIVE"
+            status.TextColor3 = Color3.fromRGB(0, 255, 0)
+        else
+            status.Text = "⏸️ Continuous mode STOPPED"
+            status.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
     end)
     
     return {
@@ -362,11 +464,18 @@ coroutine.wrap(function()
     while true do
         if ui and ui.eggLabel then
             local eggs = getEggs()
-            ui.eggLabel.Text = "Eggs: " .. #eggs
+            ui.eggLabel.Text = "📦 Eggs: " .. #eggs
+            
+            -- Update status if not in continuous mode
+            if not ContinuousMode and ui.status then
+                ui.status.Text = "📦 Eggs: " .. #eggs
+                ui.status.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end
         end
         waitSec(3)
     end
 end)()
 
-log("Egg Trading System Ready!")
-log("Target: " .. TARGET_PLAYER)
+log("🎯 Egg Trading System Ready!")
+log("🎯 Target: " .. TARGET_PLAYER)
+log("💡 Make sure " .. TARGET_PLAYER .. " is online and ready to trade!")
