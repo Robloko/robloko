@@ -1,4 +1,5 @@
--- Egg Trading System - Compact Standalone Script
+
+-- Egg Trading System - Compact Standalone Script (Fixed Version)
 -- Place this in StarterPlayerScripts or StarterGui
 
 local Players = game:GetService("Players")
@@ -11,6 +12,7 @@ local DEBUG_MODE = true
 -- Egg Trading variables
 local EggTradingMode = false
 local eggTradingCoroutine = nil
+local TARGET_PLAYER_NAME = "Onastine"  -- Configurable target (was mismatched before)
 
 -- Debug function
 local function debugPrint(message)
@@ -22,6 +24,7 @@ end
 -- Function to find specific eggs in inventory
 local function findEggsInInventory()
     local targetEggs = {
+        "halloween_2025_bat_cat",
         "pet_recycler_2025_basic_egg",
         "pet_recycler_2025_crystal_egg"
     }
@@ -92,7 +95,7 @@ end
 
 -- Function to complete egg trade with specific player
 local function completeEggTradeWithPlayer(targetPlayerName)
-    if not targetPlayerName or targetPlayerName == "1kachalka" then
+    if not targetPlayerName then
         debugPrint("No player name provided for egg trading")
         return false
     end
@@ -102,6 +105,10 @@ local function completeEggTradeWithPlayer(targetPlayerName)
         debugPrint("Player not found: " .. targetPlayerName)
         return false
     end
+
+    -- Placeholder: Check for active trade (adapt if game has GetTradeState remote)
+    -- local success, isActive = pcall(function() return ReplicatedStorage.API.TradeAPI.GetTradeState:InvokeServer() end)
+    -- if success and isActive then debugPrint("Active trade detected, aborting..."); return false end
 
     debugPrint("Starting egg trade with: " .. targetPlayerName)
 
@@ -116,7 +123,7 @@ local function completeEggTradeWithPlayer(targetPlayerName)
     end
 
     debugPrint("Trade request sent successfully")
-    task.wait(2)
+    task.wait(3)  -- Slightly longer wait for response
 
     -- Accept trade request
     local args = { targetPlayer, true }
@@ -130,7 +137,7 @@ local function completeEggTradeWithPlayer(targetPlayerName)
     end
 
     debugPrint("Trade request accepted")
-    task.wait(2)
+    task.wait(3)
 
     -- Add all eggs to trade
     local eggsAdded = addAllEggsToTrade()
@@ -152,7 +159,7 @@ local function completeEggTradeWithPlayer(targetPlayerName)
     end
 
     debugPrint("Negotiation accepted, waiting for confirmation...")
-    task.wait(9)
+    task.wait(6)  -- Slightly longer for partner response
 
     -- Confirm trade
     local success4, result4 = pcall(function()
@@ -168,10 +175,10 @@ local function completeEggTradeWithPlayer(targetPlayerName)
     end
 end
 
--- Function to continuously trade eggs to fixed player "2kachalka197"
+-- Function to continuously trade eggs to fixed player
 local function startContinuousEggTrading()
     while EggTradingMode do
-        local targetPlayerName = "1kachalka" -- Default player name
+        local targetPlayerName = TARGET_PLAYER_NAME
 
         -- Check if eggs are available
         local eggs = findEggsInInventory()
@@ -198,11 +205,12 @@ end
 local function toggleEggTradingMode()
     EggTradingMode = not EggTradingMode
     if EggTradingMode then
-        debugPrint("Continuous Egg Trading: ENABLED (target: 2kachalka197)")
-        eggTradingCoroutine = coroutine.wrap(startContinuousEggTrading)()
+        debugPrint("Continuous Egg Trading: ENABLED (target: " .. TARGET_PLAYER_NAME .. ")")
+        eggTradingCoroutine = coroutine.create(startContinuousEggTrading)
+        coroutine.resume(eggTradingCoroutine)
     else
         debugPrint("Continuous Egg Trading: DISABLED")
-        eggTradingCoroutine = nil
+        -- No need to nil; coroutine will exit naturally
     end
 end
 
@@ -213,8 +221,8 @@ local function createEggTradingUI()
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 160, 0, 30)
-    frame.Position = UDim2.new(0, 10, 1, -40)
+    frame.Size = UDim2.new(0, 180, 0, 50)  -- Slightly taller for status
+    frame.Position = UDim2.new(0, 10, 1, -60)
     frame.AnchorPoint = Vector2.new(0, 1)
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
@@ -230,41 +238,64 @@ local function createEggTradingUI()
     title.Position = UDim2.new(0, 0, 0, 5)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Egg Trading"
+    title.Text = "Egg Trading (Target: " .. TARGET_PLAYER_NAME .. ")"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = frame
 
-    local addEggsButton = Instance.new("TextButton")
-    addEggsButton.Size = UDim2.new(1, -10, 0, 20)
-    addEggsButton.Position = UDim2.new(0, 5, 0, 5)
-    addEggsButton.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
-    addEggsButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    addEggsButton.Text = "Add Eggs [OFF]"
-    addEggsButton.Font = Enum.Font.SourceSansBold
-    addEggsButton.TextSize = 12
-    addEggsButton.Parent = frame
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -10, 0, 15)
+    statusLabel.Position = UDim2.new(0, 5, 0, 25)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLabel.Text = "Ready (0 eggs)"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 10
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = frame
 
-    local addEggsCorner = Instance.new("UICorner")
-    addEggsCorner.CornerRadius = UDim.new(0, 4)
-    addEggsCorner.Parent = addEggsButton
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(1, -10, 0, 20)
+    toggleButton.Position = UDim2.new(0, 5, 0, 5)
+    toggleButton.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+    toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleButton.Text = "Auto Eggs [OFF]"
+    toggleButton.Font = Enum.Font.SourceSansBold
+    toggleButton.TextSize = 12
+    toggleButton.Parent = frame
 
-    addEggsButton.MouseButton1Click:Connect(function()
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 4)
+    buttonCorner.Parent = toggleButton
+
+    -- Update status periodically
+    spawn(function()
+        while true do
+            if statusLabel then
+                local eggs = #findEggsInInventory()
+                statusLabel.Text = "Ready (" .. eggs .. " eggs)"
+            end
+            task.wait(5)  -- Update every 5s
+        end
+    end)
+
+    toggleButton.MouseButton1Click:Connect(function()
         toggleEggTradingMode()
-        addEggsButton.Text = EggTradingMode and "Add Eggs [ON]" or "Add Eggs [OFF]"
-        addEggsButton.BackgroundColor3 = EggTradingMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(120, 0, 200)
+        toggleButton.Text = EggTradingMode and "Auto Eggs [ON]" or "Auto Eggs [OFF]"
+        toggleButton.BackgroundColor3 = EggTradingMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(120, 0, 200)
     end)
 
     return {
         frame = frame,
-        addEggsButton = addEggsButton
+        toggleButton = toggleButton,
+        statusLabel = statusLabel
     }
 end
 
 -- Initialize UI
 local ui = createEggTradingUI()
 
-debugPrint("Egg Trading System Loaded Successfully!")
-debugPrint("Features: Continuous Egg Trading with 2kachalka197")
-debugPrint("Note: Trade requests are only sent when eggs are detected.")
+debugPrint("Egg Trading System Loaded Successfully! (Fixed: Player target & UI)")
+debugPrint("Features: Continuous Egg Trading with " .. TARGET_PLAYER_NAME)
+debugPrint("Note: Trade requests are only sent when eggs are detected. Use responsibly!")
