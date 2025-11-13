@@ -1,10 +1,11 @@
 -- ==================================================================
--- COMPACT POTION RELEASER SCRIPT
+-- COMPACT POTION RELEASER SCRIPT (MODIFIED FOR NEON PETS)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
+
 -- Potion Releaser variables
 local PotionReleaserMode = false
 local potionReleaserCoroutine = nil
@@ -12,10 +13,12 @@ local TARGET_PETS_FOR_POTIONS = {
     "halloween_2025_aye_aye",
     "basic_egg_2022_mouse"
 }
+
 -- Debug print function
 local function debugPrint(msg)
     print("[PotionRelease] " .. msg)
 end
+
 -- Function to find pet age potion in inventory
 local function findPetAgePotion()
     local success, result = pcall(function()
@@ -31,12 +34,14 @@ local function findPetAgePotion()
     end)
     return success and result or nil
 end
+
 -- Function to safely unequip items
 local function safelyUnequipFood(itemId)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(itemId)
     end)
 end
+
 -- Function to equip a specific pet
 local function equipPet(petUniqueID)
     if not petUniqueID then
@@ -54,10 +59,11 @@ local function equipPet(petUniqueID)
     end)
     return success
 end
--- Function to find pets that need potions (age < 6 and in target list)
+
+-- Function to find pets that need potions (age < 6 and in target list, including neon pets)
 local function findPetsNeedingPotions()
     local petsNeedingPotions = {}
-  
+
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
@@ -67,8 +73,8 @@ local function findPetsNeedingPotions()
                     local petName = string.lower(petData.id)
                     local petAge = petData.properties.age or 0
                     local isNeon = petData.properties.neon or false
-                  
-                    -- Check if pet is in target list and under age 6
+
+                    -- Check if pet is in target list and under age 6 (including neon pets)
                     for _, targetPet in ipairs(TARGET_PETS_FOR_POTIONS) do
                         if petName == targetPet and petAge < 6 then
                             table.insert(petsNeedingPotions, {
@@ -84,24 +90,25 @@ local function findPetsNeedingPotions()
             end
         end
     end)
-  
+
     if not success then
         debugPrint("Error finding pets: " .. tostring(errorMsg))
     end
-  
+
     -- Sort by age (youngest first)
     table.sort(petsNeedingPotions, function(a, b)
         return a.age < b.age
     end)
-  
+
     return petsNeedingPotions
 end
+
 -- Function to use potion on a specific pet
 local function usePotionOnPet(petUniqueID)
     if not petUniqueID then
         return false
     end
-  
+
     -- Verify the pet still exists
     local petExists = false
     local currentPetAge = 0
@@ -120,11 +127,11 @@ local function usePotionOnPet(petUniqueID)
             end
         end
     end)
-  
+
     if not petExists or currentPetAge >= 6 then
         return false
     end
-  
+
     -- Equip the target pet before aging
     local equipSuccess = equipPet(petUniqueID)
     if not equipSuccess then
@@ -133,12 +140,12 @@ local function usePotionOnPet(petUniqueID)
     end
     debugPrint("Equipped pet: " .. petName)
     task.wait(1)
-  
+
     local potionID = findPetAgePotion()
     if not potionID then
         return false
     end
-  
+
     -- Equip potion
     local args1 = {
         potionID,
@@ -150,13 +157,13 @@ local function usePotionOnPet(petUniqueID)
     local equipSuccessPotion = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args1))
     end)
-  
+
     if not equipSuccessPotion then
         return false
     end
-  
+
     task.wait(1)
-  
+
     -- Start using potion
     local args2 = {
         potionID,
@@ -165,14 +172,14 @@ local function usePotionOnPet(petUniqueID)
     local startSuccess = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args2))
     end)
-  
+
     if not startSuccess then
         safelyUnequipFood(potionID)
         return false
     end
-  
+
     task.wait(1)
-  
+
     -- Create pet object for consumption
     local args3 = {
         "__Enum_PetObjectCreatorType_2",
@@ -185,41 +192,42 @@ local function usePotionOnPet(petUniqueID)
     local petObjectSuccess = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(args3))
     end)
-  
+
     if not petObjectSuccess then
         safelyUnequipFood(potionID)
         return false
     end
-  
+
     task.wait(9)
     safelyUnequipFood(potionID)
-  
+
     debugPrint("Used potion on " .. petName .. " (Age: " .. currentPetAge .. ")")
     return true
 end
+
 -- Main potion releaser loop
 local function startPotionReleaser()
     while PotionReleaserMode do
         local petsNeedingPotions = findPetsNeedingPotions()
-      
+
         if #petsNeedingPotions == 0 then
             task.wait(30)
             continue
         end
-      
+
         local potionID = findPetAgePotion()
         if not potionID then
             debugPrint("No potions available")
             task.wait(30)
             continue
         end
-      
+
         debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions")
-      
+
         local potionsUsed = 0
         for _, petData in ipairs(petsNeedingPotions) do
             if not PotionReleaserMode then break end
-          
+
             -- Check if pet still needs potion
             local currentAge = 0
             pcall(function()
@@ -234,17 +242,17 @@ local function startPotionReleaser()
                     end
                 end
             end)
-          
+
             if currentAge >= 6 then
                 continue
             end
-          
+
             local success = usePotionOnPet(petData.unique_id)
-          
+
             if success then
                 potionsUsed = potionsUsed + 1
                 task.wait(3)
-              
+
                 if not findPetAgePotion() then
                     debugPrint("Out of potions")
                     break
@@ -253,25 +261,27 @@ local function startPotionReleaser()
                 task.wait(2)
             end
         end
-      
+
         if potionsUsed > 0 then
             debugPrint("Cycle complete: " .. potionsUsed .. " potions used")
         end
-      
+
         task.wait(10)
     end
 end
+
 -- Function to toggle potion releaser mode
 local function togglePotionReleaserMode()
     PotionReleaserMode = not PotionReleaserMode
     if PotionReleaserMode then
-        debugPrint("STARTED - Targeting basic_egg_2022_mouse until age 6")
+        debugPrint("STARTED - Targeting pets until age 6 (including neon)")
         potionReleaserCoroutine = coroutine.wrap(startPotionReleaser)()
     else
         debugPrint("STOPPED")
         potionReleaserCoroutine = nil
     end
 end
+
 -- ==================================================================
 -- COMPACT UI CREATION
 -- ==================================================================
@@ -279,7 +289,7 @@ local function createCompactPotionReleaserUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "PotionReleaseUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
-  
+
     local mainFrame = Instance.new("Frame")
     mainFrame.Size = UDim2.new(0, 150, 0, 60)
     mainFrame.Position = UDim2.new(0, 10, 1, -70)
@@ -287,21 +297,21 @@ local function createCompactPotionReleaserUI()
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.Parent = screenGui
-  
+
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = mainFrame
-  
+
     -- Draggable functionality
     local dragging = false
     local dragStart = nil
     local startPos = nil
-  
+
     local function updateInput(input)
         local delta = input.Position - dragStart
         mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
-  
+
     mainFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
@@ -314,7 +324,7 @@ local function createCompactPotionReleaserUI()
             end)
         end
     end)
-  
+
     mainFrame.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement then
             if dragging then
@@ -322,7 +332,7 @@ local function createCompactPotionReleaserUI()
             end
         end
     end)
-  
+
     -- Title
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 20)
@@ -333,6 +343,7 @@ local function createCompactPotionReleaserUI()
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = mainFrame
+
     -- Status label
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 15)
@@ -344,6 +355,7 @@ local function createCompactPotionReleaserUI()
     statusLabel.TextSize = 10
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = mainFrame
+
     -- Toggle button
     local toggleButton = Instance.new("TextButton")
     toggleButton.Size = UDim2.new(0, 130, 0, 20)
@@ -354,16 +366,18 @@ local function createCompactPotionReleaserUI()
     toggleButton.Font = Enum.Font.SourceSansBold
     toggleButton.TextSize = 10
     toggleButton.Parent = mainFrame
-  
+
     local buttonCorner = Instance.new("UICorner")
     buttonCorner.CornerRadius = UDim.new(0, 4)
     buttonCorner.Parent = toggleButton
+
     -- Update status function
     local function updateStatus()
         local pets = findPetsNeedingPotions()
         local potions = findPetAgePotion() and "Yes" or "No"
         statusLabel.Text = #pets .. " pets | Potions: " .. potions
     end
+
     -- Connect button click
     toggleButton.MouseButton1Click:Connect(function()
         togglePotionReleaserMode()
@@ -371,6 +385,7 @@ local function createCompactPotionReleaserUI()
         toggleButton.BackgroundColor3 = PotionReleaserMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
         updateStatus()
     end)
+
     -- Auto-update status
     coroutine.wrap(function()
         while true do
@@ -378,16 +393,18 @@ local function createCompactPotionReleaserUI()
             task.wait(5)
         end
     end)()
+
     return {
         mainFrame = mainFrame,
         statusLabel = statusLabel,
         toggleButton = toggleButton
     }
 end
+
 -- ==================================================================
 -- INITIALIZATION
 -- ==================================================================
 -- Create the UI
 local ui = createCompactPotionReleaserUI()
 debugPrint("Compact Potion Releaser loaded successfully!")
-debugPrint("Target pets: basic_egg_2022_mouse (until age 6)")
+debugPrint("Target pets: basic_egg_2022_mouse, halloween_2025_aye_aye (until age 6, including neon)")
