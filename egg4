@@ -1,0 +1,301 @@
+
+-- Egg Trading System - Compact Standalone Script (Fixed Version)
+-- Place this in StarterPlayerScripts or StarterGui
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local DEBUG_MODE = true
+
+-- Egg Trading variables
+local EggTradingMode = false
+local eggTradingCoroutine = nil
+local TARGET_PLAYER_NAME = "pisun_pp27"  -- Configurable target (was mismatched before)
+
+-- Debug function
+local function debugPrint(message)
+    if not DEBUG_MODE then return end
+    local timestamp = os.date("[%H:%M:%S]")
+    print(timestamp .. " " .. message)
+end
+
+-- Function to find specific eggs in inventory
+local function findEggsInInventory()
+    local targetEggs = {
+        "halloween_2025_bat_cat",
+        "pet_recycler_2025_basic_egg",
+        "pet_recycler_2025_crystal_egg"
+    }
+
+    local foundEggs = {}
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            for petUniqueId, petData in pairs(playerData.inventory.pets) do
+                if petData.id then
+                    local eggName = string.lower(petData.id)
+                    for _, targetEgg in ipairs(targetEggs) do
+                        if eggName == targetEgg then
+                            table.insert(foundEggs, {
+                                unique_id = petUniqueId,
+                                name = petData.id,
+                                type = targetEgg
+                            })
+                            debugPrint("Found egg: " .. petData.id .. " (ID: " .. petUniqueId .. ")")
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        debugPrint("Error scanning inventory for eggs: " .. tostring(errorMsg))
+    end
+
+    debugPrint("Total eggs found: " .. #foundEggs)
+    return foundEggs
+end
+
+-- Function to add all eggs to trade
+local function addAllEggsToTrade()
+    debugPrint("Adding all recycler eggs to trade...")
+    local eggs = findEggsInInventory()
+    if #eggs == 0 then
+        debugPrint("No recycler eggs found to add to trade")
+        return 0
+    end
+
+    local eggsAdded = 0
+    local maxEggs = math.min(#eggs, 18) -- Trade limit
+
+    for i = 1, maxEggs do
+        local egg = eggs[i]
+        local success, err = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AddItemToOffer"):FireServer(egg.unique_id)
+        end)
+
+        if success then
+            eggsAdded = eggsAdded + 1
+            debugPrint("Added egg " .. i .. "/" .. maxEggs .. " to trade: " .. egg.name)
+        else
+            debugPrint("Failed to add egg to trade: " .. tostring(err))
+        end
+        task.wait(0.2)
+    end
+
+    debugPrint("Finished adding " .. eggsAdded .. " eggs to trade")
+    return eggsAdded
+end
+
+-- Function to complete egg trade with specific player
+local function completeEggTradeWithPlayer(targetPlayerName)
+    if not targetPlayerName then
+        debugPrint("No player name provided for egg trading")
+        return false
+    end
+
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if not targetPlayer then
+        debugPrint("Player not found: " .. targetPlayerName)
+        return false
+    end
+
+    -- Placeholder: Check for active trade (adapt if game has GetTradeState remote)
+    -- local success, isActive = pcall(function() return ReplicatedStorage.API.TradeAPI.GetTradeState:InvokeServer() end)
+    -- if success and isActive then debugPrint("Active trade detected, aborting..."); return false end
+
+    debugPrint("Starting egg trade with: " .. targetPlayerName)
+
+    -- Send trade request
+    local success1, err1 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(targetPlayer)
+    end)
+
+    if not success1 then
+        debugPrint("Failed to send trade request: " .. tostring(err1))
+        return false
+    end
+
+    debugPrint("Trade request sent successfully")
+    task.wait(3)  -- Slightly longer wait for response
+
+    -- Accept trade request
+    local args = { targetPlayer, true }
+    local success2, result2 = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptOrDeclineTradeRequest"):InvokeServer(unpack(args))
+    end)
+
+    if not success2 then
+        debugPrint("Failed to accept trade request: " .. tostring(result2))
+        return false
+    end
+
+    debugPrint("Trade request accepted")
+    task.wait(3)
+
+    -- Add all eggs to trade
+    local eggsAdded = addAllEggsToTrade()
+    if eggsAdded == 0 then
+        debugPrint("No eggs to trade, cancelling...")
+        return false
+    end
+
+    task.wait(3)
+
+    -- Accept negotiation
+    local success3, result3 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptNegotiation"):FireServer()
+    end)
+
+    if not success3 then
+        debugPrint("Failed to accept negotiation: " .. tostring(result3))
+        return false
+    end
+
+    debugPrint("Negotiation accepted, waiting for confirmation...")
+    task.wait(6)  -- Slightly longer for partner response
+
+    -- Confirm trade
+    local success4, result4 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
+    end)
+
+    if success4 then
+        debugPrint("SUCCESS: Egg trade completed with " .. targetPlayerName .. " (" .. eggsAdded .. " eggs traded)")
+        return true
+    else
+        debugPrint("Failed to confirm trade: " .. tostring(result4))
+        return false
+    end
+end
+
+-- Function to continuously trade eggs to fixed player
+local function startContinuousEggTrading()
+    while EggTradingMode do
+        local targetPlayerName = TARGET_PLAYER_NAME
+
+        -- Check if eggs are available
+        local eggs = findEggsInInventory()
+        if #eggs == 0 then
+            debugPrint("No eggs available for trading. Waiting 30 seconds...")
+            task.wait(30)
+            continue
+        end
+
+        debugPrint("Eggs detected, sending trade request to " .. targetPlayerName)
+
+        -- Perform trade only if eggs are detected
+        local success = completeEggTradeWithPlayer(targetPlayerName)
+        if not success then
+            debugPrint("Trade failed. Retrying in 15 seconds...")
+            task.wait(15)
+        else
+            task.wait(math.random(8, 12)) -- Random delay to avoid detection
+        end
+    end
+end
+
+-- Function to toggle egg trading mode
+local function toggleEggTradingMode()
+    EggTradingMode = not EggTradingMode
+    if EggTradingMode then
+        debugPrint("Continuous Egg Trading: ENABLED (target: " .. TARGET_PLAYER_NAME .. ")")
+        eggTradingCoroutine = coroutine.create(startContinuousEggTrading)
+        coroutine.resume(eggTradingCoroutine)
+    else
+        debugPrint("Continuous Egg Trading: DISABLED")
+        -- No need to nil; coroutine will exit naturally
+    end
+end
+
+-- Create UI for Egg Trading
+local function createEggTradingUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "EggTradingUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 180, 0, 50)  -- Slightly taller for status
+    frame.Position = UDim2.new(0, 10, 1, -60)
+    frame.AnchorPoint = Vector2.new(0, 1)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.BackgroundTransparency = 0.1
+    frame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Position = UDim2.new(0, 0, 0, 5)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "Egg Trading (Target: " .. TARGET_PLAYER_NAME .. ")"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 12
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = frame
+
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -10, 0, 15)
+    statusLabel.Position = UDim2.new(0, 5, 0, 25)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLabel.Text = "Ready (0 eggs)"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 10
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = frame
+
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(1, -10, 0, 20)
+    toggleButton.Position = UDim2.new(0, 5, 0, 5)
+    toggleButton.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+    toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleButton.Text = "Auto Eggs [OFF]"
+    toggleButton.Font = Enum.Font.SourceSansBold
+    toggleButton.TextSize = 12
+    toggleButton.Parent = frame
+
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 4)
+    buttonCorner.Parent = toggleButton
+
+    -- Update status periodically
+    spawn(function()
+        while true do
+            if statusLabel then
+                local eggs = #findEggsInInventory()
+                statusLabel.Text = "Ready (" .. eggs .. " eggs)"
+            end
+            task.wait(5)  -- Update every 5s
+        end
+    end)
+
+    toggleButton.MouseButton1Click:Connect(function()
+        toggleEggTradingMode()
+        toggleButton.Text = EggTradingMode and "Auto Eggs [ON]" or "Auto Eggs [OFF]"
+        toggleButton.BackgroundColor3 = EggTradingMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(120, 0, 200)
+    end)
+
+    return {
+        frame = frame,
+        toggleButton = toggleButton,
+        statusLabel = statusLabel
+    }
+end
+
+-- Initialize UI
+local ui = createEggTradingUI()
+
+debugPrint("Egg Trading System Loaded Successfully! (Fixed: Player target & UI)")
+debugPrint("Features: Continuous Egg Trading with " .. TARGET_PLAYER_NAME)
+debugPrint("Note: Trade requests are only sent when eggs are detected. Use responsibly!")
