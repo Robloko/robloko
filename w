@@ -1825,6 +1825,78 @@ local function resolveMysteryAilment(ailmentId)
 end
 
 -- =============================================================================
+-- SMART PET SELECTION SYSTEM - AUTO SELECT STARTER_EGG, DOG, OR CAT
+-- =============================================================================
+local function findBestStarterPet()
+    debugPrint("Searching for best starter pet...")
+    local starterPets = {}
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            for uniqueId, petData in pairs(playerData.inventory.pets) do
+                if petData and petData.id and petData.properties then
+                    local petName = string.lower(petData.id)
+                    local age = petData.properties.age or 0
+                    local isNeon = petData.properties.neon or false
+                    
+                    -- Priority order: starter_egg > dog > cat > others
+                    local priority = 0
+                    if petName == "starter_egg" then
+                        priority = 100
+                    elseif string.find(petName, "dog") and not string.find(petName, "practice_dog") then
+                        priority = 90
+                    elseif string.find(petName, "cat") then
+                        priority = 80
+                    else
+                        priority = 10
+                    end
+                    
+                    -- Add bonus for younger pets (so we age them up)
+                    if age < 6 then
+                        priority = priority + (6 - age)
+                    end
+                    
+                    table.insert(starterPets, {
+                        unique_id = uniqueId,
+                        name = petData.id,
+                        age = age,
+                        neon = isNeon,
+                        priority = priority
+                    })
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        debugPrint("Error finding starter pets: " .. tostring(errorMsg))
+        return nil
+    end
+    
+    if #starterPets == 0 then
+        debugPrint("No pets found in inventory!")
+        return nil
+    end
+    
+    -- Sort by priority (highest first)
+    table.sort(starterPets, function(a, b)
+        return a.priority > b.priority
+    end)
+    
+    -- Log all available pets for debugging
+    debugPrint("Available pets (sorted by priority):")
+    for i, pet in ipairs(starterPets) do
+        debugPrint(string.format(" %d. %s (Age: %d, Priority: %d)", i, pet.name, pet.age, pet.priority))
+    end
+    
+    local bestPet = starterPets[1]
+    debugPrint("Selected best pet: " .. bestPet.name .. " (Age: " .. bestPet.age .. ", Priority: " .. bestPet.priority .. ")")
+    
+    return bestPet.unique_id
+end
+
+-- =============================================================================
 -- SMART NEON FUSION SYSTEM - FUSES WHEN 4 PETS OF SAME TYPE REACH AGE 6
 -- =============================================================================
 local function performNeonFusion()
@@ -2460,7 +2532,7 @@ local function createEnhancedCompactUI()
     autoPetPenButton.Position = UDim2.new(0, 92, 0, 120)
     autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0)
     autoPetPenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    autoPetPenButton.Text = "Auto PetPen [OFF]"
+    autoPetPenButton.Text = "Auto PetPen [ON]" -- Changed to ON by default
     autoPetPenButton.Font = Enum.Font.SourceSansBold
     autoPetPenButton.TextSize = 10
     autoPetPenButton.Parent = frame
@@ -2475,7 +2547,7 @@ local function createEnhancedCompactUI()
     petFarmButton.Position = UDim2.new(0, 10, 0, 145)
     petFarmButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    petFarmButton.Text = "START PETFARM"
+    petFarmButton.Text = "🛑 STOP PETFARM" -- Changed to STOP since it starts automatically
     petFarmButton.Font = Enum.Font.SourceSansBold
     petFarmButton.TextSize = 10
     petFarmButton.Parent = frame
@@ -2687,6 +2759,61 @@ local function createPetsDropdown(parentFrame, position)
 end
 
 -- ==================================================================
+-- AUTO-START FUNCTIONALITY
+-- ==================================================================
+
+-- Function to automatically start everything
+local function autoStartEverything()
+    debugPrint("=== AUTO-START INITIATED ===")
+    
+    -- Wait a bit for game to load
+    task.wait(3)
+    
+    -- Step 1: Find and select the best starter pet
+    debugPrint("Step 1: Finding best starter pet...")
+    local bestPetID = findBestStarterPet()
+    if bestPetID then
+        PetID = bestPetID
+        lastValidPetID = bestPetID
+        petFarmPetID = bestPetID
+        debugPrint("Auto-selected pet: " .. tostring(bestPetID))
+        
+        -- Try to equip the pet
+        local equipSuccess = ensurePetEquipped(bestPetID, 10)
+        if not equipSuccess then
+            debugPrint("Warning: Could not auto-equip pet, but continuing...")
+        end
+    else
+        debugPrint("Warning: No suitable pets found for auto-start")
+    end
+    
+    -- Step 2: Start Auto PetPen
+    debugPrint("Step 2: Starting Auto PetPen...")
+    if not AutoPetPenMode then
+        toggleAutoPetPenMode()
+    end
+    
+    -- Step 3: Start PetFarm
+    debugPrint("Step 3: Starting PetFarm...")
+    if not PetFarmMode then
+        togglePetFarmMode()
+    end
+    
+    -- Step 4: Update UI to reflect auto-started state
+    debugPrint("Step 4: Updating UI...")
+    if ui then
+        ui.autoPetPenButton.Text = "Auto PetPen [ON]"
+        ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+        ui.petFarmButton.Text = "🛑 STOP PETFARM"
+        ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    end
+    
+    debugPrint("=== AUTO-START COMPLETED ===")
+    debugPrint("PetFarm: RUNNING | Auto PetPen: RUNNING")
+    debugPrint("Selected Pet: " .. tostring(PetID))
+end
+
+-- ==================================================================
 -- INITIALIZATION AND MAIN LOOP
 -- ==================================================================
 
@@ -2790,8 +2917,14 @@ debugInspectRecyclerData()
 -- Start the main loop
 coroutine.wrap(mainLoop)()
 
+-- AUTO-START: Begin automation immediately
+task.wait(5) -- Wait a bit longer for everything to initialize
+autoStartEverything()
+
 debugPrint("ENHANCED PetFarm System Loaded Successfully!")
-debugPrint("Features: Ailment Monitoring + Throw Toys + Walk Handler + Ride Handler + Sick Handler + Mystery Handler + Pet Me Handler + Auto Pet Re-equip")
+debugPrint("Features: AUTO-START ENABLED - PetFarm and PetPen start automatically!")
+debugPrint("Smart Pet Selection: Automatically selects starter_egg > dog > cat")
+debugPrint("Ailment Monitoring + Throw Toys + Walk Handler + Ride Handler + Sick Handler + Mystery Handler + Pet Me Handler + Auto Pet Re-equip")
 debugPrint("NEW: Auto Trading System - Send trades, add all pets, auto accept")
 debugPrint("NEW: Auto Potion System - Uses pet_age_potion only on selected pet")
 debugPrint("NEW: Auto Accept System - Automatically accepts and completes trades from all players")
