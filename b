@@ -259,12 +259,8 @@ local function ensurePetEquipped(petUniqueID, timeout)
     return false
 end
 
--- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet)
-local function activateFurniture(furnitureName, petObject)
-    if not petObject then
-        debugPrint("No pet object for furniture activation")
-        return false
-    end
+-- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character
+local function activateFurniture(furnitureName)
     local homeFolder = Workspace:FindFirstChild("HouseInteriors"):FindFirstChild(player.Name .. "House")
     if not homeFolder then
         debugPrint("Home folder not found")
@@ -280,9 +276,14 @@ local function activateFurniture(furnitureName, petObject)
         debugPrint("Furniture not found: " .. furnitureName)
         return false
     end
-    debugPrint("Activating furniture: " .. furnitureName .. " on pet: " .. petObject.Name)
+    local playerChar = player.Character
+    if not playerChar then
+        debugPrint("Local player character not found")
+        return false
+    end
+    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character")
     local args = {
-        petObject,
+        playerChar,
         {
             furniture = furniture
         }
@@ -291,7 +292,7 @@ local function activateFurniture(furnitureName, petObject)
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
     end)
     if success then
-        debugPrint("Successfully activated furniture: " .. furnitureName)
+        debugPrint("Successfully activated furniture: " .. furnitureName .. " on localPlayer")
         return true
     else
         debugPrint("Failed to activate furniture: " .. tostring(err))
@@ -299,47 +300,15 @@ local function activateFurniture(furnitureName, petObject)
     end
 end
 
--- Adapted from w1: Use furniture with pet (temp equip for baby)
-local function useFurnitureWithBabyPet(furnitureName, petUniqueID)
-    debugPrint("Using furniture for baby: " .. furnitureName .. " on pet: " .. petUniqueID)
-    local petModel = ensurePetEquipped(petUniqueID, 10)
-    if not petModel then
-        debugPrint("Failed to equip baby pet for furniture use")
-        return false
-    end
-    local attempts = 0
-    local petObject = nil
-    while attempts < 5 do
-        petObject = findPetModel(petUniqueID)  -- Reuse findPetModel
-        if petObject then
-            break
-        end
-        debugPrint("Baby pet not found in workspace, attempt " .. attempts + 1 .. "/5")
-        task.wait(2)
-        attempts = attempts + 1
-    end
-    if petObject then
-        debugPrint("Found baby pet for activation: " .. petObject.Name)
-        local success = activateFurniture(furnitureName, petObject)
-        if success then
-            task.wait(20)  -- Wait for ailment cure
-            -- Unequip after use
-            pcall(function()
-                ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-            end)
-            return true
-        else
-            debugPrint("Failed to activate furniture with baby pet")
-            pcall(function()
-                ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-            end)
-            return false
-        end
+-- Adapted from w1: Use furniture with localPlayer (no pet equip for baby furniture)
+local function useFurnitureWithLocalPlayer(furnitureName)
+    debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
+    local success = activateFurniture(furnitureName)
+    if success then
+        task.wait(20)  -- Wait for ailment cure
+        return true
     else
-        debugPrint("No baby pet found in workspace for activation after multiple attempts")
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-        end)
+        debugPrint("Failed to activate furniture with localPlayer")
         return false
     end
 end
@@ -853,8 +822,8 @@ local function monitorAndHandleBabyAilments()
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         else
-                            debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName)
-                            local success = useFurnitureWithBabyPet(furnitureName, petUniqueID)
+                            debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
+                            local success = useFurnitureWithLocalPlayer(furnitureName)
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
@@ -962,5 +931,5 @@ end
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
-debugPrint("Food ailments (hungry/thirsty/sick) now used directly on localPlayer without pet equip.")
+debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
 debugPrint("UPDATED: Enhanced ailment extraction with structure debugging and recursive search for table values.")
