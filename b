@@ -163,13 +163,13 @@ local function isPlayerAtHome()
         return false
     end
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
+        if string.find(string.lower(folder.Name), string.lower(player.Name)) then
             return true
         end
     end
     return false
 end
--- Dynamic function to find player's home folder
+-- Dynamic function to find player's home folder (case insensitive)
 local function findHomeFolder()
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
@@ -177,7 +177,7 @@ local function findHomeFolder()
         return nil
     end
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
+        if string.find(string.lower(folder.Name), string.lower(player.Name)) then
             debugPrint("Found home folder: " .. folder.Name)
             return folder
         end
@@ -250,23 +250,13 @@ local function ensurePetEquipped(petUniqueID, timeout)
     return false
 end
 -- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character and dynamic home
--- UPDATED: Ensure home exists by spawning if needed, and teleport localPlayer to UseBlock or furniture position before activation
+-- UPDATED: Move localPlayer to furniture's UseBlock before activating
 local function activateFurniture(furnitureName)
-    -- Ensure at home first
     local homeFolder = findHomeFolder()
     if not homeFolder then
-        debugPrint("Home folder not found, spawning to load home...")
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-        end)
-        task.wait(15) -- Increased wait for home to fully load
-        homeFolder = findHomeFolder()
-        if not homeFolder then
-            debugPrint("Home folder still not found after spawn")
-            return false
-        end
+        debugPrint("Home folder not found")
+        return false
     end
-    
     local furnitureFolder = homeFolder:FindFirstChild("Furniture")
     if not furnitureFolder then
         debugPrint("Furniture folder not found")
@@ -282,33 +272,23 @@ local function activateFurniture(furnitureName)
         debugPrint("Local player character not found")
         return false
     end
-    local hrp = playerChar:FindFirstChild("HumanoidRootPart")
-    if not hrp then
+    local humanoidRootPart = playerChar:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then
         debugPrint("HumanoidRootPart not found")
         return false
     end
-    
-    -- Teleport localPlayer to furniture's UseBlock or PrimaryPart position
-    debugPrint("Teleporting localPlayer to furniture: " .. furnitureName .. " in home: " .. homeFolder.Name)
-    local targetCFrame
+    -- Find UseBlock and move player to it
     local useBlock = furniture:FindFirstChild("UseBlock")
-    if useBlock and useBlock:IsA("BasePart") then
-        targetCFrame = useBlock.CFrame * CFrame.new(0, 0, -3) -- Offset to face the UseBlock
-        debugPrint("Using UseBlock for positioning")
-    else
-        -- Fallback to furniture's PrimaryPart or center
-        local primaryPart = furniture.PrimaryPart or furniture:FindFirstChildOfClass("BasePart")
-        if primaryPart then
-            targetCFrame = primaryPart.CFrame * CFrame.new(0, 0, -3)
-        else
-            targetCFrame = CFrame.new(furniture.Position + Vector3.new(0, 0, -3))
-        end
-        debugPrint("Using fallback positioning (no UseBlock found)")
+    if not useBlock then
+        debugPrint("UseBlock not found in furniture: " .. furnitureName)
+        return false
     end
-    hrp.CFrame = targetCFrame
-    task.wait(0.5) -- Brief wait after teleport for stability
-    
-    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character in home: " .. homeFolder.Name)
+    -- Teleport player to face the UseBlock (offset slightly in front)
+    local useCFrame = useBlock.CFrame * CFrame.new(0, 0, -3) -- Adjust offset as needed
+    humanoidRootPart.CFrame = useCFrame
+    debugPrint("Moved localPlayer to UseBlock of furniture: " .. furnitureName .. " in home: " .. homeFolder.Name)
+    task.wait(1) -- Brief wait for position to settle
+    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character")
     local args = {
         playerChar,
         {
@@ -928,7 +908,7 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(15) -- Increased wait for home to load
+            task.wait(10) -- Wait longer for home to load
         end
         checkAndBuyMissingFurniture()
         task.wait(3)
@@ -987,9 +967,8 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
-debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error.")
+debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error (case insensitive).")
 debugPrint("UPDATED: Longer wait after spawn for home to load.")
 debugPrint("UPDATED: Buy all furniture if home/furniture folder not found.")
 debugPrint("UPDATED: Added 'kind' to ailment extraction fields.")
-debugPrint("UPDATED: Teleport localPlayer to furniture UseBlock before activation for reliable use.")
-debugPrint("UPDATED: Auto-spawn and recheck home in activateFurniture if not found.")
+debugPrint("CRITICAL UPDATE: Moves localPlayer to furniture's UseBlock CFrame before activation for proper interaction.")
