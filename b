@@ -156,61 +156,33 @@ local function ensureCharacterSpawned()
     end
     return char
 end
--- Extracted/Adapted from w1: Check if player is at home (updated with case-insensitive)
+-- Extracted/Adapted from w1: Check if player is at home
 local function isPlayerAtHome()
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
         return false
     end
-    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(string.lower(folder.Name), playerLower) then
+        if string.find(folder.Name, player.Name) then
             return true
         end
     end
     return false
 end
--- Dynamic function to find player's home folder (updated with case-insensitive and debug prints)
+-- Dynamic function to find player's home folder
 local function findHomeFolder()
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
         debugPrint("HouseInteriors folder not found")
         return nil
     end
-    debugPrint("Scanning HouseInteriors folders for player home...")
-    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        debugPrint("Available home folder: " .. folder.Name)
-        if string.find(string.lower(folder.Name), playerLower) then
+        if string.find(folder.Name, player.Name) then
             debugPrint("Found home folder: " .. folder.Name)
             return folder
         end
     end
-    debugPrint("No home folder found containing player name '" .. player.Name .. "' (case-insensitive)")
-    return nil
-end
--- NEW: Robust function to find player's specific furniture in their home (case-insensitive home match)
-local function findPlayerFurniture(furnitureName)
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        debugPrint("HouseInteriors not found for furniture search")
-        return nil
-    end
-    local playerLower = string.lower(player.Name)
-    for _, home in ipairs(hi:GetChildren()) do
-        if string.find(string.lower(home.Name), playerLower) then
-            debugPrint("Searching furniture in home: " .. home.Name)
-            local furnitureFolder = home:FindFirstChild("Furniture")
-            if furnitureFolder then
-                local furniture = furnitureFolder:FindFirstChild(furnitureName)
-                if furniture then
-                    debugPrint("Found " .. furnitureName .. " in home: " .. home.Name)
-                    return furniture
-                end
-            end
-        end
-    end
-    debugPrint("Player's " .. furnitureName .. " not found in any matching home")
+    debugPrint("No home folder found containing player name")
     return nil
 end
 -- Extracted/Adapted from w1: Find player's pet in workspace (for specific unique ID)
@@ -277,9 +249,30 @@ local function ensurePetEquipped(petUniqueID, timeout)
     debugPrint("Baby pet did not fully equip within timeout")
     return false
 end
--- UPDATED: Find player's furniture and activate (core of useFurnitureWithPet) - uses robust findPlayerFurniture
+-- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character and dynamic home
+-- UPDATED: Ensure home exists by spawning if needed, and teleport localPlayer to UseBlock or furniture position before activation
 local function activateFurniture(furnitureName)
-    local furniture = findPlayerFurniture(furnitureName)
+    -- Ensure at home first
+    local homeFolder = findHomeFolder()
+    if not homeFolder then
+        debugPrint("Home folder not found, spawning to load home...")
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
+        end)
+        task.wait(15) -- Increased wait for home to fully load
+        homeFolder = findHomeFolder()
+        if not homeFolder then
+            debugPrint("Home folder still not found after spawn")
+            return false
+        end
+    end
+    
+    local furnitureFolder = homeFolder:FindFirstChild("Furniture")
+    if not furnitureFolder then
+        debugPrint("Furniture folder not found")
+        return false
+    end
+    local furniture = furnitureFolder:FindFirstChild(furnitureName)
     if not furniture then
         debugPrint("Furniture not found: " .. furnitureName)
         return false
@@ -289,7 +282,33 @@ local function activateFurniture(furnitureName)
         debugPrint("Local player character not found")
         return false
     end
-    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character")
+    local hrp = playerChar:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        debugPrint("HumanoidRootPart not found")
+        return false
+    end
+    
+    -- Teleport localPlayer to furniture's UseBlock or PrimaryPart position
+    debugPrint("Teleporting localPlayer to furniture: " .. furnitureName .. " in home: " .. homeFolder.Name)
+    local targetCFrame
+    local useBlock = furniture:FindFirstChild("UseBlock")
+    if useBlock and useBlock:IsA("BasePart") then
+        targetCFrame = useBlock.CFrame * CFrame.new(0, 0, -3) -- Offset to face the UseBlock
+        debugPrint("Using UseBlock for positioning")
+    else
+        -- Fallback to furniture's PrimaryPart or center
+        local primaryPart = furniture.PrimaryPart or furniture:FindFirstChildOfClass("BasePart")
+        if primaryPart then
+            targetCFrame = primaryPart.CFrame * CFrame.new(0, 0, -3)
+        else
+            targetCFrame = CFrame.new(furniture.Position + Vector3.new(0, 0, -3))
+        end
+        debugPrint("Using fallback positioning (no UseBlock found)")
+    end
+    hrp.CFrame = targetCFrame
+    task.wait(0.5) -- Brief wait after teleport for stability
+    
+    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character in home: " .. homeFolder.Name)
     local args = {
         playerChar,
         {
@@ -747,14 +766,15 @@ local function handleSickAilment()
         return false
     end
 end
--- UPDATED: Check and buy missing furniture (baby version) - uses findPlayerFurniture for robust checking
+-- Adapted from w1: Check and buy missing furniture (baby version, same logic) - updated with dynamic home
 local function checkAndBuyMissingFurniture()
-    debugPrint("Checking and buying missing baby furniture...")
-    for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
-        if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
-            local furn = findPlayerFurniture(furnitureName)
-            if not furn then
-                debugPrint("Missing furniture: " .. furnitureName .. ", buying...")
+    local homeFolder = findHomeFolder()
+    if not homeFolder then
+        debugPrint("Cannot check furniture: Home folder not found, buying all required furniture")
+        -- Buy all if no home
+        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
+            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
+                debugPrint("Buying required furniture: " .. furnitureName)
                 local args = {
                     "furniture",
                     furnitureName,
@@ -767,12 +787,65 @@ local function checkAndBuyMissingFurniture()
                 end)
                 if success then
                     debugPrint("Successfully purchased: " .. furnitureName)
-                    task.wait(2)  -- Wait for furniture to be placed in home
                 else
                     debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
                 end
+                task.wait(2)
+            end
+        end
+        return
+    end
+    local furnitureFolder = homeFolder:FindFirstChild("Furniture")
+    if not furnitureFolder then
+        debugPrint("Furniture folder not found, buying all required furniture")
+        -- Buy all if no furniture folder
+        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
+            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
+                debugPrint("Buying required furniture: " .. furnitureName)
+                local args = {
+                    "furniture",
+                    furnitureName,
+                    {
+                        buy_count = 1
+                    }
+                }
+                local success, result = pcall(function()
+                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                end)
+                if success then
+                    debugPrint("Successfully purchased: " .. furnitureName)
+                else
+                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
+                end
+                task.wait(2)
+            end
+        end
+        return
+    end
+    local furnitureToBuy = {}
+    for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
+        if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
+            furnitureToBuy[furnitureName] = true
+        end
+    end
+    for furnitureName, _ in pairs(furnitureToBuy) do
+        if not furnitureFolder:FindFirstChild(furnitureName) then
+            debugPrint("Missing furniture: " .. furnitureName .. ", buying...")
+            local args = {
+                "furniture",
+                furnitureName,
+                {
+                    buy_count = 1
+                }
+            }
+            local success, result = pcall(function()
+                return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+            end)
+            if success then
+                debugPrint("Successfully purchased: " .. furnitureName)
+                task.wait(2)
             else
-                debugPrint(furnitureName .. " already available in home")
+                debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
             end
         end
     end
@@ -855,12 +928,7 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(10) -- Wait longer for home to load
-            -- Additional wait and recheck
-            task.wait(5)
-            if not isPlayerAtHome() then
-                debugPrint("Still not at home after respawn - furniture activation may fail")
-            end
+            task.wait(15) -- Increased wait for home to load
         end
         checkAndBuyMissingFurniture()
         task.wait(3)
@@ -919,8 +987,9 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
-debugPrint("UPDATED: Robust furniture finding with case-insensitive home matching and debug prints.")
-debugPrint("UPDATED: checkAndBuyMissingFurniture now uses findPlayerFurniture - buys only if truly missing.")
-debugPrint("UPDATED: Longer wait after spawn + recheck for home presence.")
+debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error.")
+debugPrint("UPDATED: Longer wait after spawn for home to load.")
+debugPrint("UPDATED: Buy all furniture if home/furniture folder not found.")
 debugPrint("UPDATED: Added 'kind' to ailment extraction fields.")
-debugPrint("FIX: Home folder detection now case-insensitive and logs all available folders for debugging.")
+debugPrint("UPDATED: Teleport localPlayer to furniture UseBlock before activation for reliable use.")
+debugPrint("UPDATED: Auto-spawn and recheck home in activateFurniture if not found.")
