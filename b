@@ -68,16 +68,53 @@ local function getPlayerData()
     return playerData
 end
 
--- Helper to extract ailment key from potentially table-structured ailment
+-- Enhanced helper to extract ailment key from potentially table-structured ailment
 local function extractAilmentKey(ailment)
     if type(ailment) == "table" then
-        return (ailment.type or ailment.name or ailment[1] or "unknown"):lower()
+        -- Try common fields first
+        local candidates = {"type", "name", "ailment", "id", "key"}
+        for _, field in ipairs(candidates) do
+            local val = ailment[field]
+            if type(val) == "string" then
+                local lowerVal = val:lower()
+                if BABY_AILMENT_TASKS[lowerVal] then
+                    debugPrint("Extracted ailment '" .. lowerVal .. "' from field '" .. field .. "'")
+                    return lowerVal
+                end
+            end
+        end
+        -- If no direct match, search all string values for known ailments
+        for k, v in pairs(ailment) do
+            if type(v) == "string" then
+                local lowerV = v:lower()
+                if BABY_AILMENT_TASKS[lowerV] then
+                    debugPrint("Found matching ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
+                    return lowerV
+                end
+            elseif type(v) == "table" then
+                -- Recurse into sub-tables if needed
+                local subKey = extractAilmentKey(v)
+                if subKey ~= "unknown" then
+                    return subKey
+                end
+            end
+        end
+        -- If still unknown, debug the structure
+        debugPrint("Unknown ailment table structure for debugging:")
+        for k, v in pairs(ailment) do
+            debugPrint("  Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
+        end
+        return "unknown"
     else
-        return tostring(ailment):lower()
+        local str = tostring(ailment):lower()
+        if BABY_AILMENT_TASKS[str] then
+            return str
+        end
+        return str
     end
 end
 
--- Function to print available baby ailments in compact form (from provided snippet, updated for table structure)
+-- Function to print available baby ailments in compact form (updated to use extraction)
 local function printAvailableBabyAilmentsCompact()
     debugPrint("🔍 BABY AILMENTS (COMPACT)")
     debugPrint("=========================")
@@ -90,18 +127,22 @@ local function printAvailableBabyAilmentsCompact()
 
     local babyAilments = playerData.ailments_manager.baby_ailments
     local count = 0
+    local actionableCount = 0
 
-    debugPrint(string.format("%-5s %-36s %-15s", "No.", "Pet Unique ID", "Ailment"))
-    debugPrint(string.rep("-", 60))
+    debugPrint(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
+    debugPrint(string.rep("-", 70))
 
     for petUniqueID, ailment in pairs(babyAilments) do
-        local ailmentStr = extractAilmentKey(ailment)
+        local ailmentKey = extractAilmentKey(ailment)
+        local isActionable = BABY_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
+        if isActionable then actionableCount = actionableCount + 1 end
         count = count + 1
-        debugPrint(string.format("%-5d %-36s %-15s", count, petUniqueID:sub(1, 36), ailmentStr))
+        local status = isActionable and "YES" or "NO"
+        debugPrint(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
     end
 
-    debugPrint(string.rep("-", 60))
-    debugPrint(string.format("Total baby ailments: %d", count))
+    debugPrint(string.rep("-", 70))
+    debugPrint(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
 end
 
 -- Extracted/Adapted from w1: Character validation
@@ -889,10 +930,10 @@ local function monitorAndHandleBabyAilments()
         if playerData and playerData.ailments_manager and playerData.ailments_manager.baby_ailments then
             local foundActionable = false
             for petUniqueID, ailmentType in pairs(playerData.ailments_manager.baby_ailments) do
-                foundActionable = true
                 local ailmentKey = extractAilmentKey(ailmentType)
                 local furnitureName = BABY_AILMENT_TASKS[ailmentKey]
                 if furnitureName then
+                    foundActionable = true
                     -- Check cooldown
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
                         if ailmentKey == "hungry" then
@@ -924,8 +965,6 @@ local function monitorAndHandleBabyAilments()
                     else
                         debugPrint(ailmentKey .. " on cooldown (" .. (TASK_COOLDOWN - (currentTime - lastTaskTime[ailmentKey])) .. "s remaining)")
                     end
-                else
-                    debugPrint("Unknown baby ailment type: " .. ailmentKey)
                 end
             end
             if not foundActionable and currentTime - lastScanTime >= 60 then
@@ -1025,4 +1064,4 @@ end
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only, hungry uses teachers_apple, thirsty uses water, sick uses healing_apple).")
-debugPrint("UPDATED: Handles table-structured ailments by extracting .type or .name.")
+debugPrint("UPDATED: Enhanced ailment extraction with structure debugging and recursive search for table values.")
