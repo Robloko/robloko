@@ -162,10 +162,17 @@ local function isPlayerAtHome()
     if not hi then
         return false
     end
+    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(string.lower(folder.Name), string.lower(player.Name)) then
+        local folderLower = string.lower(folder.Name)
+        if string.find(folderLower, playerLower) then
+            debugPrint("DEBUG: Found home folder matching player name: " .. folder.Name .. " (contains '" .. playerLower .. "')")
             return true
         end
+    end
+    debugPrint("DEBUG: No home folder found for player '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
+    for _, folder in ipairs(hi:GetChildren()) do
+        debugPrint("DEBUG: Available folder: '" .. folder.Name .. "'")
     end
     return false
 end
@@ -176,13 +183,18 @@ local function findHomeFolder()
         debugPrint("HouseInteriors folder not found")
         return nil
     end
+    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(string.lower(folder.Name), string.lower(player.Name)) then
-            debugPrint("Found home folder: " .. folder.Name)
+        local folderLower = string.lower(folder.Name)
+        if string.find(folderLower, playerLower) then
+            debugPrint("Found home folder: " .. folder.Name .. " (matched '" .. playerLower .. "' in '" .. folderLower .. "')")
             return folder
         end
     end
-    debugPrint("No home folder found containing player name")
+    debugPrint("No home folder found containing player name '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
+    for _, folder in ipairs(hi:GetChildren()) do
+        debugPrint("Available folder: '" .. folder.Name .. "'")
+    end
     return nil
 end
 -- Extracted/Adapted from w1: Find player's pet in workspace (for specific unique ID)
@@ -254,17 +266,17 @@ end
 local function activateFurniture(furnitureName)
     local homeFolder = findHomeFolder()
     if not homeFolder then
-        debugPrint("Home folder not found")
+        debugPrint("Home folder not found - cannot activate furniture")
         return false
     end
     local furnitureFolder = homeFolder:FindFirstChild("Furniture")
     if not furnitureFolder then
-        debugPrint("Furniture folder not found")
+        debugPrint("Furniture folder not found in home: " .. homeFolder.Name)
         return false
     end
     local furniture = furnitureFolder:FindFirstChild(furnitureName)
     if not furniture then
-        debugPrint("Furniture not found: " .. furnitureName)
+        debugPrint("Furniture not found: " .. furnitureName .. " in " .. furnitureFolder.Name)
         return false
     end
     local playerChar = player.Character
@@ -908,7 +920,12 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(10) -- Wait longer for home to load
+            task.wait(15) -- Increased wait for home to load
+            -- Re-check after spawn
+            if not isPlayerAtHome() then
+                debugPrint("Still not at home after spawn - forcing longer wait")
+                task.wait(10)
+            end
         end
         checkAndBuyMissingFurniture()
         task.wait(3)
@@ -967,8 +984,9 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
-debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error (case insensitive).")
-debugPrint("UPDATED: Longer wait after spawn for home to load.")
-debugPrint("UPDATED: Buy all furniture if home/furniture folder not found.")
+debugPrint("UPDATED: Enhanced debug prints for home folder search - lists all available folders if not found.")
+debugPrint("UPDATED: Case-insensitive matching with explicit lowercasing.")
+debugPrint("UPDATED: Increased spawn wait to 15s + extra 10s if still not home.")
 debugPrint("UPDATED: Added 'kind' to ailment extraction fields.")
 debugPrint("CRITICAL UPDATE: Moves localPlayer to furniture's UseBlock CFrame before activation for proper interaction.")
+debugPrint("If home folder still not found, check the DEBUG logs for available folder names and adjust matching logic if needed.")
