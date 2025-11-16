@@ -5,80 +5,134 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to recursively print table contents
-local function printTable(t, indent)
-    indent = indent or 0
-    for key, value in pairs(t) do
-        local formatting = string.rep("  ", indent) .. tostring(key) .. ": "
-        if type(value) == "table" then
-            print(formatting .. "[TABLE]")
-            printTable(value, indent + 1)
-        else
-            print(formatting .. tostring(value))
+-- Function to safely inspect a value (recursive, with depth limit and cycle detection)
+local inspectedTables = {}  -- To detect cycles
+local function safeInspect(value, depth, maxDepth, prefix)
+    depth = depth or 0
+    maxDepth = maxDepth or 3  -- Increase for deeper inspection (e.g., 5)
+    prefix = prefix or ""
+    
+    if depth > maxDepth then
+        return prefix .. "[DEPTH LIMIT REACHED]"
+    end
+    
+    local valueType = type(value)
+    if valueType == "table" then
+        -- Cycle detection
+        if inspectedTables[value] then
+            return prefix .. "[CYCLE DETECTED]"
         end
+        inspectedTables[value] = true
+        
+        local count = 0
+        for _ in pairs(value) do count = count + 1 end
+        
+        if count == 0 then
+            return prefix .. "[EMPTY TABLE]"
+        end
+        
+        local output = prefix .. "[TABLE: " .. count .. " items]\n"
+        local itemCount = 0
+        local largeTableWarn = (count > 10)
+        if largeTableWarn then
+            output = output .. prefix .. "⚠️ Large table (>10 items); showing first 10...\n"
+        end
+        
+        for key, subValue in pairs(value) do
+            itemCount = itemCount + 1
+            if itemCount > 10 then break end  -- Limit per level
+            
+            local keyStr = tostring(key)
+            local subPrefix = prefix .. "  "
+            local valueStr
+            if type(subValue) == "table" then
+                valueStr = "\n" .. safeInspect(subValue, depth + 1, maxDepth, subPrefix)
+            else
+                valueStr = " = " .. tostring(subValue)
+            end
+            output = output .. subPrefix .. keyStr .. ":" .. valueStr .. "\n"
+        end
+        
+        if count > 10 then
+            output = output .. prefix .. "... and " .. (count - 10) .. " more items\n"
+        end
+        
+        inspectedTables[value] = nil  -- Clean up for next table
+        return output
+    elseif valueType == "string" and #value > 50 then
+        return prefix .. '"' .. string.sub(value, 1, 50) .. "...' (truncated)"
+    else
+        return prefix .. tostring(value)
     end
 end
 
--- Function to safely inspect chars_connected_to_me and states
-local function safeInspectNestedTables()
-    -- Use pcall to catch any errors
-    local success, err = pcall(function()
-        print("🔍 INSPECTING chars_connected_to_me AND states")
-        print("===========================================")
-
-        -- Safely require ClientData
-        local clientDataSuccess, clientData = pcall(function()
-            return require(ReplicatedStorage.ClientModules.Core.ClientData)
-        end)
-        if not clientDataSuccess then
-            warn("Failed to require ClientData:", clientData)
-            return
-        end
-
-        -- Safely get player data
-        local dataSuccess, data = pcall(function()
-            return clientData.get_data()[player.Name]
-        end)
-        if not dataSuccess then
-            warn("Failed to get player data:", data)
-            return
-        end
-
-        -- Access pet_state_managers
-        local petStateManagers = data.pet_state_managers
-        if not petStateManagers then
-            print("❌ pet_state_managers not found in player data")
-            return
-        end
-
-        -- Access the first pet entry
-        local petEntry = petStateManagers[1]
-        if not petEntry then
-            print("❌ No pet entry found in pet_state_managers")
-            return
-        end
-
-        -- Inspect chars_connected_to_me
-        if petEntry.chars_connected_to_me then
-            print("📋 Contents of chars_connected_to_me:")
-            printTable(petEntry.chars_connected_to_me, 2)
-        else
-            print("❌ chars_connected_to_me not found in pet entry")
-        end
-
-        -- Inspect states
-        if petEntry.states then
-            print("\n📋 Contents of states:")
-            printTable(petEntry.states, 2)
-        else
-            print("❌ states not found in pet entry")
-        end
-    end)
-
+-- Function to inspect all manager categories deeply
+local function inspectAllManagersDeeply()
+    print("🔍 DEEP INSPECTION OF ALL MANAGER CATEGORIES")
+    print("=============================================")
+    
+    -- Safe module load (with WaitForChild for reliability)
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
+    if not clientModules then
+        warn("❌ ClientModules folder not found in ReplicatedStorage")
+        return
+    end
+    
+    local core = clientModules:WaitForChild("Core", 10)
+    if not core then
+        warn("❌ Core folder not found")
+        return
+    end
+    
+    local success, clientData = pcall(require, core:WaitForChild("ClientData"))
     if not success then
-        warn("An error occurred during inspection:", err)
+        warn("❌ Failed to load ClientData: " .. tostring(clientData))
+        return
+    end
+    
+    local success2, dataTable = pcall(clientData.get_data)
+    if not success2 then
+        warn("❌ Failed to get data: " .. tostring(dataTable))
+        return
+    end
+    
+    local playerData = dataTable[player.Name]
+    if not playerData then
+        print("❌ No data found for player: " .. player.Name)
+        print("Available players: " .. table.concat(Object.keys(dataTable or {}), ", "))
+        return
+    end
+    
+    local managerCount = 0
+    
+    -- Find and inspect all categories with "manager" in the name
+    for categoryName, categoryData in pairs(playerData) do
+        if string.find(string.lower(categoryName), "manager") then
+            managerCount = managerCount + 1
+            print("\n🎯 " .. string.upper(categoryName) .. ":")
+            print(" Type: " .. type(categoryData))
+            print(" ---")
+            
+            if type(categoryData) == "table" then
+                print(safeInspect(categoryData, 0, 3))  -- Deep inspect to depth 3
+            else
+                print(" Value: " .. safeInspect(categoryData, 0, 3))
+            end
+            print("\n" .. string.rep("=", 50))
+        end
+    end
+    
+    if managerCount == 0 then
+        print("❌ No manager categories found")
+        print("All categories:")
+        for catName, _ in pairs(playerData) do
+            print("  - " .. catName)
+        end
+    else
+        print("\n📊 Total manager categories inspected: " .. managerCount)
+        print("💡 Tip: Adjust 'maxDepth' in safeInspect for even deeper dives!")
     end
 end
 
 -- Run the function
-safeInspectNestedTables()
+inspectAllManagersDeeply()
