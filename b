@@ -1,23 +1,18 @@
 -- Baby Farm Script
 -- Place this as a LocalScript in StarterPlayerScripts or similar
 -- This script monitors and handles baby ailments using furniture logic from the main PetFarm
-
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-
 -- Player
 local player = Players.LocalPlayer
-
 -- Debug settings
 local DEBUG_MODE = true
-
 -- Baby Farm variables
 local BabyFarmMode = false
 local babyFarmCoroutine = nil
-
 -- Ailment to Furniture Mapping (simplified for babies, only basic furniture and special for hungry/thirsty/sick)
 local BABY_AILMENT_TASKS = {
     sleepy = "BasicBed",
@@ -27,11 +22,9 @@ local BABY_AILMENT_TASKS = {
     bored = "Piano",
     sick = "healing_apple"
 }
-
 -- Task cooldowns to prevent spam
 local lastTaskTime = {}
 local TASK_COOLDOWN = 30 -- seconds
-
 -- Debug function
 local function debugPrint(message)
     if not DEBUG_MODE then return end
@@ -41,33 +34,26 @@ local function debugPrint(message)
     local timestamp = string.format("[%s:%s:%s]", hours, minutes, seconds)
     print(timestamp .. " [BabyFarm] " .. message)
 end
-
 -- Function to safely get player data (from provided snippet)
 local function getPlayerData()
     local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
     if not clientModules then return nil end
-
     local coreModule = clientModules:WaitForChild("Core", 5)
     if not coreModule then return nil end
-
     local clientDataModule = coreModule:WaitForChild("ClientData", 5)
     if not clientDataModule then return nil end
-
     local clientData
     local success, err = pcall(function()
         clientData = require(clientDataModule)
     end)
     if not success or not clientData then return nil end
-
     local playerData
     success, err = pcall(function()
         playerData = clientData.get_data()[player.Name]
     end)
     if not success or not playerData then return nil end
-
     return playerData
 end
-
 -- Enhanced helper to extract ailment key from potentially table-structured ailment
 local function extractAilmentKey(ailment)
     if type(ailment) == "table" then
@@ -102,7 +88,7 @@ local function extractAilmentKey(ailment)
         -- If still unknown, debug the structure
         debugPrint("Unknown ailment table structure for debugging:")
         for k, v in pairs(ailment) do
-            debugPrint("  Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
+            debugPrint(" Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
         end
         return "unknown"
     else
@@ -113,25 +99,20 @@ local function extractAilmentKey(ailment)
         return str
     end
 end
-
 -- Function to print available baby ailments in compact form (updated to use extraction)
 local function printAvailableBabyAilmentsCompact()
     debugPrint("🔍 BABY AILMENTS (COMPACT)")
     debugPrint("=========================")
-
     local playerData = getPlayerData()
     if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.baby_ailments then
         debugPrint("No baby ailments found.")
         return
     end
-
     local babyAilments = playerData.ailments_manager.baby_ailments
     local count = 0
     local actionableCount = 0
-
     debugPrint(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
     debugPrint(string.rep("-", 70))
-
     for petUniqueID, ailment in pairs(babyAilments) do
         local ailmentKey = extractAilmentKey(ailment)
         local isActionable = BABY_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
@@ -140,11 +121,9 @@ local function printAvailableBabyAilmentsCompact()
         local status = isActionable and "YES" or "NO"
         debugPrint(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
     end
-
     debugPrint(string.rep("-", 70))
     debugPrint(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
 end
-
 -- Extracted/Adapted from w1: Character validation
 local function getValidCharacter()
     local currentChar = player.Character
@@ -164,7 +143,6 @@ local function getValidCharacter()
     debugPrint("Failed to load valid character after waiting")
     return nil
 end
-
 -- Extracted/Adapted from w1: Ensure character is spawned and valid
 local function ensureCharacterSpawned()
     local char = getValidCharacter()
@@ -178,38 +156,63 @@ local function ensureCharacterSpawned()
     end
     return char
 end
-
--- Extracted/Adapted from w1: Check if player is at home
+-- Extracted/Adapted from w1: Check if player is at home (updated with case-insensitive)
 local function isPlayerAtHome()
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
         return false
     end
+    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
+        if string.find(string.lower(folder.Name), playerLower) then
             return true
         end
     end
     return false
 end
-
--- Dynamic function to find player's home folder
+-- Dynamic function to find player's home folder (updated with case-insensitive and debug prints)
 local function findHomeFolder()
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
         debugPrint("HouseInteriors folder not found")
         return nil
     end
+    debugPrint("Scanning HouseInteriors folders for player home...")
+    local playerLower = string.lower(player.Name)
     for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
+        debugPrint("Available home folder: " .. folder.Name)
+        if string.find(string.lower(folder.Name), playerLower) then
             debugPrint("Found home folder: " .. folder.Name)
             return folder
         end
     end
-    debugPrint("No home folder found containing player name")
+    debugPrint("No home folder found containing player name '" .. player.Name .. "' (case-insensitive)")
     return nil
 end
-
+-- NEW: Robust function to find player's specific furniture in their home (case-insensitive home match)
+local function findPlayerFurniture(furnitureName)
+    local hi = Workspace:FindFirstChild("HouseInteriors")
+    if not hi then
+        debugPrint("HouseInteriors not found for furniture search")
+        return nil
+    end
+    local playerLower = string.lower(player.Name)
+    for _, home in ipairs(hi:GetChildren()) do
+        if string.find(string.lower(home.Name), playerLower) then
+            debugPrint("Searching furniture in home: " .. home.Name)
+            local furnitureFolder = home:FindFirstChild("Furniture")
+            if furnitureFolder then
+                local furniture = furnitureFolder:FindFirstChild(furnitureName)
+                if furniture then
+                    debugPrint("Found " .. furnitureName .. " in home: " .. home.Name)
+                    return furniture
+                end
+            end
+        end
+    end
+    debugPrint("Player's " .. furnitureName .. " not found in any matching home")
+    return nil
+end
 -- Extracted/Adapted from w1: Find player's pet in workspace (for specific unique ID)
 local function findPetModel(petUniqueID)
     debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
@@ -246,7 +249,6 @@ local function findPetModel(petUniqueID)
     debugPrint("No pet found with unique ID: " .. tostring(petUniqueID))
     return nil
 end
-
 -- Extracted/Adapted from w1: Ensure pet is equipped (simplified for baby, assumes equip_manager not needed for temp equip)
 local function ensurePetEquipped(petUniqueID, timeout)
     timeout = timeout or 15
@@ -275,20 +277,9 @@ local function ensurePetEquipped(petUniqueID, timeout)
     debugPrint("Baby pet did not fully equip within timeout")
     return false
 end
-
--- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character and dynamic home
+-- UPDATED: Find player's furniture and activate (core of useFurnitureWithPet) - uses robust findPlayerFurniture
 local function activateFurniture(furnitureName)
-    local homeFolder = findHomeFolder()
-    if not homeFolder then
-        debugPrint("Home folder not found")
-        return false
-    end
-    local furnitureFolder = homeFolder:FindFirstChild("Furniture")
-    if not furnitureFolder then
-        debugPrint("Furniture folder not found")
-        return false
-    end
-    local furniture = furnitureFolder:FindFirstChild(furnitureName)
+    local furniture = findPlayerFurniture(furnitureName)
     if not furniture then
         debugPrint("Furniture not found: " .. furnitureName)
         return false
@@ -298,7 +289,7 @@ local function activateFurniture(furnitureName)
         debugPrint("Local player character not found")
         return false
     end
-    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character in home: " .. homeFolder.Name)
+    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character")
     local args = {
         playerChar,
         {
@@ -316,20 +307,18 @@ local function activateFurniture(furnitureName)
         return false
     end
 end
-
 -- Adapted from w1: Use furniture with localPlayer (no pet equip for baby furniture)
 local function useFurnitureWithLocalPlayer(furnitureName)
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     local success = activateFurniture(furnitureName)
     if success then
-        task.wait(20)  -- Wait for ailment cure
+        task.wait(20) -- Wait for ailment cure
         return true
     else
         debugPrint("Failed to activate furniture with localPlayer")
         return false
     end
 end
-
 -- Buy teachers_apple
 local function buyTeachersApple()
     debugPrint("Buying teachers_apple from shop...")
@@ -351,7 +340,6 @@ local function buyTeachersApple()
         return false
     end
 end
-
 -- Find teachers_apple in inventory
 local function findTeachersApple()
     debugPrint("Scanning inventory for teachers_apple...")
@@ -374,7 +362,6 @@ local function findTeachersApple()
     end
     return teachersAppleID
 end
-
 -- Use teachers_apple on localPlayer (no pet equip needed for baby ailments)
 local function useTeachersApple(foodID)
     if not foodID then
@@ -382,7 +369,7 @@ local function useTeachersApple(foodID)
         return false
     end
     debugPrint("Using teachers_apple " .. foodID .. " on localPlayer for baby ailment")
-    
+   
     local equipArgs = {
         foodID,
         {
@@ -399,7 +386,7 @@ local function useTeachersApple(foodID)
     end
     debugPrint("Successfully equipped teachers_apple")
     task.wait(2)
-    
+   
     local startArgs = {
         foodID,
         "START"
@@ -408,7 +395,7 @@ local function useTeachersApple(foodID)
         foodID,
         "END"
     }
-    
+   
     -- START
     local startSuccess, startResult = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -421,13 +408,13 @@ local function useTeachersApple(foodID)
         return false
     end
     task.wait(2)
-    
+   
     -- END (first)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     -- START END (second)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -437,29 +424,28 @@ local function useTeachersApple(foodID)
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     -- START (third)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
     end)
     task.wait(2)
-    
+   
     -- Unequip food
     local unequipArgs = { foodID }
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
     end)
-    
+   
     -- Final END
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     debugPrint("Successfully used teachers_apple on localPlayer")
     return true
 end
-
 -- Handle hungry ailment for baby (use on localPlayer)
 local function handleHungryAilment()
     debugPrint("HUNGRY AILMENT DETECTED FOR BABY! Starting feeding process on localPlayer...")
@@ -487,7 +473,6 @@ local function handleHungryAilment()
         return false
     end
 end
-
 -- Buy water
 local function buyWater()
     debugPrint("Buying water from shop...")
@@ -509,7 +494,6 @@ local function buyWater()
         return false
     end
 end
-
 -- Find water in inventory
 local function findWater()
     debugPrint("Scanning inventory for water...")
@@ -532,7 +516,6 @@ local function findWater()
     end
     return waterID
 end
-
 -- Use water on localPlayer (no pet equip needed for baby ailments)
 local function useWater(foodID)
     if not foodID then
@@ -540,7 +523,7 @@ local function useWater(foodID)
         return false
     end
     debugPrint("Using water " .. foodID .. " on localPlayer for baby ailment")
-    
+   
     local equipArgs = {
         foodID,
         {
@@ -557,7 +540,7 @@ local function useWater(foodID)
     end
     debugPrint("Successfully equipped water")
     task.wait(3)
-    
+   
     local startArgs = {
         foodID,
         "START"
@@ -566,7 +549,7 @@ local function useWater(foodID)
         foodID,
         "END"
     }
-    
+   
     -- Perform multiple START/END cycles as per provided code (9 full cycles)
     for i = 1, 9 do
         pcall(function()
@@ -578,23 +561,22 @@ local function useWater(foodID)
         end)
         task.wait(2)
     end
-    
+   
     -- Unequip food
     local unequipArgs = { foodID }
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
     end)
-    
+   
     -- Final END
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     debugPrint("Successfully used water on localPlayer")
     return true
 end
-
 -- Handle thirsty ailment for baby (use on localPlayer)
 local function handleThirstyAilment()
     debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
@@ -622,7 +604,6 @@ local function handleThirstyAilment()
         return false
     end
 end
-
 -- Buy healing_apple
 local function buyHealingApple()
     debugPrint("Buying healing_apple from shop...")
@@ -644,7 +625,6 @@ local function buyHealingApple()
         return false
     end
 end
-
 -- Find healing_apple in inventory
 local function findHealingApple()
     debugPrint("Scanning inventory for healing_apple...")
@@ -667,7 +647,6 @@ local function findHealingApple()
     end
     return healingAppleID
 end
-
 -- Use healing_apple on localPlayer (no pet equip needed for baby ailments)
 local function useHealingApple(foodID)
     if not foodID then
@@ -675,7 +654,7 @@ local function useHealingApple(foodID)
         return false
     end
     debugPrint("Using healing_apple " .. foodID .. " on localPlayer for baby ailment")
-    
+   
     local equipArgs = {
         foodID,
         {
@@ -692,7 +671,7 @@ local function useHealingApple(foodID)
     end
     debugPrint("Successfully equipped healing_apple")
     task.wait(2)
-    
+   
     local startArgs = {
         foodID,
         "START"
@@ -701,7 +680,7 @@ local function useHealingApple(foodID)
         foodID,
         "END"
     }
-    
+   
     -- First START/END
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -710,7 +689,7 @@ local function useHealingApple(foodID)
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     -- Second START/END
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -719,29 +698,28 @@ local function useHealingApple(foodID)
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     -- Third START
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
     end)
     task.wait(2)
-    
+   
     -- Unequip food
     local unequipArgs = { foodID }
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
     end)
-    
+   
     -- Final END
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
-    
+   
     debugPrint("Successfully used healing_apple on localPlayer")
     return true
 end
-
 -- Handle sick ailment for baby (use on localPlayer)
 local function handleSickAilment()
     debugPrint("SICK AILMENT DETECTED FOR BABY! Starting healing process on localPlayer...")
@@ -769,92 +747,36 @@ local function handleSickAilment()
         return false
     end
 end
-
--- Adapted from w1: Check and buy missing furniture (baby version, same logic) - updated with dynamic home
+-- UPDATED: Check and buy missing furniture (baby version) - uses findPlayerFurniture for robust checking
 local function checkAndBuyMissingFurniture()
-    local homeFolder = findHomeFolder()
-    if not homeFolder then
-        debugPrint("Cannot check furniture: Home folder not found, buying all required furniture")
-        -- Buy all if no home
-        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
-            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
-                debugPrint("Buying required furniture: " .. furnitureName)
-                local args = {
-                    "furniture",
-                    furnitureName,
-                    {
-                        buy_count = 1
-                    }
-                }
-                local success, result = pcall(function()
-                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-                end)
-                if success then
-                    debugPrint("Successfully purchased: " .. furnitureName)
-                else
-                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
-                end
-                task.wait(2)
-            end
-        end
-        return
-    end
-    local furnitureFolder = homeFolder:FindFirstChild("Furniture")
-    if not furnitureFolder then
-        debugPrint("Furniture folder not found, buying all required furniture")
-        -- Buy all if no furniture folder
-        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
-            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
-                debugPrint("Buying required furniture: " .. furnitureName)
-                local args = {
-                    "furniture",
-                    furnitureName,
-                    {
-                        buy_count = 1
-                    }
-                }
-                local success, result = pcall(function()
-                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-                end)
-                if success then
-                    debugPrint("Successfully purchased: " .. furnitureName)
-                else
-                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
-                end
-                task.wait(2)
-            end
-        end
-        return
-    end
-    local furnitureToBuy = {}
+    debugPrint("Checking and buying missing baby furniture...")
     for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
         if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
-            furnitureToBuy[furnitureName] = true
-        end
-    end
-    for furnitureName, _ in pairs(furnitureToBuy) do
-        if not furnitureFolder:FindFirstChild(furnitureName) then
-            debugPrint("Missing furniture: " .. furnitureName .. ", buying...")
-            local args = {
-                "furniture",
-                furnitureName,
-                {
-                    buy_count = 1
+            local furn = findPlayerFurniture(furnitureName)
+            if not furn then
+                debugPrint("Missing furniture: " .. furnitureName .. ", buying...")
+                local args = {
+                    "furniture",
+                    furnitureName,
+                    {
+                        buy_count = 1
+                    }
                 }
-            }
-            local success, result = pcall(function()
-                return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-            end)
-            if success then
-                debugPrint("Successfully purchased: " .. furnitureName)
-                task.wait(2)
+                local success, result = pcall(function()
+                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                end)
+                if success then
+                    debugPrint("Successfully purchased: " .. furnitureName)
+                    task.wait(2)  -- Wait for furniture to be placed in home
+                else
+                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
+                end
             else
-                debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
+                debugPrint(furnitureName .. " already available in home")
             end
         end
     end
 end
-
 -- Main monitoring loop for baby ailments
 local function monitorAndHandleBabyAilments()
     debugPrint("Starting baby ailment monitoring...")
@@ -917,7 +839,6 @@ local function monitorAndHandleBabyAilments()
         task.wait(SCAN_INTERVAL)
     end
 end
-
 -- Toggle Baby Farm mode
 local function toggleBabyFarmMode()
     BabyFarmMode = not BabyFarmMode
@@ -934,7 +855,12 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(10)  -- Wait longer for home to load
+            task.wait(10) -- Wait longer for home to load
+            -- Additional wait and recheck
+            task.wait(5)
+            if not isPlayerAtHome() then
+                debugPrint("Still not at home after respawn - furniture activation may fail")
+            end
         end
         checkAndBuyMissingFurniture()
         task.wait(3)
@@ -944,24 +870,20 @@ local function toggleBabyFarmMode()
         babyFarmCoroutine = nil
     end
 end
-
 -- Simple UI for toggle (optional, compact)
 local function createSimpleUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "BabyFarmUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
-
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 120, 0, 40)
-    frame.Position = UDim2.new(0, 10, 0, 250)  -- Below main UI
+    frame.Position = UDim2.new(0, 10, 0, 250) -- Below main UI
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
-
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = frame
-
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 20)
     title.Position = UDim2.new(0, 0, 0, 0)
@@ -971,7 +893,6 @@ local function createSimpleUI()
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = frame
-
     local toggleButton = Instance.new("TextButton")
     toggleButton.Size = UDim2.new(1, 0, 0, 20)
     toggleButton.Position = UDim2.new(0, 0, 1, 0)
@@ -981,28 +902,25 @@ local function createSimpleUI()
     toggleButton.Font = Enum.Font.SourceSansBold
     toggleButton.TextSize = 10
     toggleButton.Parent = frame
-
     local buttonCorner = Instance.new("UICorner")
     buttonCorner.CornerRadius = UDim.new(0, 4)
     buttonCorner.Parent = toggleButton
-
     toggleButton.MouseButton1Click:Connect(function()
         toggleBabyFarmMode()
         toggleButton.Text = BabyFarmMode and "🛑 STOP BABY FARM" or "🚀 START BABY FARM"
         toggleButton.BackgroundColor3 = BabyFarmMode and Color3.fromRGB(170, 0, 0) or Color3.fromRGB(0, 170, 0)
     end)
-
     -- Initial scan
     task.wait(2)
     printAvailableBabyAilmentsCompact()
 end
-
 -- Initialize
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
-debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error.")
-debugPrint("UPDATED: Longer wait after spawn for home to load.")
-debugPrint("UPDATED: Buy all furniture if home/furniture folder not found.")
+debugPrint("UPDATED: Robust furniture finding with case-insensitive home matching and debug prints.")
+debugPrint("UPDATED: checkAndBuyMissingFurniture now uses findPlayerFurniture - buys only if truly missing.")
+debugPrint("UPDATED: Longer wait after spawn + recheck for home presence.")
 debugPrint("UPDATED: Added 'kind' to ailment extraction fields.")
+debugPrint("FIX: Home folder detection now case-insensitive and logs all available folders for debugging.")
