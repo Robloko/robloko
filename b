@@ -389,20 +389,13 @@ local function findTeachersApple()
     return teachersAppleID
 end
 
--- Use teachers_apple on baby pet (adapted from provided code and original healing logic)
-local function useTeachersApple(foodID, petUniqueID)
-    if not foodID or not petUniqueID then
-        debugPrint("Cannot use teachers_apple: Missing foodID or petUniqueID")
+-- Use teachers_apple on localPlayer (no pet equip needed for baby ailments)
+local function useTeachersApple(foodID)
+    if not foodID then
+        debugPrint("Cannot use teachers_apple: Missing foodID")
         return false
     end
-    debugPrint("Using teachers_apple " .. foodID .. " on baby pet " .. petUniqueID)
-    
-    -- First, ensure pet is equipped
-    local petModel = ensurePetEquipped(petUniqueID, 10)
-    if not petModel then
-        debugPrint("Failed to equip baby pet for teachers_apple use")
-        return false
-    end
+    debugPrint("Using teachers_apple " .. foodID .. " on localPlayer for baby ailment")
     
     local equipArgs = {
         foodID,
@@ -416,19 +409,21 @@ local function useTeachersApple(foodID, petUniqueID)
     end)
     if not equipSuccess then
         debugPrint("Failed to equip teachers_apple: " .. tostring(equipResult))
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-        end)
         return false
     end
     debugPrint("Successfully equipped teachers_apple")
     task.wait(2)
     
-    -- START
     local startArgs = {
         foodID,
         "START"
     }
+    local endArgs = {
+        foodID,
+        "END"
+    }
+    
+    -- START
     local startSuccess, startResult = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
     end)
@@ -436,19 +431,14 @@ local function useTeachersApple(foodID, petUniqueID)
         debugPrint("Failed to start using teachers_apple: " .. tostring(startResult))
         pcall(function()
             ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(foodID)
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
         end)
         return false
     end
     task.wait(2)
     
     -- END (first)
-    local endArgs1 = {
-        foodID,
-        "END"
-    }
     pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs1))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
     
@@ -458,7 +448,7 @@ local function useTeachersApple(foodID, petUniqueID)
     end)
     task.wait(2)
     pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs1))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
     
@@ -466,23 +456,6 @@ local function useTeachersApple(foodID, petUniqueID)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
     end)
-    
-    -- Create pet object for consumption (adapted from original)
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petUniqueID,
-            unique_id = foodID
-        }
-    }
-    local petObjectSuccess, petObjectResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(petObjectArgs))
-    end)
-    if not petObjectSuccess then
-        debugPrint("Failed to create pet object for teachers_apple: " .. tostring(petObjectResult))
-    end
-    
     task.wait(2)
     
     -- Unequip food
@@ -493,22 +466,17 @@ local function useTeachersApple(foodID, petUniqueID)
     
     -- Final END
     pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs1))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
     end)
     task.wait(2)
     
-    -- Unequip pet
-    pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-    end)
-    
-    debugPrint("Successfully used teachers_apple on baby pet")
+    debugPrint("Successfully used teachers_apple on localPlayer")
     return true
 end
 
--- Handle hungry ailment for baby
-local function handleHungryAilment(petUniqueID)
-    debugPrint("HUNGRY AILMENT DETECTED FOR BABY! Starting feeding process...")
+-- Handle hungry ailment for baby (use on localPlayer)
+local function handleHungryAilment()
+    debugPrint("HUNGRY AILMENT DETECTED FOR BABY! Starting feeding process on localPlayer...")
     local teachersAppleID = findTeachersApple()
     if not teachersAppleID then
         debugPrint("No teachers_apple found in inventory, purchasing one...")
@@ -524,12 +492,12 @@ local function handleHungryAilment(petUniqueID)
             return false
         end
     end
-    local useSuccess = useTeachersApple(teachersAppleID, petUniqueID)
+    local useSuccess = useTeachersApple(teachersAppleID)
     if useSuccess then
-        debugPrint("Successfully handled hungry ailment with teachers_apple")
+        debugPrint("Successfully handled hungry ailment with teachers_apple on localPlayer")
         return true
     else
-        debugPrint("Failed to use teachers_apple on baby pet")
+        debugPrint("Failed to use teachers_apple on localPlayer")
         return false
     end
 end
@@ -579,20 +547,13 @@ local function findWater()
     return waterID
 end
 
--- Use water on baby pet (adapted from provided code)
-local function useWater(foodID, petUniqueID)
-    if not foodID or not petUniqueID then
-        debugPrint("Cannot use water: Missing foodID or petUniqueID")
+-- Use water on localPlayer (no pet equip needed for baby ailments)
+local function useWater(foodID)
+    if not foodID then
+        debugPrint("Cannot use water: Missing foodID")
         return false
     end
-    debugPrint("Using water " .. foodID .. " on baby pet " .. petUniqueID)
-    
-    -- First, ensure pet is equipped
-    local petModel = ensurePetEquipped(petUniqueID, 10)
-    if not petModel then
-        debugPrint("Failed to equip baby pet for water use")
-        return false
-    end
+    debugPrint("Using water " .. foodID .. " on localPlayer for baby ailment")
     
     local equipArgs = {
         foodID,
@@ -606,9 +567,6 @@ local function useWater(foodID, petUniqueID)
     end)
     if not equipSuccess then
         debugPrint("Failed to equip water: " .. tostring(equipResult))
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-        end)
         return false
     end
     debugPrint("Successfully equipped water")
@@ -623,7 +581,7 @@ local function useWater(foodID, petUniqueID)
         "END"
     }
     
-    -- Perform multiple START/END cycles as per provided code (9 full cycles + extra STARTs)
+    -- Perform multiple START/END cycles as per provided code (9 full cycles)
     for i = 1, 9 do
         pcall(function()
             ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -634,29 +592,6 @@ local function useWater(foodID, petUniqueID)
         end)
         task.wait(2)
     end
-    
-    -- Final START
-    pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
-    end)
-    
-    -- Create pet object for consumption
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petUniqueID,
-            unique_id = foodID
-        }
-    }
-    local petObjectSuccess, petObjectResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(petObjectArgs))
-    end)
-    if not petObjectSuccess then
-        debugPrint("Failed to create pet object for water: " .. tostring(petObjectResult))
-    end
-    
-    task.wait(2)
     
     -- Unequip food
     local unequipArgs = { foodID }
@@ -670,18 +605,13 @@ local function useWater(foodID, petUniqueID)
     end)
     task.wait(2)
     
-    -- Unequip pet
-    pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-    end)
-    
-    debugPrint("Successfully used water on baby pet")
+    debugPrint("Successfully used water on localPlayer")
     return true
 end
 
--- Handle thirsty ailment for baby
-local function handleThirstyAilment(petUniqueID)
-    debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process...")
+-- Handle thirsty ailment for baby (use on localPlayer)
+local function handleThirstyAilment()
+    debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
     local waterID = findWater()
     if not waterID then
         debugPrint("No water found in inventory, purchasing one...")
@@ -697,12 +627,12 @@ local function handleThirstyAilment(petUniqueID)
             return false
         end
     end
-    local useSuccess = useWater(waterID, petUniqueID)
+    local useSuccess = useWater(waterID)
     if useSuccess then
-        debugPrint("Successfully handled thirsty ailment with water")
+        debugPrint("Successfully handled thirsty ailment with water on localPlayer")
         return true
     else
-        debugPrint("Failed to use water on baby pet")
+        debugPrint("Failed to use water on localPlayer")
         return false
     end
 end
@@ -752,20 +682,13 @@ local function findHealingApple()
     return healingAppleID
 end
 
--- Use healing_apple on baby pet (adapted from provided code)
-local function useHealingApple(foodID, petUniqueID)
-    if not foodID or not petUniqueID then
-        debugPrint("Cannot use healing_apple: Missing foodID or petUniqueID")
+-- Use healing_apple on localPlayer (no pet equip needed for baby ailments)
+local function useHealingApple(foodID)
+    if not foodID then
+        debugPrint("Cannot use healing_apple: Missing foodID")
         return false
     end
-    debugPrint("Using healing_apple " .. foodID .. " on baby pet " .. petUniqueID)
-    
-    -- First, ensure pet is equipped
-    local petModel = ensurePetEquipped(petUniqueID, 10)
-    if not petModel then
-        debugPrint("Failed to equip baby pet for healing_apple use")
-        return false
-    end
+    debugPrint("Using healing_apple " .. foodID .. " on localPlayer for baby ailment")
     
     local equipArgs = {
         foodID,
@@ -779,9 +702,6 @@ local function useHealingApple(foodID, petUniqueID)
     end)
     if not equipSuccess then
         debugPrint("Failed to equip healing_apple: " .. tostring(equipResult))
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-        end)
         return false
     end
     debugPrint("Successfully equipped healing_apple")
@@ -818,23 +738,6 @@ local function useHealingApple(foodID, petUniqueID)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
     end)
-    
-    -- Create pet object for consumption
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petUniqueID,
-            unique_id = foodID
-        }
-    }
-    local petObjectSuccess, petObjectResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(petObjectArgs))
-    end)
-    if not petObjectSuccess then
-        debugPrint("Failed to create pet object for healing_apple: " .. tostring(petObjectResult))
-    end
-    
     task.wait(2)
     
     -- Unequip food
@@ -849,18 +752,13 @@ local function useHealingApple(foodID, petUniqueID)
     end)
     task.wait(2)
     
-    -- Unequip pet
-    pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(petUniqueID)
-    end)
-    
-    debugPrint("Successfully used healing_apple on baby pet")
+    debugPrint("Successfully used healing_apple on localPlayer")
     return true
 end
 
--- Handle sick ailment for baby
-local function handleSickAilment(petUniqueID)
-    debugPrint("SICK AILMENT DETECTED FOR BABY! Starting healing process...")
+-- Handle sick ailment for baby (use on localPlayer)
+local function handleSickAilment()
+    debugPrint("SICK AILMENT DETECTED FOR BABY! Starting healing process on localPlayer...")
     local healingAppleID = findHealingApple()
     if not healingAppleID then
         debugPrint("No healing_apple found in inventory, purchasing one...")
@@ -876,12 +774,12 @@ local function handleSickAilment(petUniqueID)
             return false
         end
     end
-    local useSuccess = useHealingApple(healingAppleID, petUniqueID)
+    local useSuccess = useHealingApple(healingAppleID)
     if useSuccess then
-        debugPrint("Successfully handled sick ailment with healing_apple")
+        debugPrint("Successfully handled sick ailment with healing_apple on localPlayer")
         return true
     else
-        debugPrint("Failed to use healing_apple on baby pet")
+        debugPrint("Failed to use healing_apple on localPlayer")
         return false
     end
 end
@@ -937,20 +835,20 @@ local function monitorAndHandleBabyAilments()
                     -- Check cooldown
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
                         if ailmentKey == "hungry" then
-                            debugPrint("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple")
-                            local success = handleHungryAilment(petUniqueID)
+                            debugPrint("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
+                            local success = handleHungryAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "thirsty" then
-                            debugPrint("Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water")
-                            local success = handleThirstyAilment(petUniqueID)
+                            debugPrint("Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
+                            local success = handleThirstyAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "sick" then
-                            debugPrint("Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple")
-                            local success = handleSickAilment(petUniqueID)
+                            debugPrint("Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
+                            local success = handleSickAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
@@ -1063,5 +961,6 @@ end
 -- Initialize
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
-debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only, hungry uses teachers_apple, thirsty uses water, sick uses healing_apple).")
+debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
+debugPrint("Food ailments (hungry/thirsty/sick) now used directly on localPlayer without pet equip.")
 debugPrint("UPDATED: Enhanced ailment extraction with structure debugging and recursive search for table values.")
