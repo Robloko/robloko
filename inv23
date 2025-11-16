@@ -5,64 +5,37 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to safely inspect a value (recursive, with depth limit and cycle detection)
-local inspectedTables = {}  -- To detect cycles
-local function safeInspect(value, depth, maxDepth, prefix)
+-- Function to pretty-print a value with depth limit
+local function prettyPrint(value, depth, maxDepth, indent)
+    indent = indent or ""
     depth = depth or 0
-    maxDepth = maxDepth or 3  -- Increase for deeper inspection (e.g., 5)
-    prefix = prefix or ""
+    maxDepth = maxDepth or 3  -- Prevent infinite recursion
     
     if depth > maxDepth then
-        return prefix .. "[DEPTH LIMIT REACHED]"
+        return indent .. "{... [DEPTH LIMIT REACHED]}"
     end
     
     local valueType = type(value)
     if valueType == "table" then
-        -- Cycle detection
-        if inspectedTables[value] then
-            return prefix .. "[CYCLE DETECTED]"
-        end
-        inspectedTables[value] = true
-        
+        local output = indent .. "{"
         local count = 0
-        for _ in pairs(value) do count = count + 1 end
-        
-        if count == 0 then
-            return prefix .. "[EMPTY TABLE]"
-        end
-        
-        local output = prefix .. "[TABLE: " .. count .. " items]\n"
-        local itemCount = 0
-        local largeTableWarn = (count > 10)
-        if largeTableWarn then
-            output = output .. prefix .. "⚠️ Large table (>10 items); showing first 10...\n"
-        end
-        
+        local maxItems = 10  -- Limit items per level to avoid spam
         for key, subValue in pairs(value) do
-            itemCount = itemCount + 1
-            if itemCount > 10 then break end  -- Limit per level
-            
-            local keyStr = tostring(key)
-            local subPrefix = prefix .. "  "
-            local valueStr
-            if type(subValue) == "table" then
-                valueStr = "\n" .. safeInspect(subValue, depth + 1, maxDepth, subPrefix)
-            else
-                valueStr = " = " .. tostring(subValue)
+            count = count + 1
+            if count <= maxItems then
+                local keyStr = type(key) == "string" and ("\"" .. key .. "\"") or tostring(key)
+                output = output .. "\n" .. indent .. "  " .. keyStr .. ": " .. prettyPrint(subValue, depth + 1, maxDepth, indent .. "    ")
             end
-            output = output .. subPrefix .. keyStr .. ":" .. valueStr .. "\n"
         end
-        
-        if count > 10 then
-            output = output .. prefix .. "... and " .. (count - 10) .. " more items\n"
+        if count > maxItems then
+            output = output .. "\n" .. indent .. "  ... and " .. (count - maxItems) .. " more items"
         end
-        
-        inspectedTables[value] = nil  -- Clean up for next table
+        output = output .. "\n" .. indent .. "}"
         return output
-    elseif valueType == "string" and #value > 50 then
-        return prefix .. '"' .. string.sub(value, 1, 50) .. "...' (truncated)"
+    elseif valueType == "string" then
+        return "\"" .. value .. "\""
     else
-        return prefix .. tostring(value)
+        return tostring(value)
     end
 end
 
@@ -71,66 +44,37 @@ local function inspectAllManagersDeeply()
     print("🔍 DEEP INSPECTION OF ALL MANAGER CATEGORIES")
     print("=============================================")
     
-    -- Safe module load (with WaitForChild for reliability)
-    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
-    if not clientModules then
-        warn("❌ ClientModules folder not found in ReplicatedStorage")
-        return
-    end
-    
-    local core = clientModules:WaitForChild("Core", 10)
-    if not core then
-        warn("❌ Core folder not found")
-        return
-    end
-    
-    local success, clientData = pcall(require, core:WaitForChild("ClientData"))
-    if not success then
-        warn("❌ Failed to load ClientData: " .. tostring(clientData))
-        return
-    end
-    
-    local success2, dataTable = pcall(clientData.get_data)
-    if not success2 then
-        warn("❌ Failed to get data: " .. tostring(dataTable))
-        return
-    end
-    
-    local playerData = dataTable[player.Name]
-    if not playerData then
-        print("❌ No data found for player: " .. player.Name)
-        print("Available players: " .. table.concat(Object.keys(dataTable or {}), ", "))
-        return
-    end
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local data = clientData.get_data()[player.Name]
     
     local managerCount = 0
     
     -- Find and inspect all categories with "manager" in the name
-    for categoryName, categoryData in pairs(playerData) do
+    for categoryName, categoryData in pairs(data) do
         if string.find(string.lower(categoryName), "manager") then
             managerCount = managerCount + 1
             print("\n🎯 " .. string.upper(categoryName) .. ":")
-            print(" Type: " .. type(categoryData))
-            print(" ---")
+            print("   Type: " .. type(categoryData))
             
             if type(categoryData) == "table" then
-                print(safeInspect(categoryData, 0, 3))  -- Deep inspect to depth 3
+                local itemCount = 0
+                for _ in pairs(categoryData) do itemCount = itemCount + 1 end
+                print("   Total Items: " .. itemCount)
+                
+                -- Deep print the entire category (with limits)
+                print("   Contents:")
+                print(prettyPrint(categoryData, 0, 3, "     "))
             else
-                print(" Value: " .. safeInspect(categoryData, 0, 3))
+                print("   Value: " .. tostring(categoryData))
             end
-            print("\n" .. string.rep("=", 50))
+            print("\n   ---")
         end
     end
     
     if managerCount == 0 then
         print("❌ No manager categories found")
-        print("All categories:")
-        for catName, _ in pairs(playerData) do
-            print("  - " .. catName)
-        end
     else
         print("\n📊 Total manager categories inspected: " .. managerCount)
-        print("💡 Tip: Adjust 'maxDepth' in safeInspect for even deeper dives!")
     end
 end
 
