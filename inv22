@@ -5,82 +5,71 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to check for metatables
-local function checkMetatable(t, name, indent)
+-- Function to recursively print table contents
+local function printTable(t, indent)
     indent = indent or 0
-    local mt = debug.getmetatable(t)
-    if mt then
-        print(string.rep("  ", indent) .. name .. " has a metatable:")
-        for k, v in pairs(mt) do
-            print(string.rep("  ", indent + 1) .. tostring(k) .. ": " .. tostring(v))
+    for key, value in pairs(t) do
+        local formatting = string.rep("  ", indent) .. tostring(key) .. ": "
+        if type(value) == "table" then
+            print(formatting .. "[TABLE]")
+            printTable(value, indent + 1)
+        else
+            print(formatting .. tostring(value))
         end
-    else
-        print(string.rep("  ", indent) .. name .. " has no metatable.")
     end
 end
 
--- Recursive function to print tables
-local function inspectTable(t, name, indent)
-    indent = indent or 0
-    if type(t) ~= "table" then
-        print(string.rep("  ", indent) .. name .. ": " .. tostring(t))
-        return
-    end
-
-    -- Check for metatable
-    checkMetatable(t, name, indent)
-
-    -- Check if table is empty
-    local isEmpty = true
-    for k, v in pairs(t) do
-        isEmpty = false
-        break
-    end
-
-    if isEmpty then
-        print(string.rep("  ", indent) .. name .. ": [EMPTY TABLE]")
-    else
-        print(string.rep("  ", indent) .. name .. ": [TABLE]")
-        for k, v in pairs(t) do
-            local formatting = string.rep("  ", indent + 1) .. tostring(k) .. ": "
-            if type(v) == "table" then
-                print(formatting .. "[TABLE]")
-                inspectTable(v, k, indent + 2)
-            else
-                print(formatting .. tostring(v))
+-- Function to find a key (case-insensitive) in a table (including nested tables)
+local function findKey(data, targetKey)
+    for key, value in pairs(data) do
+        if string.lower(key) == string.lower(targetKey) then
+            return value, key
+        elseif type(value) == "table" then
+            local foundValue, foundKey = findKey(value, targetKey)
+            if foundValue then
+                return foundValue, foundKey, key
             end
         end
     end
+    return nil
 end
 
--- Function to inspect pet_state_managers_raw in detail
-local function inspectPetStateManagersRaw()
-    print("🔍 INSPECTING PET STATE MANAGERS RAW (FULL DEEP INSPECTION)")
-    print("========================================================")
+-- Function to inspect PET_STATE_MANAGERS
+local function inspectPetStateManagers()
+    print("🔍 INSPECTING PET_STATE_MANAGERS")
+    print("====================================")
 
-    -- Load client data
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local data = clientData.get_data()[player.Name]
-
-    if not data then
-        print("No player data found.")
+    -- Safely require ClientData
+    local success, clientData = pcall(function() return require(ReplicatedStorage.ClientModules.Core.ClientData) end)
+    if not success then
+        warn("Failed to require ClientData:", clientData)
         return
     end
 
-    if not data.pet_state_managers_raw then
-        print("No pet_state_managers_raw data found.")
+    -- Safely get player data
+    local success, data = pcall(function() return clientData.get_data()[player.Name] end)
+    if not success then
+        warn("Failed to get player data:", data)
         return
     end
 
-    -- Inspect each pet
-    for petId, petState in pairs(data.pet_state_managers_raw) do
-        print("Pet ID: " .. tostring(petId))
-        for key, value in pairs(petState) do
-            inspectTable(value, key, 1)
-        end
-        print("---")
+    -- Print all keys in player data
+    print("🔑 All keys in player data:")
+    for key, _ in pairs(data) do
+        print("   - " .. key)
+    end
+
+    -- Search for PET_STATE_MANAGERS (case-insensitive, nested)
+    local petStateManagers, foundKey, parentKey = findKey(data, "PET_STATE_MANAGERS")
+
+    if petStateManagers then
+        print("\n🎯 Found PET_STATE_MANAGERS (Key: " .. foundKey ..
+              (parentKey and (" | Nested under: " .. parentKey) or "") .. "):")
+        printTable(petStateManagers, 2)
+    else
+        print("\n❌ PET_STATE_MANAGERS not found in player data (case-insensitive, nested)")
     end
 end
 
--- Run the inspection
-inspectPetStateManagersRaw()
+-- Run the function
+inspectPetStateManagers()
