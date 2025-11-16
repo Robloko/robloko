@@ -72,7 +72,7 @@ end
 local function extractAilmentKey(ailment)
     if type(ailment) == "table" then
         -- Try common fields first
-        local candidates = {"type", "name", "ailment", "id", "key"}
+        local candidates = {"type", "name", "ailment", "id", "key", "kind"}
         for _, field in ipairs(candidates) do
             local val = ailment[field]
             if type(val) == "string" then
@@ -193,6 +193,23 @@ local function isPlayerAtHome()
     return false
 end
 
+-- Dynamic function to find player's home folder
+local function findHomeFolder()
+    local hi = Workspace:FindFirstChild("HouseInteriors")
+    if not hi then
+        debugPrint("HouseInteriors folder not found")
+        return nil
+    end
+    for _, folder in ipairs(hi:GetChildren()) do
+        if string.find(folder.Name, player.Name) then
+            debugPrint("Found home folder: " .. folder.Name)
+            return folder
+        end
+    end
+    debugPrint("No home folder found containing player name")
+    return nil
+end
+
 -- Extracted/Adapted from w1: Find player's pet in workspace (for specific unique ID)
 local function findPetModel(petUniqueID)
     debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
@@ -259,9 +276,9 @@ local function ensurePetEquipped(petUniqueID, timeout)
     return false
 end
 
--- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character
+-- Extracted/Adapted from w1: Find furniture and activate (core of useFurnitureWithPet) - updated to use localPlayer.Character and dynamic home
 local function activateFurniture(furnitureName)
-    local homeFolder = Workspace:FindFirstChild("HouseInteriors"):FindFirstChild(player.Name .. "House")
+    local homeFolder = findHomeFolder()
     if not homeFolder then
         debugPrint("Home folder not found")
         return false
@@ -281,7 +298,7 @@ local function activateFurniture(furnitureName)
         debugPrint("Local player character not found")
         return false
     end
-    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character")
+    debugPrint("Activating furniture: " .. furnitureName .. " using localPlayer character in home: " .. homeFolder.Name)
     local args = {
         playerChar,
         {
@@ -753,8 +770,62 @@ local function handleSickAilment()
     end
 end
 
--- Adapted from w1: Check and buy missing furniture (baby version, same logic)
+-- Adapted from w1: Check and buy missing furniture (baby version, same logic) - updated with dynamic home
 local function checkAndBuyMissingFurniture()
+    local homeFolder = findHomeFolder()
+    if not homeFolder then
+        debugPrint("Cannot check furniture: Home folder not found, buying all required furniture")
+        -- Buy all if no home
+        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
+            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
+                debugPrint("Buying required furniture: " .. furnitureName)
+                local args = {
+                    "furniture",
+                    furnitureName,
+                    {
+                        buy_count = 1
+                    }
+                }
+                local success, result = pcall(function()
+                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                end)
+                if success then
+                    debugPrint("Successfully purchased: " .. furnitureName)
+                else
+                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
+                end
+                task.wait(2)
+            end
+        end
+        return
+    end
+    local furnitureFolder = homeFolder:FindFirstChild("Furniture")
+    if not furnitureFolder then
+        debugPrint("Furniture folder not found, buying all required furniture")
+        -- Buy all if no furniture folder
+        for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
+            if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
+                debugPrint("Buying required furniture: " .. furnitureName)
+                local args = {
+                    "furniture",
+                    furnitureName,
+                    {
+                        buy_count = 1
+                    }
+                }
+                local success, result = pcall(function()
+                    return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                end)
+                if success then
+                    debugPrint("Successfully purchased: " .. furnitureName)
+                else
+                    debugPrint("Failed to buy " .. furnitureName .. ": " .. tostring(result))
+                end
+                task.wait(2)
+            end
+        end
+        return
+    end
     local furnitureToBuy = {}
     for ailment, furnitureName in pairs(BABY_AILMENT_TASKS) do
         if furnitureName ~= "teachers_apple" and furnitureName ~= "water" and furnitureName ~= "healing_apple" then
@@ -762,8 +833,7 @@ local function checkAndBuyMissingFurniture()
         end
     end
     for furnitureName, _ in pairs(furnitureToBuy) do
-        local homeFolder = Workspace:FindFirstChild("HouseInteriors"):FindFirstChild(player.Name .. "House")
-        if homeFolder and homeFolder:FindFirstChild("Furniture") and not homeFolder.Furniture:FindFirstChild(furnitureName) then
+        if not furnitureFolder:FindFirstChild(furnitureName) then
             debugPrint("Missing furniture: " .. furnitureName .. ", buying...")
             local args = {
                 "furniture",
@@ -864,7 +934,7 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(5)
+            task.wait(10)  -- Wait longer for home to load
         end
         checkAndBuyMissingFurniture()
         task.wait(3)
@@ -932,4 +1002,7 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer without pet equip (furniture uses player.Character).")
-debugPrint("UPDATED: Enhanced ailment extraction with structure debugging and recursive search for table values.")
+debugPrint("UPDATED: Dynamic home folder search to fix 'Home folder not found' error.")
+debugPrint("UPDATED: Longer wait after spawn for home to load.")
+debugPrint("UPDATED: Buy all furniture if home/furniture folder not found.")
+debugPrint("UPDATED: Added 'kind' to ailment extraction fields.")
