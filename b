@@ -68,7 +68,16 @@ local function getPlayerData()
     return playerData
 end
 
--- Function to print available baby ailments in compact form (from provided snippet)
+-- Helper to extract ailment key from potentially table-structured ailment
+local function extractAilmentKey(ailment)
+    if type(ailment) == "table" then
+        return (ailment.type or ailment.name or ailment[1] or "unknown"):lower()
+    else
+        return tostring(ailment):lower()
+    end
+end
+
+-- Function to print available baby ailments in compact form (from provided snippet, updated for table structure)
 local function printAvailableBabyAilmentsCompact()
     debugPrint("🔍 BABY AILMENTS (COMPACT)")
     debugPrint("=========================")
@@ -86,8 +95,9 @@ local function printAvailableBabyAilmentsCompact()
     debugPrint(string.rep("-", 60))
 
     for petUniqueID, ailment in pairs(babyAilments) do
+        local ailmentStr = extractAilmentKey(ailment)
         count = count + 1
-        debugPrint(string.format("%-5d %-36s %-15s", count, petUniqueID:sub(1, 36), tostring(ailment)))
+        debugPrint(string.format("%-5d %-36s %-15s", count, petUniqueID:sub(1, 36), ailmentStr))
     end
 
     debugPrint(string.rep("-", 60))
@@ -880,7 +890,7 @@ local function monitorAndHandleBabyAilments()
             local foundActionable = false
             for petUniqueID, ailmentType in pairs(playerData.ailments_manager.baby_ailments) do
                 foundActionable = true
-                local ailmentKey = tostring(ailmentType):lower()
+                local ailmentKey = extractAilmentKey(ailmentType)
                 local furnitureName = BABY_AILMENT_TASKS[ailmentKey]
                 if furnitureName then
                     -- Check cooldown
@@ -1015,3 +1025,4 @@ end
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only, hungry uses teachers_apple, thirsty uses water, sick uses healing_apple).")
+debugPrint("UPDATED: Handles table-structured ailments by extracting .type or .name.")
