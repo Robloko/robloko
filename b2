@@ -262,17 +262,19 @@ local function findHomeFolder()
     return nil
 end
 
--- Extract furniture data (from w1.txt)
+-- Enhanced furniture data extraction with better part detection
 local function extractFurnitureData(model, folderName)
-    local activationParts = {"UseBlock", "Seat1"}
+    local activationParts = {"UseBlock", "Seat1", "Seat", "Main", "TouchInterest", "ClickDetector"}
     local folderId = string.match(folderName, "f%-%d+") or folderName
     
-    for _, partName in ipairs(activationParts) do
-        local useBlocksFolder = model:FindFirstChild("UseBlocks")
-        if useBlocksFolder then
+    -- First, try to find UseBlocks folder
+    local useBlocksFolder = model:FindFirstChild("UseBlocks")
+    if useBlocksFolder then
+        debugPrint("Found UseBlocks folder, searching for activation parts...")
+        for _, partName in ipairs(activationParts) do
             local part = useBlocksFolder:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
-                debugPrint("Using " .. partName .. " in UseBlocks folder")
+                debugPrint("✅ Using " .. partName .. " in UseBlocks folder")
                 return {
                     folderId = folderId,
                     partName = partName,
@@ -282,10 +284,14 @@ local function extractFurnitureData(model, folderName)
                 }
             end
         end
-        
+    end
+    
+    -- Search directly in model
+    debugPrint("Searching for activation parts directly in model...")
+    for _, partName in ipairs(activationParts) do
         local part = model:FindFirstChild(partName)
         if part and part:IsA("BasePart") then
-            debugPrint("Using " .. partName .. " directly in model")
+            debugPrint("✅ Using " .. partName .. " directly in model")
             return {
                 folderId = folderId,
                 partName = partName,
@@ -296,9 +302,26 @@ local function extractFurnitureData(model, folderName)
         end
     end
     
+    -- Search for any BasePart with common names
+    local commonPartNames = {"Handle", "Main", "Part", "Base", "Root", "Seat1", "Seat"}
+    for _, partName in ipairs(commonPartNames) do
+        local part = model:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            debugPrint("✅ Using common part: " .. partName)
+            return {
+                folderId = folderId,
+                partName = partName,
+                position = part.Position,
+                cframe = part.CFrame,
+                model = model
+            }
+        end
+    end
+    
+    -- Fallback: use the first BasePart found
     for _, part in ipairs(model:GetDescendants()) do
         if part:IsA("BasePart") then
-            debugPrint("Using fallback part: " .. part.Name)
+            debugPrint("⚠️ Using fallback part: " .. part.Name)
             return {
                 folderId = folderId,
                 partName = part.Name,
@@ -309,19 +332,20 @@ local function extractFurnitureData(model, folderName)
         end
     end
     
+    debugPrint("❌ No suitable activation part found in model")
     return nil
 end
 
 -- Find furniture by name (from w1.txt)
 local function findFurnitureByName(name)
-    debugPrint("Searching for furniture: " .. name)
+    debugPrint("🔍 Searching for furniture: " .. name)
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if hi then
         for _, folder in ipairs(hi:GetChildren()) do
             if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
                 local model = folder:FindFirstChild(name)
                 if model and model:IsA("Model") then
-                    debugPrint("Found " .. name .. " in " .. folder.Name)
+                    debugPrint("✅ Found " .. name .. " in " .. folder.Name)
                     return extractFurnitureData(model, folder.Name)
                 end
             end
@@ -330,26 +354,26 @@ local function findFurnitureByName(name)
     
     local model = Workspace:FindFirstChild(name, true)
     if model and model:IsA("Model") then
-        debugPrint("Found " .. name .. " in workspace (fallback)")
+        debugPrint("✅ Found " .. name .. " in workspace (fallback)")
         local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
         return extractFurnitureData(model, folderId)
     end
     
-    debugPrint("Furniture not found: " .. name)
+    debugPrint("❌ Furniture not found: " .. name)
     return nil
 end
 
--- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
+-- Enhanced furniture activation with better error handling
 local function activateFurniture(furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
-        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
+        debugPrint("❌ Cannot activate furniture: " .. furnitureName .. " - not found")
         return false
     end
     
     local char = player.Character
     if not char then
-        debugPrint("Cannot activate furniture: No character found")
+        debugPrint("❌ Cannot activate furniture: No character found")
         return false
     end
     
@@ -374,17 +398,76 @@ local function activateFurniture(furnitureName)
         return true
     else
         debugPrint("❌ ACTIVATION FAILED: " .. furnitureName .. " - " .. tostring(result))
-        return false
+        -- Try alternative activation method
+        debugPrint("🔄 Trying alternative activation method...")
+        return tryAlternativeActivation(furnitureName, furnitureData)
     end
 end
 
--- Use furniture with localPlayer (with enhanced exitSeatStates call for specific furniture)
+-- Alternative activation method for when main method fails
+local function tryAlternativeActivation(furnitureName, furnitureData)
+    debugPrint("🔄 Attempting alternative activation for: " .. furnitureName)
+    
+    local char = player.Character
+    if not char then return false end
+    
+    -- Try different argument combinations
+    local alternativeArgs = {
+        -- Method 1: Without character
+        {
+            player,
+            furnitureData.folderId,
+            furnitureData.partName,
+            {
+                cframe = furnitureData.cframe
+            }
+        },
+        -- Method 2: Simplified
+        {
+            player,
+            furnitureData.folderId,
+            furnitureData.partName
+        }
+    }
+    
+    for i, args in ipairs(alternativeArgs) do
+        debugPrint("🔄 Trying alternative method " .. i .. " for " .. furnitureName)
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
+        end)
+        
+        if success then
+            debugPrint("✅ ALTERNATIVE ACTIVATION SUCCESS: " .. furnitureName .. " (method " .. i .. ")")
+            return true
+        else
+            debugPrint("❌ Alternative method " .. i .. " failed: " .. tostring(result))
+        end
+    end
+    
+    return false
+end
+
+-- Enhanced furniture usage with timeout protection
 local function useFurnitureWithLocalPlayer(furnitureName)
     debugPrint("🎯 STARTING FURNITURE USE: " .. furnitureName .. " on localPlayer")
     local success = activateFurniture(furnitureName)
+    
     if success then
         debugPrint("⏰ WAITING: 20 seconds for ailment cure with " .. furnitureName)
-        task.wait(20) -- Wait for ailment cure
+        
+        -- Wait with progress updates
+        for i = 1, 20 do
+            if not BabyFarmMode then break end -- Stop if disabled
+            task.wait(1)
+            if i % 5 == 0 then
+                debugPrint("⏳ Waiting... " .. i .. "/20 seconds")
+            end
+        end
+        
+        if not BabyFarmMode then
+            debugPrint("🛑 Baby Farm disabled during wait")
+            return false
+        end
         
         -- Call exitSeatStates for specific furniture types
         local furnitureTypesForExit = {
@@ -415,6 +498,8 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         return false
     end
 end
+
+-- [Rest of the functions remain the same - buyTeachersApple, findTeachersApple, useTeachersApple, etc.]
 
 -- Buy teachers_apple
 local function buyTeachersApple()
@@ -679,34 +764,6 @@ local function useWater(foodID)
    
     debugPrint("Successfully used water on localPlayer")
     return true
-end
-
--- Handle thirsty ailment for baby
-local function handleThirstyAilment()
-    debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
-    local waterID = findWater()
-    if not waterID then
-        debugPrint("No water found in inventory, purchasing one...")
-        local purchaseSuccess = buyWater()
-        if not purchaseSuccess then
-            debugPrint("Failed to purchase water")
-            return false
-        end
-        task.wait(3)
-        waterID = findWater()
-        if not waterID then
-            debugPrint("Failed to find water after purchase")
-            return false
-        end
-    end
-    local useSuccess = useWater(waterID)
-    if useSuccess then
-        debugPrint("Successfully handled thirsty ailment with water on localPlayer")
-        return true
-    else
-        debugPrint("Failed to use water on localPlayer")
-        return false
-    end
 end
 
 -- Buy healing_apple
@@ -1087,6 +1144,6 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
-debugPrint("UPDATED: Enhanced exitSeatStates with better debugging and timing.")
-debugPrint("UPDATED: exitSeatStates called after 20 seconds for BasicBed, CheapPetBathtub, and Piano.")
-debugPrint("UPDATED: Improved logging with emojis and clearer status messages.")
+debugPrint("UPDATED: Enhanced furniture detection with multiple part name options.")
+debugPrint("UPDATED: Added alternative activation methods for better compatibility.")
+debugPrint("UPDATED: Improved error handling and progress tracking.")
