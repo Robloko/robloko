@@ -368,13 +368,13 @@ end
 
 -- Use furniture with localPlayer (with TeamAPI/Spawn call after 20 seconds for specific furniture)
 local function useFurnitureWithLocalPlayer(furnitureName)
-    debugPrint("STARTING FURNITURE USE: " .. furnitureName .. " on localPlayer")
+    debugPrint("STARTING FURNITURE USE: " .. furnitureName .. " on localPlayer (BABY)")
     local success = activateFurniture(furnitureName)
     if success then
         debugPrint("Waiting 20 seconds for ailment cure...")
         task.wait(20) -- Wait for ailment cure
         
-        -- Check if this is one of the furniture that requires respawn
+        -- Check if this is one of the furniture that requires respawn (ONLY FOR BABY USE)
         local furnitureRequiresRespawn = {
             ["BasicBed"] = true,
             ["CheapPetBathtub"] = true,
@@ -382,12 +382,12 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         }
         
         if furnitureRequiresRespawn[furnitureName] then
-            debugPrint("▼ CALLING RESPAWN for " .. furnitureName .. "...")
+            debugPrint("▼ CALLING RESPAWN for " .. furnitureName .. " (BABY USED FURNITURE)...")
             local spawnSuccess, spawnResult = pcall(function()
                 return ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
             if spawnSuccess then
-                debugPrint("✅ Successfully called TeamAPI/Spawn after furniture use")
+                debugPrint("✅ Successfully called TeamAPI/Spawn after BABY used furniture")
                 -- Wait a bit after respawning
                 task.wait(5)
             else
@@ -669,6 +669,34 @@ local function useWater(foodID)
     return true
 end
 
+-- Handle thirsty ailment for baby
+local function handleThirstyAilment()
+    debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
+    local waterID = findWater()
+    if not waterID then
+        debugPrint("No water found in inventory, purchasing one...")
+        local purchaseSuccess = buyWater()
+        if not purchaseSuccess then
+            debugPrint("Failed to purchase water")
+            return false
+        end
+        task.wait(3)
+        waterID = findWater()
+        if not waterID then
+            debugPrint("Failed to find water after purchase")
+            return false
+        end
+    end
+    local useSuccess = useWater(waterID)
+    if useSuccess then
+        debugPrint("Successfully handled thirsty ailment with water on localPlayer")
+        return true
+    else
+        debugPrint("Failed to use water on localPlayer")
+        return false
+    end
+end
+
 -- Buy healing_apple
 local function buyHealingApple()
     debugPrint("Buying healing_apple from shop...")
@@ -918,7 +946,7 @@ local function monitorAndHandleBabyAilments()
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         else
-                            debugPrint("▼ Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
+                            debugPrint("▼ Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer (BABY)")
                             local success = useFurnitureWithLocalPlayer(furnitureName)
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
@@ -1050,5 +1078,5 @@ debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFur
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
 debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1/Seati search.")
-debugPrint("UPDATED: TeamAPI/Spawn called after 20 seconds for BasicBed, CheapPetBathtub, Piano furniture.")
-debugPrint("UPDATED: Better debug logging with arrows and status indicators.")
+debugPrint("UPDATED: TeamAPI/Spawn called after 20 seconds ONLY when BABY uses BasicBed, CheapPetBathtub, Piano.")
+debugPrint("UPDATED: Food items (teachers_apple, water, healing_apple) do NOT trigger respawn.")
