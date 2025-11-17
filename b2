@@ -42,11 +42,23 @@ local function debugPrint(message)
     print(timestamp .. " [BabyFarm] " .. message)
 end
 
--- Exit seat states function
+-- Enhanced Exit seat states function with better debugging
 local function exitSeatStates()
     local player = game:GetService("Players").LocalPlayer
     local character = player.Character or player.CharacterAdded:Wait()
-    game:GetService("ReplicatedStorage").API["AdoptAPI/ExitSeatStates"]:FireServer(character)
+    debugPrint("🚪 EXITSEATSTATES: Attempting to call ExitSeatStates for character: " .. character.Name)
+    
+    local success, result = pcall(function()
+        return game:GetService("ReplicatedStorage").API["AdoptAPI/ExitSeatStates"]:FireServer(character)
+    end)
+    
+    if success then
+        debugPrint("✅ EXITSEATSTATES: Successfully called ExitSeatStates")
+        return true
+    else
+        debugPrint("❌ EXITSEATSTATES: Failed to call ExitSeatStates: " .. tostring(result))
+        return false
+    end
 end
 
 -- Function to safely get player data (from provided snippet)
@@ -351,27 +363,27 @@ local function activateFurniture(furnitureName)
         char  -- Use localPlayer character instead of pet
     }
     
-    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
+    debugPrint("🛏️ ACTIVATING: " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
     
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
     end)
     
     if success then
-        debugPrint("Successfully activated: " .. furnitureName)
+        debugPrint("✅ ACTIVATION SUCCESS: " .. furnitureName)
         return true
     else
-        debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
+        debugPrint("❌ ACTIVATION FAILED: " .. furnitureName .. " - " .. tostring(result))
         return false
     end
 end
 
--- Use furniture with localPlayer (with exitSeatStates call for specific furniture)
+-- Use furniture with localPlayer (with enhanced exitSeatStates call for specific furniture)
 local function useFurnitureWithLocalPlayer(furnitureName)
-    debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
+    debugPrint("🎯 STARTING FURNITURE USE: " .. furnitureName .. " on localPlayer")
     local success = activateFurniture(furnitureName)
     if success then
-        debugPrint("Waiting 20 seconds for ailment cure...")
+        debugPrint("⏰ WAITING: 20 seconds for ailment cure with " .. furnitureName)
         task.wait(20) -- Wait for ailment cure
         
         -- Call exitSeatStates for specific furniture types
@@ -382,19 +394,24 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         }
         
         if furnitureTypesForExit[furnitureName] then
-            debugPrint("Calling exitSeatStates for " .. furnitureName)
-            local exitSuccess, exitResult = pcall(exitSeatStates)
+            debugPrint("🔔 SCHEDULING EXITSEATSTATES: Will call exitSeatStates for " .. furnitureName .. " in 2 seconds")
+            task.wait(2) -- Small delay before exit call
+            
+            local exitSuccess = exitSeatStates()
             if exitSuccess then
-                debugPrint("Successfully called exitSeatStates after " .. furnitureName .. " use")
+                debugPrint("✅ EXITSEATSTATES COMPLETE: Successfully cleaned up seat states after " .. furnitureName)
             else
-                debugPrint("Failed to call exitSeatStates: " .. tostring(exitResult))
+                debugPrint("⚠️ EXITSEATSTATES ISSUE: There was a problem cleaning up seat states")
             end
             task.wait(2)
+        else
+            debugPrint("ℹ️ SKIPPING EXITSEATSTATES: " .. furnitureName .. " doesn't require seat cleanup")
         end
         
+        debugPrint("🎉 FURNITURE PROCESS COMPLETE: " .. furnitureName)
         return true
     else
-        debugPrint("Failed to activate furniture with localPlayer")
+        debugPrint("💥 FURNITURE PROCESS FAILED: " .. furnitureName)
         return false
     end
 end
@@ -923,25 +940,25 @@ local function monitorAndHandleBabyAilments()
                     -- Check cooldown
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
                         if ailmentKey == "hungry" then
-                            debugPrint("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
+                            debugPrint("🍎 Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
                             local success = handleHungryAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "thirsty" then
-                            debugPrint("Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
+                            debugPrint("💧 Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
                             local success = handleThirstyAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "sick" then
-                            debugPrint("Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
+                            debugPrint("🏥 Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
                             local success = handleSickAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         else
-                            debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
+                            debugPrint("🔧 Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
                             local success = useFurnitureWithLocalPlayer(furnitureName)
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
@@ -1070,7 +1087,6 @@ createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
 debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
-debugPrint("UPDATED: Now selects Baby team first when enabled.")
-debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
-debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
+debugPrint("UPDATED: Enhanced exitSeatStates with better debugging and timing.")
 debugPrint("UPDATED: exitSeatStates called after 20 seconds for BasicBed, CheapPetBathtub, and Piano.")
+debugPrint("UPDATED: Improved logging with emojis and clearer status messages.")
