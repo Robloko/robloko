@@ -164,6 +164,18 @@ local function ensureCharacterSpawned()
 	return char
 end
 
+-- Find baby pet model by unique ID
+local function findBabyPetModel(petUniqueID)
+	debugPrint("Searching for baby pet model: " .. petUniqueID)
+	local petModel = Workspace:FindFirstChild(petUniqueID, true)
+	if petModel and petModel:FindFirstChild("HumanoidRootPart") then
+		debugPrint("Found baby pet model: " .. petUniqueID)
+		return petModel
+	end
+	debugPrint("Baby pet model not found for ID: " .. petUniqueID)
+	return nil
+end
+
 -- Select Baby team
 local function selectBabyTeam()
 	debugPrint("Selecting Baby team...")
@@ -252,41 +264,37 @@ local function extractFurnitureData(model, folderName)
 	return nil
 end
 
--- Find furniture by name (from w1.txt)
+-- Find furniture by name (prioritize player's home folder)
 local function findFurnitureByName(name)
 	debugPrint("Searching for furniture: " .. name)
-	local hi = Workspace:FindFirstChild("HouseInteriors")
-	if hi then
-		for _, folder in ipairs(hi:GetChildren()) do
-			if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
-				local model = folder:FindFirstChild(name)
-				if model and model:IsA("Model") then
-					debugPrint("Found " .. name .. " in " .. folder.Name)
-					return extractFurnitureData(model, folder.Name)
-				end
-			end
+	local homeFolder = findHomeFolder()
+	if homeFolder then
+		local model = homeFolder:FindFirstChild(name)
+		if model and model:IsA("Model") then
+			debugPrint("Found " .. name .. " in home folder " .. homeFolder.Name)
+			return extractFurnitureData(model, homeFolder.Name)
 		end
 	end
+	-- fallback search
 	local model = Workspace:FindFirstChild(name, true)
 	if model and model:IsA("Model") then
 		debugPrint("Found " .. name .. " in workspace (fallback)")
-		local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
+		local folderId = homeFolder and homeFolder.Name or (model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown")
 		return extractFurnitureData(model, folderId)
 	end
 	debugPrint("Furniture not found: " .. name)
 	return nil
 end
 
--- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
-local function activateFurniture(furnitureName)
+-- Activate furniture with target model (pet or player)
+local function activateFurniture(furnitureName, targetModel)
 	local furnitureData = findFurnitureByName(furnitureName)
 	if not furnitureData then
 		debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
 		return false
 	end
-	local char = player.Character
-	if not char then
-		debugPrint("Cannot activate furniture: No character found")
+	if not targetModel then
+		debugPrint("Cannot activate furniture: No target model found")
 		return false
 	end
 	local args = {
@@ -294,14 +302,14 @@ local function activateFurniture(furnitureName)
 		furnitureData.folderId,
 		furnitureData.partName,
 		{ cframe = furnitureData.cframe },
-		char -- Use localPlayer character instead of pet
+		targetModel
 	}
-	debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
+	debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName .. " on target")
 	local success, result = pcall(function()
 		return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
 	end)
 	if success then
-		debugPrint("Successfully activated: " .. furnitureName)
+		debugPrint("Successfully activated: " .. furnitureName .. " on target")
 		return true
 	else
 		debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
@@ -309,10 +317,10 @@ local function activateFurniture(furnitureName)
 	end
 end
 
--- Use furniture with localPlayer (with forced Spawn call)
-local function useFurnitureWithLocalPlayer(furnitureName)
-	debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
-	local success = activateFurniture(furnitureName)
+-- Use furniture with target model (with forced Spawn call)
+local function useFurnitureWithTarget(furnitureName, targetModel)
+	debugPrint("Using furniture for baby: " .. furnitureName .. " on target model")
+	local success = activateFurniture(furnitureName, targetModel)
 	if success then
 		debugPrint("Waiting 20 seconds for ailment cure...")
 		task.wait(20) -- Wait for ailment cure
@@ -323,13 +331,14 @@ local function useFurnitureWithLocalPlayer(furnitureName)
 		end)
 		if spawnSuccess then
 			debugPrint("Successfully called Spawn after furniture use")
+			task.wait(5) -- Additional wait for respawn to complete
 		else
 			debugPrint("Failed to call Spawn: " .. tostring(spawnResult))
 		end
 		task.wait(2)
 		return true
 	else
-		debugPrint("Failed to activate furniture with localPlayer")
+		debugPrint("Failed to activate furniture on target")
 		return false
 	end
 end
@@ -806,9 +815,14 @@ local function monitorAndHandleBabyAilments()
 							local success = handleSickAilment()
 							if success then lastTaskTime[ailmentKey] = currentTime end
 						else
-							debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
-							local success = useFurnitureWithLocalPlayer(furnitureName)
-							if success then lastTaskTime[ailmentKey] = currentTime end
+							local petModel = findBabyPetModel(petUniqueID)
+							if petModel then
+								debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on pet")
+								local success = useFurnitureWithTarget(furnitureName, petModel)
+								if success then lastTaskTime[ailmentKey] = currentTime end
+							else
+								debugPrint("Skipping " .. ailmentKey .. " for " .. petUniqueID .. ": pet model not found")
+							end
 						end
 						break -- Handle one at a time
 					else
@@ -918,8 +932,8 @@ end
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
 debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
-debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
+debugPrint("All ailments now handled targeting baby pet models for furniture.")
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
-debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
-debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
-debugPrint("UPDATED: FORCED Spawn call after each furniture use (BasicBed, CheapPetBathtub, Piano).")
+debugPrint("UPDATED: Prioritizes search in player's home folder.")
+debugPrint("UPDATED: Finds and targets baby pet model for furniture activation.")
+debugPrint("UPDATED: FORCED Spawn call after each furniture use with additional wait.")
