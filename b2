@@ -320,14 +320,20 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Call ExitSeatStates after furniture use - EXACT CALL AS SPECIFIED
+-- Call ExitSeatStates after furniture use
 local function callExitSeatStates()
     debugPrint("Calling ExitSeatStates to reset seat states...")
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
-    debugPrint("Successfully called ExitSeatStates")
+    local success, result = pcall(function()
+        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
+    end)
+    if success then
+        debugPrint("Successfully called ExitSeatStates")
+    else
+        debugPrint("Failed to call ExitSeatStates: " .. tostring(result))
+    end
 end
 
--- Activate furniture with localPlayer
+-- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
 local function activateFurniture(furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
@@ -348,7 +354,7 @@ local function activateFurniture(furnitureName)
         {
             cframe = furnitureData.cframe
         },
-        char
+        char  -- Use localPlayer character instead of pet
     }
     
     debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
@@ -366,20 +372,25 @@ local function activateFurniture(furnitureName)
     end
 end
 
--- Use furniture with localPlayer (with EXACT ExitSeatStates call)
+-- Use furniture with localPlayer (with forced ExitSeatStates call)
 local function useFurnitureWithLocalPlayer(furnitureName)
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     local success = activateFurniture(furnitureName)
     if success then
-        debugPrint("Successfully activated: " .. furnitureName)
-        debugPrint("Waiting 20 seconds for cure...")
-        task.wait(20)
+        debugPrint("Waiting 20 seconds for ailment cure...")
+        task.wait(20) -- Wait for ailment cure
         
-        -- CALL EXITSEATSTATES EXACTLY AS SPECIFIED
-        callExitSeatStates()
-        
+        -- FORCED ExitSeatStates call after furniture use
+        debugPrint("Calling ExitSeatStates after furniture use...")
+        local exitSuccess, exitResult = pcall(function()
+            return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
+        end)
+        if exitSuccess then
+            debugPrint("Successfully called ExitSeatStates after furniture use")
+        else
+            debugPrint("Failed to call ExitSeatStates: " .. tostring(exitResult))
+        end
         task.wait(2)
-        debugPrint("Furniture use completed for: " .. furnitureName)
         return true
     else
         debugPrint("Failed to activate furniture with localPlayer")
@@ -827,7 +838,7 @@ local function handleSickAilment()
     end
 end
 
--- Check and buy missing furniture
+-- Check and buy missing furniture (from w1.txt)
 local function checkAndBuyMissingFurniture()
     debugPrint("Checking for missing furniture...")
     local missingFurniture = {}
@@ -851,7 +862,7 @@ local function checkAndBuyMissingFurniture()
         table.insert(missingFurniture, {
             kind = "basic_bed",
             properties = {
-                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
@@ -864,7 +875,7 @@ local function checkAndBuyMissingFurniture()
         table.insert(missingFurniture, {
             kind = "cheap_pet_bathtub",
             properties = {
-                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
@@ -981,7 +992,8 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(15)
+            task.wait(15) -- Increased wait for home to load
+            -- Re-check after spawn
             if not isPlayerAtHome() then
                 debugPrint("Still not at home after spawn - forcing longer wait")
                 task.wait(10)
@@ -1008,7 +1020,7 @@ local function createSimpleUI()
     
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 120, 0, 40)
-    frame.Position = UDim2.new(0, 10, 0, 250)
+    frame.Position = UDim2.new(0, 10, 0, 250) -- Below main UI
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -1055,4 +1067,9 @@ end
 -- Initialize
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
-debugPrint("UPDATED: Uses EXACT ExitSeatStates call as specified.")
+debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
+debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
+debugPrint("UPDATED: Now selects Baby team first when enabled.")
+debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
+debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
+debugPrint("UPDATED: FORCED ExitSeatStates call after each furniture use (BasicBed, CheapPetBathtub, Piano).")
