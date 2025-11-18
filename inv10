@@ -7,91 +7,113 @@ local player = Players.LocalPlayer
 
 -- Function to deeply inspect house_interior
 local function inspectHouseInterior()
-    print("🔍 DEEP INSPECTION: HOUSE INTERIOR")
-    print("==================================")
+    print("🔍 DEEP INSPECTION OF HOUSE INTERIOR")
+    print("====================================")
     
     local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
     local data = clientData.get_data()[player.Name]
     
-    if not data.house_manager then
-        print("❌ No house_manager found")
-        return
-    end
-    
-    local houseInterior = data.house_manager.house_interior
-    if not houseInterior then
-        print("❌ No house_interior found")
+    if not data.house_interior then
+        print("❌ No house_interior data found")
         return
     end
     
     print("🏠 HOUSE INTERIOR STRUCTURE:")
-    print("----------------------------")
+    print("============================")
     
-    for category, items in pairs(houseInterior) do
-        if type(items) == "table" then
-            print("📁 " .. category .. ":")
+    local function inspectTable(tbl, indent, path)
+        indent = indent or 0
+        path = path or "house_interior"
+        local indentStr = string.rep("  ", indent)
+        
+        for key, value in pairs(tbl) do
+            local currentPath = path .. "." .. key
             
-            -- Check if it's an array-like table or key-value pairs
-            local isArray = false
-            local count = 0
-            for k, v in pairs(items) do
-                count = count + 1
-                if type(k) == "number" then
-                    isArray = true
-                end
-            end
-            
-            if isArray then
-                print("   📊 Array with " .. count .. " items:")
-                for i, item in ipairs(items) do
-                    if type(item) == "table" then
-                        print("   └─ Item " .. i .. " [TABLE]:")
-                        for prop, value in pairs(item) do
-                            print("     │ " .. prop .. " = " .. tostring(value))
+            if type(value) == "table" then
+                local tableSize = 0
+                for _ in pairs(value) do tableSize = tableSize + 1 end
+                
+                print(indentStr .. "📁 " .. key .. " [TABLE with " .. tableSize .. " items]")
+                
+                -- Only go deeper if it's not too large and we're not too deep
+                if tableSize <= 20 and indent < 3 then
+                    inspectTable(value, indent + 1, currentPath)
+                elseif tableSize > 20 then
+                    print(indentStr .. "  ⚠️  Large table, showing first 5 items:")
+                    local count = 0
+                    for subKey, subValue in pairs(value) do
+                        if count < 5 then
+                            if type(subValue) == "table" then
+                                local subSize = 0
+                                for _ in pairs(subValue) do subSize = subSize + 1 end
+                                print(indentStr .. "  📁 " .. subKey .. " [TABLE with " .. subSize .. " items]")
+                            else
+                                print(indentStr .. "  📄 " .. subKey .. " = " .. tostring(subValue))
+                            end
+                            count = count + 1
+                        else
+                            print(indentStr .. "  ... and " .. (tableSize - 5) .. " more items")
+                            break
                         end
-                    else
-                        print("   └─ Item " .. i .. " = " .. tostring(item))
                     end
                 end
             else
-                print("   📊 Key-Value pairs:")
-                for key, value in pairs(items) do
-                    if type(value) == "table" then
-                        local subCount = 0
-                        for _ in pairs(value) do subCount = subCount + 1 end
-                        print("   └─ " .. key .. " [TABLE with " .. subCount .. " items]")
-                    else
-                        print("   └─ " .. key .. " = " .. tostring(value))
-                    end
-                end
+                print(indentStr .. "📄 " .. key .. " = " .. tostring(value))
             end
-        else
-            print("📄 " .. category .. " = " .. tostring(items))
-        end
-        print("")
-    end
-    
-    -- Additional analysis
-    print("📊 HOUSE INTERIOR ANALYSIS:")
-    print("---------------------------")
-    
-    local totalCategories = 0
-    local totalItems = 0
-    
-    for category, items in pairs(houseInterior) do
-        totalCategories = totalCategories + 1
-        if type(items) == "table" then
-            local itemCount = 0
-            for _ in pairs(items) do itemCount = itemCount + 1 end
-            totalItems = totalItems + itemCount
-            print("• " .. category .. ": " .. itemCount .. " items")
-        else
-            totalItems = totalItems + 1
-            print("• " .. category .. ": 1 item")
         end
     end
     
-    print("📈 SUMMARY: " .. totalCategories .. " categories, " .. totalItems .. " total items")
+    -- Start inspection
+    inspectTable(data.house_interior)
+    
+    -- Special analysis for common house interior patterns
+    print("\n📊 HOUSE INTERIOR ANALYSIS:")
+    print("==========================")
+    
+    -- Check for furniture items
+    if data.house_interior.furniture or data.house_interior.items then
+        local furniture = data.house_interior.furniture or data.house_interior.items or {}
+        local furnitureCount = 0
+        for _ in pairs(furniture) do furnitureCount = furnitureCount + 1 end
+        print("🪑 Furniture Items: " .. furnitureCount)
+    end
+    
+    -- Check for rooms
+    if data.house_interior.rooms then
+        local roomCount = 0
+        for _ in pairs(data.house_interior.rooms) do roomCount = roomCount + 1 end
+        print("🚪 Rooms: " .. roomCount)
+    end
+    
+    -- Check for layout/walls
+    if data.house_interior.layout or data.house_interior.walls then
+        print("🏗️  Layout/Walls data present")
+    end
+    
+    -- Check for decorations
+    if data.house_interior.decorations then
+        local decorCount = 0
+        for _ in pairs(data.house_interior.decorations) do decorCount = decorCount + 1 end
+        print("🎨 Decorations: " .. decorCount)
+    end
+    
+    -- Check for upgrades
+    if data.house_interior.upgrades then
+        print("⚡ Upgrades present")
+        for upgradeName, upgradeData in pairs(data.house_interior.upgrades) do
+            if type(upgradeData) == "table" then
+                print("  🔧 " .. upgradeName .. " [upgrade details]")
+            else
+                print("  🔧 " .. upgradeName .. " = " .. tostring(upgradeData))
+            end
+        end
+    end
+    
+    -- Summary
+    local totalKeys = 0
+    for _ in pairs(data.house_interior) do totalKeys = totalKeys + 1 end
+    print("\n📈 SUMMARY:")
+    print("Total top-level properties: " .. totalKeys)
 end
 
 -- Run the function
