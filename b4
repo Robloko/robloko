@@ -21,7 +21,7 @@ local babyFarmCoroutine = nil
 -- Ailment to Furniture Mapping (simplified for babies, only basic furniture and special for hungry/thirsty/sick)
 local BABY_AILMENT_TASKS = {
     sleepy = "BasicBed",
-    hungry = "teachers_apple",
+    hungry = "teachers_apple", 
     thirsty = "water",
     dirty = "CheapPetBathtub",
     bored = "Piano",
@@ -243,20 +243,17 @@ local function findHomeFolder()
     return nil
 end
 
--- Enhanced furniture data extraction with better part detection
+-- Extract furniture data (from w1.txt)
 local function extractFurnitureData(model, folderName)
-    local activationParts = {"UseBlock", "Seat1", "Seati", "Seat", "Use", "Block", "Seat!"} -- Added common variations including "Seat!"
+    local activationParts = {"UseBlock", "Seat1"}
     local folderId = string.match(folderName, "f%-%d+") or folderName
     
-    debugPrint("Found UseBlocks folder, searching for activation parts...")
-    
-    -- First check UseBlocks folder
-    local useBlocksFolder = model:FindFirstChild("UseBlocks")
-    if useBlocksFolder then
-        for _, partName in ipairs(activationParts) do
+    for _, partName in ipairs(activationParts) do
+        local useBlocksFolder = model:FindFirstChild("UseBlocks")
+        if useBlocksFolder then
             local part = useBlocksFolder:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
-                debugPrint("▼ Using " .. partName .. " in UseBlocks folder")
+                debugPrint("Using " .. partName .. " in UseBlocks folder")
                 return {
                     folderId = folderId,
                     partName = partName,
@@ -266,13 +263,10 @@ local function extractFurnitureData(model, folderName)
                 }
             end
         end
-    end
-    
-    -- Then check direct children
-    for _, partName in ipairs(activationParts) do
+        
         local part = model:FindFirstChild(partName)
         if part and part:IsA("BasePart") then
-            debugPrint("▼ Using " .. partName .. " directly in model")
+            debugPrint("Using " .. partName .. " directly in model")
             return {
                 folderId = folderId,
                 partName = partName,
@@ -283,7 +277,6 @@ local function extractFurnitureData(model, folderName)
         end
     end
     
-    -- Fallback: find any BasePart
     for _, part in ipairs(model:GetDescendants()) do
         if part:IsA("BasePart") then
             debugPrint("Using fallback part: " .. part.Name)
@@ -309,7 +302,7 @@ local function findFurnitureByName(name)
             if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
                 local model = folder:FindFirstChild(name)
                 if model and model:IsA("Model") then
-                    debugPrint("▼ Found " .. name .. " in " .. folder.Name)
+                    debugPrint("Found " .. name .. " in " .. folder.Name)
                     return extractFurnitureData(model, folder.Name)
                 end
             end
@@ -318,13 +311,26 @@ local function findFurnitureByName(name)
     
     local model = Workspace:FindFirstChild(name, true)
     if model and model:IsA("Model") then
-        debugPrint("▼ Found " .. name .. " in workspace (fallback)")
+        debugPrint("Found " .. name .. " in workspace (fallback)")
         local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
         return extractFurnitureData(model, folderId)
     end
     
     debugPrint("Furniture not found: " .. name)
     return nil
+end
+
+-- Call ExitSeatStates for localPlayer after furniture use
+local function callExitSeatStatesForLocalPlayer()
+    debugPrint("Calling ExitSeatStates for localPlayer to reset seat states...")
+    local success, result = pcall(function()
+        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
+    end)
+    if success then
+        debugPrint("Successfully called ExitSeatStates for localPlayer")
+    else
+        debugPrint("Failed to call ExitSeatStates for localPlayer: " .. tostring(result))
+    end
 end
 
 -- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
@@ -351,7 +357,7 @@ local function activateFurniture(furnitureName)
         char  -- Use localPlayer character instead of pet
     }
     
-    debugPrint("▼ ACTIVATING: " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
+    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
     
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
@@ -366,61 +372,28 @@ local function activateFurniture(furnitureName)
     end
 end
 
--- Use furniture with localPlayer (with FORCED TeamAPI/Spawn call after 20 seconds for specific furniture)
+-- Use furniture with localPlayer (with forced ExitSeatStates call for localPlayer)
 local function useFurnitureWithLocalPlayer(furnitureName)
-    debugPrint("STARTING FURNITURE USE: " .. furnitureName .. " on localPlayer (BABY)")
+    debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
+    
+    -- Call ExitSeatStates BEFORE using furniture to ensure clean state
+    debugPrint("Calling ExitSeatStates BEFORE furniture use...")
+    callExitSeatStatesForLocalPlayer()
+    task.wait(1)
+    
     local success = activateFurniture(furnitureName)
-    
-    -- ALWAYS call respawn after 20 seconds for specified furniture, regardless of activation success
-    local furnitureRequiresRespawn = {
-        ["BasicBed"] = true,
-        ["CheapPetBathtub"] = true,
-        ["Piano"] = true
-    }
-    
-    if furnitureRequiresRespawn[furnitureName] then
-        debugPrint("▼ SCHEDULING FORCED RESPAWN for " .. furnitureName .. " in 20 seconds...")
+    if success then
+        debugPrint("Waiting 20 seconds for ailment cure...")
+        task.wait(20) -- Wait for ailment cure
         
-        -- Start a separate coroutine for the respawn to ensure it happens even if activation fails
-        coroutine.wrap(function()
-            debugPrint("Waiting 20 seconds before respawn...")
-            for i = 1, 50 do
-                task.wait(1)
-                if not BabyFarmMode then break end -- Stop if baby farm is disabled
-            end
-            
-            if BabyFarmMode then
-                debugPrint("▼ CALLING FORCED RESPAWN for " .. furnitureName .. " (BABY USED FURNITURE)...")
-                local spawnSuccess, spawnResult = pcall(function()
-                    return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
-                end)
-                if spawnSuccess then
-                    debugPrint("✅ Successfully called TeamAPI/Spawn after BABY used furniture")
-                    -- Wait a bit after respawning
-                    task.wait(5)
-                else
-                    debugPrint("❌ Failed to call TeamAPI/Spawn: " .. tostring(spawnResult))
-                end
-            else
-                debugPrint("Respawn cancelled - Baby Farm disabled")
-            end
-        end)()
-        
-        if success then
-            debugPrint("Furniture activation successful, forced respawn scheduled")
-            return true
-        else
-            debugPrint("Furniture activation failed, but forced respawn still scheduled")
-            return false
-        end
+        -- Call ExitSeatStates AFTER furniture use to reset state
+        debugPrint("Calling ExitSeatStates AFTER furniture use...")
+        callExitSeatStatesForLocalPlayer()
+        task.wait(2)
+        return true
     else
-        if success then
-            debugPrint("Furniture activation successful, no respawn needed")
-            return true
-        else
-            debugPrint("Furniture activation failed")
-            return false
-        end
+        debugPrint("Failed to activate furniture with localPlayer")
+        return false
     end
 end
 
@@ -469,7 +442,7 @@ local function findTeachersApple()
     return teachersAppleID
 end
 
--- Use teachers_apple on localPlayer (NO respawn for food)
+-- Use teachers_apple on localPlayer (NO ExitSeatStates for food)
 local function useTeachersApple(foodID)
     if not foodID then
         debugPrint("Cannot use teachers_apple: Missing foodID")
@@ -627,7 +600,7 @@ local function findWater()
     return waterID
 end
 
--- Use water on localPlayer (NO respawn for food)
+-- Use water on localPlayer (NO ExitSeatStates for food)
 local function useWater(foodID)
     if not foodID then
         debugPrint("Cannot use water: Missing foodID")
@@ -762,7 +735,7 @@ local function findHealingApple()
     return healingAppleID
 end
 
--- Use healing_apple on localPlayer (NO respawn for food)
+-- Use healing_apple on localPlayer (NO ExitSeatStates for food)
 local function useHealingApple(foodID)
     if not foodID then
         debugPrint("Cannot use healing_apple: Missing foodID")
@@ -948,25 +921,25 @@ local function monitorAndHandleBabyAilments()
                     -- Check cooldown
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
                         if ailmentKey == "hungry" then
-                            debugPrint("▼ Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
+                            debugPrint("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
                             local success = handleHungryAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "thirsty" then
-                            debugPrint("▼ Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
+                            debugPrint("Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
                             local success = handleThirstyAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "sick" then
-                            debugPrint("▼ Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
+                            debugPrint("Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
                             local success = handleSickAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         else
-                            debugPrint("▼ Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer (BABY)")
+                            debugPrint("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
                             local success = useFurnitureWithLocalPlayer(furnitureName)
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
@@ -1097,7 +1070,5 @@ debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only)
 debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
-debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1/Seati/Seat! search.")
-debugPrint("UPDATED: FORCED TeamAPI/Spawn called after 20 seconds when BABY uses BasicBed, CheapPetBathtub, Piano.")
-debugPrint("UPDATED: Food items (teachers_apple, water, healing_apple) do NOT trigger respawn.")
-debugPrint("UPDATED: Respawn happens REGARDLESS of furniture activation success.")
+debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
+debugPrint("UPDATED: PROPER localPlayer seat state management with ExitSeatStates calls BEFORE and AFTER furniture use.")
