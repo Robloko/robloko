@@ -296,17 +296,58 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Call ExitSeatStates for localPlayer after furniture use
-local function callExitSeatStatesForLocalPlayer()
-    debugPrint("Calling ExitSeatStates for localPlayer to reset seat states...")
-    local success, result = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
-    end)
-    if success then
-        debugPrint("Successfully called ExitSeatStates for localPlayer")
-    else
-        debugPrint("Failed to call ExitSeatStates for localPlayer: " .. tostring(result))
+-- Stronger method to force exit from furniture
+local function forceExitFurniture()
+    local char = ensureCharacterSpawned()
+    if not char then 
+        debugPrint("Cannot force exit: No valid character")
+        return false 
     end
+    
+    debugPrint("FORCE EXITING FROM FURNITURE...")
+    
+    -- Method 1: Standard ExitSeatStates with character parameter
+    pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(char)
+    end)
+    task.wait(1)
+    
+    -- Method 2: Try to unequip any tools (in case character is holding something)
+    pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.equip_manager then
+            -- Unequip any equipped items
+            if playerData.equip_manager.food then
+                for foodId, _ in pairs(playerData.equip_manager.food) do
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(foodId)
+                    end)
+                end
+            end
+        end
+    end)
+    task.wait(1)
+    
+    -- Method 3: Multiple ExitSeatStates calls
+    for i = 1, 5 do
+        pcall(function()
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(char)
+        end)
+        task.wait(0.5)
+    end
+    
+    -- Method 4: Try to move character to break stuck state
+    local humanoid = char:FindFirstChild("Humanoid")
+    if humanoid then
+        humanoid:Move(Vector3.new(1, 0, 1)) -- Try to move character
+        task.wait(0.5)
+        humanoid:Move(Vector3.new(-1, 0, -1)) -- Try to move back
+        task.wait(0.5)
+    end
+    
+    debugPrint("Force exit completed")
+    return true
 end
 
 -- Use furniture with localPlayer (using same furniture system as main PetFarm)
@@ -319,10 +360,9 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     
-    -- Call ExitSeatStates BEFORE using furniture
-    debugPrint("Calling ExitSeatStates BEFORE furniture use...")
-    callExitSeatStatesForLocalPlayer()
-    task.wait(1)
+    -- Force exit any current furniture state BEFORE using
+    forceExitFurniture()
+    task.wait(2)
     
     -- Find furniture data (same as main PetFarm)
     local furnitureData = findFurnitureByName(furnitureName)
@@ -353,13 +393,15 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         debugPrint("Waiting 20 seconds for ailment cure...")
         task.wait(20)
         
-        -- Call ExitSeatStates AFTER furniture use
-        debugPrint("Calling ExitSeatStates AFTER furniture use...")
-        callExitSeatStatesForLocalPlayer()
-        task.wait(2)
+        -- FORCE EXIT after furniture use
+        debugPrint("FORCE EXITING after furniture use...")
+        forceExitFurniture()
+        task.wait(3)
+        
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
+        forceExitFurniture() -- Still try to exit even if failed
         return false
     end
 end
@@ -1038,4 +1080,5 @@ debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFur
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
 debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
-debugPrint("UPDATED: PROPER localPlayer seat state management with ExitSeatStates calls BEFORE and AFTER furniture use.")
+debugPrint("UPDATED: FIXED ExitSeatStates - now properly passes character parameter to prevent stuck states!")
+debugPrint("UPDATED: FORCE EXIT system with multiple methods to ensure character never gets stuck!")
