@@ -296,61 +296,32 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Stronger method to force exit from furniture
-local function forceExitFurniture()
+-- NEW: Separate function to wait for furniture activation and then exit
+local function waitAndExitFurniture()
+    debugPrint("Waiting 20 seconds for furniture activation and ailment cure...")
+    task.wait(20)
+    
+    -- Force exit after waiting
+    debugPrint("FORCE EXITING from furniture after wait...")
     local char = ensureCharacterSpawned()
-    if not char then 
-        debugPrint("Cannot force exit: No valid character")
-        return false 
-    end
-    
-    debugPrint("FORCE EXITING FROM FURNITURE...")
-    
-    -- Method 1: Standard ExitSeatStates with character parameter
-    pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(char)
-    end)
-    task.wait(1)
-    
-    -- Method 2: Try to unequip any tools (in case character is holding something)
-    pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.equip_manager then
-            -- Unequip any equipped items
-            if playerData.equip_manager.food then
-                for foodId, _ in pairs(playerData.equip_manager.food) do
-                    pcall(function()
-                        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(foodId)
-                    end)
-                end
-            end
+    if char then
+        -- Multiple exit attempts to ensure we get unstuck
+        for i = 1, 5 do
+            pcall(function()
+                game:GetService("ReplicatedStorage").API["AdoptAPI/ExitSeatStates"]:FireServer(char)
+            end)
+            debugPrint("ExitSeatStates attempt " .. i .. "/5")
+            task.wait(0.5)
         end
-    end)
-    task.wait(1)
-    
-    -- Method 3: Multiple ExitSeatStates calls
-    for i = 1, 5 do
-        pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(char)
-        end)
-        task.wait(0.5)
+        debugPrint("Force exit completed after furniture use")
+        return true
+    else
+        debugPrint("Cannot exit: No valid character")
+        return false
     end
-    
-    -- Method 4: Try to move character to break stuck state
-    local humanoid = char:FindFirstChild("Humanoid")
-    if humanoid then
-        humanoid:Move(Vector3.new(1, 0, 1)) -- Try to move character
-        task.wait(0.5)
-        humanoid:Move(Vector3.new(-1, 0, -1)) -- Try to move back
-        task.wait(0.5)
-    end
-    
-    debugPrint("Force exit completed")
-    return true
 end
 
--- Use furniture with localPlayer (using same furniture system as main PetFarm)
+-- Use furniture with localPlayer (simplified - just activate and wait/exit)
 local function useFurnitureWithLocalPlayer(furnitureName)
     local char = ensureCharacterSpawned()
     if not char then
@@ -360,11 +331,7 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     
-    -- Force exit any current furniture state BEFORE using
-    forceExitFurniture()
-    task.wait(2)
-    
-    -- Find furniture data (same as main PetFarm)
+    -- Find furniture data
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
         debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
@@ -390,21 +357,24 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
-        debugPrint("Waiting 20 seconds for ailment cure...")
-        task.wait(20)
         
-        -- FORCE EXIT after furniture use
-        debugPrint("FORCE EXITING after furniture use...")
-        forceExitFurniture()
-        task.wait(3)
+        -- Use the separate wait and exit function
+        local exitSuccess = waitAndExitFurniture()
         
-        return true
+        if exitSuccess then
+            debugPrint("Furniture use completed successfully")
+            return true
+        else
+            debugPrint("Furniture activated but exit failed")
+            return false
+        end
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
-        forceExitFurniture() -- Still try to exit even if failed
         return false
     end
 end
+
+-- [REST OF THE FUNCTIONS REMAIN THE SAME - teachers_apple, water, healing_apple, etc.]
 
 -- Buy teachers_apple
 local function buyTeachersApple()
@@ -1080,5 +1050,5 @@ debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFur
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
 debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
-debugPrint("UPDATED: FIXED ExitSeatStates - now properly passes character parameter to prevent stuck states!")
-debugPrint("UPDATED: FORCE EXIT system with multiple methods to ensure character never gets stuck!")
+debugPrint("UPDATED: SEPARATE waitAndExitFurniture function that properly calls ExitSeatStates with character parameter!")
+debugPrint("UPDATED: Multiple ExitSeatStates attempts to ensure character never gets stuck!")
