@@ -69,27 +69,6 @@ local function extractAilmentKey(ailment)
                 end
             end
         end
-        -- If no direct match, search all string values for known ailments
-        for k, v in pairs(ailment) do
-            if type(v) == "string" then
-                local lowerV = v:lower()
-                if BABY_AILMENT_TASKS[lowerV] then
-                    debugPrint("Found matching ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
-                    return lowerV
-                end
-            elseif type(v) == "table" then
-                -- Recurse into sub-tables if needed
-                local subKey = extractAilmentKey(v)
-                if subKey ~= "unknown" then
-                    return subKey
-                end
-            end
-        end
-        -- If still unknown, debug the structure
-        debugPrint("Unknown ailment table structure for debugging:")
-        for k, v in pairs(ailment) do
-            debugPrint(" Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
-        end
         return "unknown"
     else
         local str = tostring(ailment):lower()
@@ -114,19 +93,13 @@ local function printAvailableBabyAilmentsCompact()
     local count = 0
     local actionableCount = 0
     
-    debugPrint(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
-    debugPrint(string.rep("-", 70))
-    
     for petUniqueID, ailment in pairs(babyAilments) do
         local ailmentKey = extractAilmentKey(ailment)
         local isActionable = BABY_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
         if isActionable then actionableCount = actionableCount + 1 end
         count = count + 1
-        local status = isActionable and "YES" or "NO"
-        debugPrint(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
     end
     
-    debugPrint(string.rep("-", 70))
     debugPrint(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
 end
 
@@ -196,22 +169,57 @@ local function isPlayerAtHome()
     for _, folder in ipairs(hi:GetChildren()) do
         local folderLower = string.lower(folder.Name)
         if string.find(folderLower, playerLower) then
-            debugPrint("DEBUG: Found home folder matching player name: " .. folder.Name .. " (contains '" .. playerLower .. "')")
             return true
         end
-    end
-    debugPrint("DEBUG: No home folder found for player '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
-    for _, folder in ipairs(hi:GetChildren()) do
-        debugPrint("DEBUG: Available folder: '" .. folder.Name .. "'")
     end
     return false
 end
 
 -- ==================================================================
--- SIMPLIFIED FURNITURE DETECTION
+-- FIXED FURNITURE DETECTION WITH USE BLOCK FINDING
 -- ==================================================================
 
--- Simple furniture detection for Baby Farm
+-- FIXED: Function to find UseBlock in furniture model
+local function findUseBlock(model)
+    debugPrint("Searching for UseBlock in " .. model.Name)
+    
+    -- First check for UseBlocks folder
+    local useBlocksFolder = model:FindFirstChild("UseBlocks")
+    if useBlocksFolder then
+        for _, child in ipairs(useBlocksFolder:GetChildren()) do
+            if child:IsA("BasePart") and string.find(child.Name:lower(), "use") then
+                debugPrint("Found UseBlock in UseBlocks folder: " .. child.Name)
+                return child
+            end
+        end
+    end
+    
+    -- Check for common UseBlock names
+    local useBlockNames = {"UseBlock", "Use", "Block", "Seat", "Seat1", "Main"}
+    for _, name in ipairs(useBlockNames) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            debugPrint("Found UseBlock: " .. name)
+            return part
+        end
+    end
+    
+    -- Search all descendants for any BasePart that might be the activation part
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            -- Check if it's likely an activation part (not too small, not decorative)
+            if descendant.Size.Magnitude > 2 then
+                debugPrint("Found potential UseBlock (fallback): " .. descendant.Name)
+                return descendant
+            end
+        end
+    end
+    
+    debugPrint("No UseBlock found in " .. model.Name)
+    return nil
+end
+
+-- FIXED: Furniture detection with proper UseBlock finding
 local function findFurnitureByName(name)
     debugPrint("Searching for furniture: " .. name)
     
@@ -228,13 +236,16 @@ local function findFurnitureByName(name)
                         local model = furnitureSubFolder:FindFirstChild(name)
                         if model and model:IsA("Model") then
                             debugPrint("Found " .. name .. " in " .. furnitureSubFolder.Name)
-                            return {
-                                folderId = folder.Name, -- f-8
-                                partName = "UseBlock", -- Default activation part
-                                position = model:GetPivot().Position,
-                                cframe = model:GetPivot(),
-                                model = model
-                            }
+                            local useBlock = findUseBlock(model)
+                            if useBlock then
+                                return {
+                                    folderId = folder.Name, -- f-8
+                                    partName = useBlock.Name,
+                                    position = useBlock.Position,
+                                    cframe = useBlock.CFrame,
+                                    model = model
+                                }
+                            end
                         end
                     end
                 end
@@ -246,20 +257,23 @@ local function findFurnitureByName(name)
     local model = Workspace:FindFirstChild(name, true)
     if model and model:IsA("Model") then
         debugPrint("Found " .. name .. " in workspace (fallback)")
-        return {
-            folderId = "unknown",
-            partName = "UseBlock",
-            position = model:GetPivot().Position,
-            cframe = model:GetPivot(),
-            model = model
-        }
+        local useBlock = findUseBlock(model)
+        if useBlock then
+            return {
+                folderId = "unknown",
+                partName = useBlock.Name,
+                position = useBlock.Position,
+                cframe = useBlock.CFrame,
+                model = model
+            }
+        end
     end
     
-    debugPrint("Furniture not found: " .. name)
+    debugPrint("Furniture not found or no UseBlock: " .. name)
     return nil
 end
 
--- Simple furniture activation for localPlayer
+-- FIXED: Furniture activation with teleport
 local function useFurnitureWithLocalPlayer(furnitureName)
     local char = ensureCharacterSpawned()
     if not char then
@@ -273,6 +287,16 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     if not furnitureData then
         debugPrint("Furniture not found: " .. furnitureName)
         return false
+    end
+    
+    -- FIXED: Teleport character to furniture first
+    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        debugPrint("Teleporting character to furniture...")
+        -- Position character near the furniture (2 units away in front)
+        local teleportCFrame = furnitureData.cframe * CFrame.new(0, 0, 2)
+        humanoidRootPart.CFrame = teleportCFrame
+        task.wait(1) -- Wait for teleport to complete
     end
     
     -- Call ExitSeatStates before use
@@ -292,7 +316,7 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         char  -- localPlayer character
     }
     
-    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId)
+    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
     
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
@@ -300,7 +324,28 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
-        task.wait(20) -- Wait for ailment cure
+        
+        -- Wait for character to start using furniture
+        local startTime = os.time()
+        local usingFurniture = false
+        
+        while os.time() - startTime < 10 do
+            local humanoid = char:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Sit then
+                usingFurniture = true
+                debugPrint("Character is now using the furniture (sitting/lying down)")
+                break
+            end
+            task.wait(1)
+        end
+        
+        if usingFurniture then
+            debugPrint("Waiting for ailment cure...")
+            task.wait(20) -- Wait for ailment cure
+        else
+            debugPrint("Character did not start using furniture, but activation was successful")
+            task.wait(10) -- Shorter wait if not using
+        end
         
         -- Call ExitSeatStates after use
         pcall(function()
@@ -314,24 +359,10 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     end
 end
 
--- Check and buy missing furniture (simplified)
+-- Check and buy missing furniture
 local function checkAndBuyMissingFurniture()
     debugPrint("Checking for missing furniture...")
     local missingFurniture = {}
-    
-    -- Check for Piano
-    local pianoFound = findFurnitureByName("Piano")
-    if not pianoFound then
-        debugPrint("Piano not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "piano",
-            properties = {
-                cframe = CFrame.new(14, 0, -16.399999618530273, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-            }
-        })
-    else
-        debugPrint("Piano found in house")
-    end
     
     -- Check for BasicBed
     local basicBedFound = findFurnitureByName("BasicBed")
@@ -345,20 +376,6 @@ local function checkAndBuyMissingFurniture()
         })
     else
         debugPrint("BasicBed found in house")
-    end
-    
-    -- Check for CheapPetBathtub
-    local bathtubFound = findFurnitureByName("CheapPetBathtub")
-    if not bathtubFound then
-        debugPrint("CheapPetBathtub not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "cheap_pet_bathtub",
-            properties = {
-                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-            }
-        })
-    else
-        debugPrint("CheapPetBathtub found in house")
     end
     
     -- Buy missing furniture
@@ -380,7 +397,7 @@ local function checkAndBuyMissingFurniture()
 end
 
 -- ==================================================================
--- FOOD ITEM HANDLERS (SIMPLIFIED)
+-- SIMPLIFIED FOOD HANDLERS
 -- ==================================================================
 
 -- Buy food item
@@ -609,12 +626,7 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(15) -- Increased wait for home to load
-            -- Re-check after spawn
-            if not isPlayerAtHome() then
-                debugPrint("Still not at home after spawn - forcing longer wait")
-                task.wait(10)
-            end
+            task.wait(15)
         end
         
         -- Step 4: Check and buy missing furniture
@@ -641,7 +653,7 @@ local function createSimpleUI()
     
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 120, 0, 40)
-    frame.Position = UDim2.new(0, 10, 0, 250) -- Below main UI
+    frame.Position = UDim2.new(0, 10, 0, 250)
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -688,8 +700,4 @@ end
 -- Initialize
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
-debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
-debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
-debugPrint("UPDATED: Now selects Baby team first when enabled.")
-debugPrint("UPDATED: Uses SIMPLIFIED furniture detection based on HouseInteriors.f-8.furniture.*.Piano path.")
-debugPrint("UPDATED: Proper seat state management with ExitSeatStates calls.")
+debugPrint("FIXED: Now properly finds UseBlock and teleports character to furniture.")
