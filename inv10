@@ -5,126 +5,139 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to deeply inspect HOUSE MANAGER
-local function inspectHouseManagerDeep()
-    print("🔍 DEEP INSPECTION: HOUSE MANAGER")
-    print("=================================")
+-- Function to safely find and inspect ClientData
+local function findAndInspectClientData()
+    print("🔍 SEARCHING FOR CLIENT DATA MODULE...")
+    print("======================================")
     
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local data = clientData.get_data()[player.Name]
-    
-    if not data.house_manager then
-        print("❌ No house_manager found in player data")
+    -- First, let's check if ReplicatedStorage exists and has the expected structure
+    if not ReplicatedStorage then
+        print("❌ ReplicatedStorage not found!")
         return
     end
     
-    local houseManager = data.house_manager
-    
-    -- Basic house manager info
-    print("🏠 HOUSE MANAGER OVERVIEW:")
-    print("   Total keys: " .. tostring(#houseManager))
-    for key, value in pairs(houseManager) do
-        if type(value) == "table" then
-            local count = 0
-            for _ in pairs(value) do count = count + 1 end
-            print("   📁 " .. key .. " [TABLE with " .. count .. " items]")
-        else
-            print("   📄 " .. key .. " = " .. tostring(value))
-        end
+    print("📁 ReplicatedStorage contents:")
+    for _, child in pairs(ReplicatedStorage:GetChildren()) do
+        print("   " .. child.Name .. " (" .. child.ClassName .. ")")
     end
     print("")
     
-    -- Deep inspection of each table within house_manager
-    for category, categoryData in pairs(houseManager) do
-        if type(categoryData) == "table" then
-            print("📂 DEEP INSPECTION: " .. category)
-            print("   " .. string.rep("-", 40))
-            
-            local itemCount = 0
-            local tableCount = 0
-            local valueCount = 0
-            
-            for key, value in pairs(categoryData) do
-                itemCount = itemCount + 1
-                
-                if type(value) == "table" then
-                    tableCount = tableCount + 1
-                    local subItemCount = 0
-                    for _ in pairs(value) do subItemCount = subItemCount + 1 end
-                    
-                    print("   📁 " .. key .. " [SUB-TABLE with " .. subItemCount .. " items]")
-                    
-                    -- Inspect sub-table contents
-                    for subKey, subValue in pairs(value) do
-                        if type(subValue) == "table" then
-                            local deepCount = 0
-                            for _ in pairs(subValue) do deepCount = deepCount + 1 end
-                            print("      📁 " .. subKey .. " [DEEP-TABLE with " .. deepCount .. " items]")
-                        else
-                            print("      📄 " .. subKey .. " = " .. tostring(subValue))
-                        end
-                    end
-                else
-                    valueCount = valueCount + 1
-                    print("   📄 " .. key .. " = " .. tostring(value))
-                end
-            end
-            
-            print("   📊 SUMMARY: " .. itemCount .. " total items (" .. tableCount .. " tables, " .. valueCount .. " values)")
-            print("")
-        end
-    end
-    
-    -- Special inspection for common house-related categories
-    local importantCategories = {"houses", "house_data", "house_items", "decorations", "furniture"}
-    
-    print("🎯 IMPORTANT HOUSE CATEGORIES INSPECTION:")
-    print("   " .. string.rep("-", 50))
-    
-    for _, category in ipairs(importantCategories) do
-        if houseManager[category] then
-            print("   🔍 " .. category .. ":")
-            local catData = houseManager[category]
-            
-            if type(catData) == "table" then
-                -- Check if it's an array-like table or dictionary
-                local isArray = false
-                for k in pairs(catData) do
-                    if type(k) == "number" then
-                        isArray = true
-                        break
-                    end
-                end
-                
-                if isArray then
-                    print("      📋 ARRAY with " .. #catData .. " elements")
-                    for i, item in ipairs(catData) do
-                        if type(item) == "table" then
-                            local props = 0
-                            for _ in pairs(item) do props = props + 1 end
-                            print("         [" .. i .. "] TABLE with " .. props .. " properties")
-                        else
-                            print("         [" .. i .. "] = " .. tostring(item))
-                        end
-                    end
-                else
-                    print("      🗂️ DICTIONARY with " .. countTableItems(catData) .. " items")
-                    for key, value in pairs(catData) do
-                        if type(value) == "table" then
-                            local count = countTableItems(value)
-                            print("         📁 " .. key .. " [TABLE with " .. count .. " items]")
-                        else
-                            print("         📄 " .. key .. " = " .. tostring(value))
-                        end
-                    end
-                end
-            else
-                print("      📄 " .. tostring(catData))
-            end
-        else
-            print("   ❌ " .. category .. ": NOT FOUND")
+    -- Look for ClientModules
+    local clientModules = ReplicatedStorage:FindFirstChild("ClientModules")
+    if clientModules then
+        print("📁 ClientModules contents:")
+        for _, child in pairs(clientModules:GetChildren()) do
+            print("   " .. child.Name .. " (" .. child.ClassName .. ")")
         end
         print("")
+        
+        -- Look for Core folder
+        local coreModule = clientModules:FindFirstChild("Core")
+        if coreModule then
+            print("📁 Core contents:")
+            for _, child in pairs(coreModule:GetChildren()) do
+                print("   " .. child.Name .. " (" .. child.ClassName .. ")")
+            end
+            print("")
+            
+            -- Look for ClientData
+            local clientDataModule = coreModule:FindFirstChild("ClientData")
+            if clientDataModule and clientDataModule:IsA("ModuleScript") then
+                print("✅ Found ClientData ModuleScript!")
+                
+                -- Try to require the module
+                local success, clientData = pcall(require, clientDataModule)
+                if success then
+                    print("✅ Successfully required ClientData module")
+                    
+                    -- Try to get player data
+                    local playerData = clientData.get_data()
+                    if playerData then
+                        print("✅ Successfully got player data")
+                        
+                        if playerData[player.Name] then
+                            print("✅ Found data for player: " .. player.Name)
+                            return playerData[player.Name]
+                        else
+                            print("❌ No data found for player: " .. player.Name)
+                        end
+                    else
+                        print("❌ get_data() returned nil")
+                    end
+                else
+                    print("❌ Failed to require ClientData: " .. tostring(clientData))
+                end
+            else
+                print("❌ ClientData ModuleScript not found in Core")
+            end
+        else
+            print("❌ Core folder not found in ClientModules")
+        end
+    else
+        print("❌ ClientModules not found in ReplicatedStorage")
+    end
+    
+    return nil
+end
+
+-- Function to inspect HOUSE MANAGER if we have data
+local function inspectHouseManager()
+    print("")
+    print("🏠 INSPECTING HOUSE MANAGER")
+    print("===========================")
+    
+    local playerData = findAndInspectClientData()
+    
+    if not playerData then
+        print("❌ Could not retrieve player data")
+        return
+    end
+    
+    if playerData.house_manager then
+        local houseManager = playerData.house_manager
+        
+        print("✅ HOUSE MANAGER FOUND!")
+        print("Total keys in house_manager: " .. tostring(countTableItems(houseManager)))
+        print("")
+        
+        -- List all top-level properties
+        for key, value in pairs(houseManager) do
+            if type(value) == "table" then
+                local itemCount = countTableItems(value)
+                print("📁 " .. key .. " [TABLE with " .. itemCount .. " items]")
+                
+                -- Show first few items of each table
+                local displayed = 0
+                for k, v in pairs(value) do
+                    if displayed < 3 then  -- Limit to 3 items per table to avoid spam
+                        if type(v) == "table" then
+                            print("   └─ " .. k .. " = [TABLE]")
+                        else
+                            print("   └─ " .. k .. " = " .. tostring(v))
+                        end
+                        displayed = displayed + 1
+                    end
+                end
+                if displayed < countTableItems(value) then
+                    print("   └─ ... and " .. (countTableItems(value) - displayed) .. " more items")
+                end
+            else
+                print("📄 " .. key .. " = " .. tostring(value))
+            end
+        end
+    else
+        print("❌ house_manager not found in player data")
+        
+        -- Show what IS available in player data
+        print("")
+        print("📋 AVAILABLE DATA IN PLAYER:")
+        for key, value in pairs(playerData) do
+            if type(value) == "table" then
+                print("📁 " .. key .. " [TABLE]")
+            else
+                print("📄 " .. key .. " = " .. tostring(value))
+            end
+        end
     end
 end
 
@@ -135,5 +148,5 @@ local function countTableItems(tbl)
     return count
 end
 
--- Run the deep inspection
-inspectHouseManagerDeep()
+-- Run the inspection
+inspectHouseManager()
