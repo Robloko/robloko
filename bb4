@@ -5,6 +5,7 @@
 -- Added baby ailment detection and handling (from bb3.txt, integrated with monitoring)
 -- Added camera reset after arriving at character position
 -- Integrated furniture and food handling for baby ailments
+-- Added beach_party ailment handling: teleport to character position if detected
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -75,7 +76,8 @@ local BABY_AILMENT_TASKS = {
     thirsty = "water",
     dirty = "CampingShower",  -- Updated from CheapPetBathtub to match bb3
     bored = "Piano",  -- Kept from ailDetec, but no handling in bb3 (will log only)
-    sick = "healing_apple"
+    sick = "healing_apple",
+    beach_party = "teleport_to_character"  -- New: Custom handling for beach_party (teleport)
 }
 
 -- Task cooldowns to prevent spam
@@ -85,6 +87,10 @@ local TASK_COOLDOWN = 30 -- seconds
 -- Pre-cache API references for efficiency
 local API = ReplicatedStorage:WaitForChild("API")
 local ExitSeatStates = API:WaitForChild("AdoptAPI/ExitSeatStates")
+
+-- Character position for beach_party
+local BEACH_PARTY_CHARACTER_POS = Vector3.new(-604.54, 26.49, -1538.53)
+local BEACH_PARTY_CAMERA_POS = Vector3.new(-598.88, 33.84, -1546.60)
 
 -- Function to safely get player data
 local function getPlayerData()
@@ -348,6 +354,21 @@ end
 local function useFurnitureWithLocalPlayer(furnitureName)
     log("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     return handleFurnitureActivation(furnitureName)
+end
+
+-- Handle beach_party ailment: Teleport to character position
+local function handleBeachPartyAilment()
+    log("BEACH_PARTY AILMENT DETECTED FOR BABY! Teleporting to character position...")
+    if safeTp(BEACH_PARTY_CHARACTER_POS) then
+        setCam(BEACH_PARTY_CAMERA_POS, BEACH_PARTY_CHARACTER_POS)
+        task.wait(3)
+        resetCam()
+        log("Successfully teleported to beach_party position: " .. tostring(BEACH_PARTY_CHARACTER_POS))
+        return true
+    else
+        log("Failed to teleport for beach_party ailment")
+        return false
+    end
 end
 
 -- Buy teachers_apple
@@ -868,13 +889,19 @@ local function monitorAndHandleBabyAilments()
            
             for petUniqueID, ailmentType in pairs(playerData.ailments_manager.baby_ailments) do
                 local ailmentKey = extractAilmentKey(ailmentType)
-                local furnitureName = BABY_AILMENT_TASKS[ailmentKey]
+                local taskName = BABY_AILMENT_TASKS[ailmentKey]
                
-                if furnitureName then
+                if taskName then
                     foundActionable = true
                     -- Check cooldown
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
-                        if ailmentKey == "hungry" then
+                        if ailmentKey == "beach_party" then
+                            log("Baby beach_party ailment detected for pet: " .. petUniqueID .. " → Teleporting to character position")
+                            local success = handleBeachPartyAilment()
+                            if success then
+                                lastTaskTime[ailmentKey] = currentTime
+                            end
+                        elseif ailmentKey == "hungry" then
                             log("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
                             local success = handleHungryAilment()
                             if success then
@@ -894,8 +921,8 @@ local function monitorAndHandleBabyAilments()
                             end
                         else
                             -- For furniture-based (sleepy, dirty, bored)
-                            log("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. furnitureName .. " on localPlayer")
-                            local success = useFurnitureWithLocalPlayer(furnitureName)
+                            log("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. taskName .. " on localPlayer")
+                            local success = useFurnitureWithLocalPlayer(taskName)
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
