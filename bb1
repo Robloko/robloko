@@ -19,7 +19,6 @@ local BABY_AILMENT_TASKS = {
     hungry = "teachers_apple",
     thirsty = "water",
     dirty = "CampingShower",
-    bored = "Piano",
     sick = "healing_apple"
 }
 -- Task cooldowns to prevent spam
@@ -179,49 +178,6 @@ local function selectBabyTeam()
         return false
     end
 end
--- Check if player is at home
-local function isPlayerAtHome()
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        return false
-    end
-    local playerLower = string.lower(player.Name)
-    for _, folder in ipairs(hi:GetChildren()) do
-        local folderLower = string.lower(folder.Name)
-        if string.find(folderLower, playerLower) then
-            debugPrint("DEBUG: Found home folder matching player name: " .. folder.Name .. " (contains '" .. playerLower .. "')")
-            return true
-        end
-    end
-    debugPrint("DEBUG: No home folder found for player '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
-    for _, folder in ipairs(hi:GetChildren()) do
-        debugPrint("DEBUG: Available folder: '" .. folder.Name .. "'")
-    end
-    return false
-end
--- Dynamic function to find player's home folder (case insensitive)
-local function findHomeFolder()
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        debugPrint("HouseInteriors folder not found")
-        return nil
-    end
-   
-    local playerLower = string.lower(player.Name)
-    for _, folder in ipairs(hi:GetChildren()) do
-        local folderLower = string.lower(folder.Name)
-        if string.find(folderLower, playerLower) then
-            debugPrint("Found home folder: " .. folder.Name .. " (matched '" .. playerLower .. "' in '" .. folderLower .. "')")
-            return folder
-        end
-    end
-   
-    debugPrint("No home folder found containing player name '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
-    for _, folder in ipairs(hi:GetChildren()) do
-        debugPrint("Available folder: '" .. folder.Name .. "'")
-    end
-    return nil
-end
 -- Extract furniture data (updated for both regular and interior)
 local function extractFurnitureData(model, folderId, part)
     return {
@@ -232,7 +188,7 @@ local function extractFurnitureData(model, folderId, part)
         model = model
     }
 end
--- Find furniture by name (updated to search both player home folders and HouseInteriors.furniture)
+-- Find furniture by name (updated to search HouseInteriors.furniture and workspace)
 local function findFurnitureByName(name)
     debugPrint("Searching for furniture: " .. name)
     local hi = Workspace:FindFirstChild("HouseInteriors")
@@ -240,42 +196,8 @@ local function findFurnitureByName(name)
         debugPrint("HouseInteriors not found")
         return nil
     end
-
-    -- First, search in player home folders (existing logic)
-    local homeFolder = findHomeFolder()
-    if homeFolder then
-        local model = homeFolder:FindFirstChild(name)
-        if model and model:IsA("Model") then
-            debugPrint("Found " .. name .. " in home folder " .. homeFolder.Name)
-            local folderId = string.match(homeFolder.Name, "f%-%d+") or homeFolder.Name
-            local activationParts = {"UseBlock", "Seat1", "Seat2"}
-            for _, partName in ipairs(activationParts) do
-                local useBlocksFolder = model:FindFirstChild("UseBlocks")
-                if useBlocksFolder then
-                    local part = useBlocksFolder:FindFirstChild(partName)
-                    if part and part:IsA("BasePart") then
-                        debugPrint("Using " .. partName .. " in UseBlocks folder")
-                        return extractFurnitureData(model, folderId, part)
-                    end
-                end
-               
-                local part = model:FindFirstChild(partName)
-                if part and part:IsA("BasePart") then
-                    debugPrint("Using " .. partName .. " directly in model")
-                    return extractFurnitureData(model, folderId, part)
-                end
-            end
-           
-            for _, part in ipairs(model:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    debugPrint("Using fallback part: " .. part.Name)
-                    return extractFurnitureData(model, folderId, part)
-                end
-            end
-        end
-    end
    
-    -- Second, search in HouseInteriors.furniture (new logic for interior)
+    -- Search in HouseInteriors.furniture
     local furnitureFolder = hi:FindFirstChild("furniture")
     if furnitureFolder then
         for _, houseKey in ipairs(furnitureFolder:GetChildren()) do
@@ -826,50 +748,11 @@ local function handleSickAilment()
         return false
     end
 end
--- Check and buy missing furniture (updated with new furniture)
+-- Check and buy missing furniture (updated with new furniture, removed old ones)
 local function checkAndBuyMissingFurniture()
     debugPrint("Checking for missing furniture...")
     local missingFurniture = {}
    
-    local pianoFound = findFurnitureByName("Piano")
-    if not pianoFound then
-        debugPrint("Piano not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "piano",
-            properties = {
-                cframe = CFrame.new(14, 0, -16.399999618530273, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
-            }
-        })
-    else
-        debugPrint("Piano found in house")
-    end
-   
-    local basicBedFound = findFurnitureByName("BasicBed")
-    if not basicBedFound then
-        debugPrint("BasicBed not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "basic_bed",
-            properties = {
-                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
-            }
-        })
-    else
-        debugPrint("BasicBed found in house")
-    end
-   
-    local bathtubFound = findFurnitureByName("CheapPetBathtub")
-    if not bathtubFound then
-        debugPrint("CheapPetBathtub not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "cheap_pet_bathtub",
-            properties = {
-                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
-            }
-        })
-    else
-        debugPrint("CheapPetBathtub found in house")
-    end
-
     local campingShowerFound = findFurnitureByName("CampingShower")
     if not campingShowerFound then
         debugPrint("CampingShower not found, adding to buy list")
@@ -980,7 +863,7 @@ local function monitorAndHandleBabyAilments()
         task.wait(SCAN_INTERVAL)
     end
 end
--- Toggle Baby Farm mode (removed respawn calls)
+-- Toggle Baby Farm mode (removed home check)
 local function toggleBabyFarmMode()
     BabyFarmMode = not BabyFarmMode
     if BabyFarmMode then
@@ -998,18 +881,11 @@ local function toggleBabyFarmMode()
             return
         end
        
-        -- Step 3: Ensure player is at home (no respawn)
-        if not isPlayerAtHome() then
-            debugPrint("Player not at home, cannot proceed")
-            BabyFarmMode = false
-            return
-        end
-       
-        -- Step 4: Check and buy missing furniture
+        -- Step 3: Check and buy missing furniture
         checkAndBuyMissingFurniture()
         task.wait(3)
        
-        -- Step 5: Start monitoring
+        -- Step 4: Start monitoring
         babyFarmCoroutine = coroutine.wrap(monitorAndHandleBabyAilments)()
     else
         debugPrint("Baby Farm: DISABLED")
@@ -1081,6 +957,7 @@ debugPrint("UPDATED: Food items (teachers_apple, water, healing_apple) do NOT ca
 debugPrint("UPDATED: Pre-cached API and ExitSeatStates references for efficiency.")
 debugPrint("UPDATED: Uses exact WaitForChild paths for all API calls.")
 debugPrint("UPDATED: Added support for sleepy=SleepingBag and dirty=CampingShower using HousingAPI/ActivateInteriorFurniture.")
-debugPrint("UPDATED: findFurnitureByName now searches both player home folders and HouseInteriors.furniture.")
-debugPrint("UPDATED: checkAndBuyMissingFurniture now includes camping_shower and sleeping_bag.")
-debugPrint("UPDATED: Removed all respawn calls from ensureCharacterSpawned and toggleBabyFarmMode.")
+debugPrint("UPDATED: findFurnitureByName now searches HouseInteriors.furniture and workspace (no home required).")
+debugPrint("UPDATED: checkAndBuyMissingFurniture now only includes camping_shower and sleeping_bag.")
+debugPrint("UPDATED: Removed piano task and home requirement.")
+debugPrint("UPDATED: Removed all home detection functions and checks.")
