@@ -2,6 +2,7 @@
 -- Based on logic from ress0 — копия.txt
 -- Added respawn and unsubscribe from home at the beginning
 -- After reaching Main Map, wait 2s, then go to Character pos with camera setup
+-- Added choose Baby team at the beginning (from b1.txt)
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -63,17 +64,43 @@ local function isNear(pos, dist)
 end
 
 -----------------------------------------------------
+-- SELECT BABY TEAM (from b1.txt)
+-----------------------------------------------------
+local function selectBabyTeam()
+    log("Selecting Baby team...")
+    local API = ReplicatedStorage:WaitForChild("API")
+    local args = {
+        "Babies",
+        {
+            dont_respawn = true,
+            source_for_logging = "avatar_editor"
+        }
+    }
+    local success, result = pcall(function()
+        return API:WaitForChild("TeamAPI/ChooseTeam"):InvokeServer(unpack(args))
+    end)
+    if success then
+        log("Successfully selected Baby team")
+        return true
+    else
+        log("Failed to select Baby team: " .. tostring(result))
+        return false
+    end
+end
+
+-----------------------------------------------------
 -- RESPAWN AND UNSUBSCRIBE AT BEGINNING
 -----------------------------------------------------
 log("Performing initial respawn and unsubscribe...")
+local API = ReplicatedStorage:WaitForChild("API")
 -- Initial respawn using TeamAPI
 pcall(function()
-    ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
+    API:WaitForChild("TeamAPI/Spawn"):InvokeServer()
 end)
 task.wait(9)
 -- Initial unsubscribe from house
 pcall(function()
-    local unsubscribeAPI = ReplicatedStorage.API:FindFirstChild("HousingAPI/UnsubscribeFromHouse")
+    local unsubscribeAPI = API:FindFirstChild("HousingAPI/UnsubscribeFromHouse")
     if unsubscribeAPI then
         if unsubscribeAPI:IsA("RemoteFunction") then
             unsubscribeAPI:InvokeServer(player, true)
@@ -83,6 +110,9 @@ pcall(function()
     end
 end)
 task.wait(7)
+-- Select Baby team after respawn and unsubscribe
+selectBabyTeam()
+task.wait(2)
 
 -----------------------------------------------------
 -- GO TO MAIN MAP
