@@ -27,6 +27,8 @@ local TASK_COOLDOWN = 30 -- seconds
 -- Pre-cache API references for efficiency
 local API = ReplicatedStorage:WaitForChild("API")
 local ExitSeatStates = API:WaitForChild("AdoptAPI/ExitSeatStates")
+-- Seed random for variety
+math.randomseed(os.time())
 -- Debug function
 local function debugPrint(message)
     if not DEBUG_MODE then return end
@@ -188,7 +190,7 @@ local function extractFurnitureData(model, folderId, part)
         model = model
     }
 end
--- Find furniture by name (updated to search HouseInteriors.furniture and workspace)
+-- Find furniture by name (updated to return a random one from all found)
 local function findFurnitureByName(name)
     debugPrint("Searching for furniture: " .. name)
     local hi = Workspace:FindFirstChild("HouseInteriors")
@@ -197,28 +199,38 @@ local function findFurnitureByName(name)
         return nil
     end
    
+    local possibleFurniture = {}
+   
     -- Search in HouseInteriors.furniture
     local furnitureFolder = hi:FindFirstChild("furniture")
     if furnitureFolder then
         for _, houseKey in ipairs(furnitureFolder:GetChildren()) do
             local model = houseKey:FindFirstChild(name)
             if model and model:IsA("Model") then
-                debugPrint("Found " .. name .. " in furniture houseKey " .. houseKey.Name)
                 local folderId = string.match(houseKey.Name, "f%-%d+") or "unknown"
                 local activationParts = {"UseBlock", "Seat1", "Seat2"}
+                local foundPart = nil
                 for _, partName in ipairs(activationParts) do
                     local part = model:FindFirstChild(partName, true)
                     if part and part:IsA("BasePart") then
-                        debugPrint("Using " .. partName .. " in " .. model.Name)
-                        return extractFurnitureData(model, folderId, part)
+                        foundPart = part
+                        debugPrint("Using " .. partName .. " in " .. model.Name .. " from houseKey " .. houseKey.Name)
+                        break
                     end
                 end
                
-                for _, part in ipairs(model:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        debugPrint("Using fallback part: " .. part.Name)
-                        return extractFurnitureData(model, folderId, part)
+                if not foundPart then
+                    for _, part in ipairs(model:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            foundPart = part
+                            debugPrint("Using fallback part: " .. part.Name .. " in " .. model.Name .. " from houseKey " .. houseKey.Name)
+                            break
+                        end
                     end
+                end
+               
+                if foundPart then
+                    table.insert(possibleFurniture, extractFurnitureData(model, folderId, foundPart))
                 end
             end
         end
@@ -227,24 +239,38 @@ local function findFurnitureByName(name)
     -- Fallback: search entire workspace
     local model = Workspace:FindFirstChild(name, true)
     if model and model:IsA("Model") then
-        debugPrint("Found " .. name .. " in workspace (fallback)")
         local parentFolder = model.Parent
         local folderId = (parentFolder and string.match(parentFolder.Name, "f%-%d+")) or "unknown"
         local activationParts = {"UseBlock", "Seat1", "Seat2"}
+        local foundPart = nil
         for _, partName in ipairs(activationParts) do
             local part = model:FindFirstChild(partName, true)
             if part and part:IsA("BasePart") then
-                return extractFurnitureData(model, folderId, part)
+                foundPart = part
+                break
             end
         end
-        for _, part in ipairs(model:GetDescendants()) do
-            if part:IsA("BasePart") then
-                return extractFurnitureData(model, folderId, part)
+        if not foundPart then
+            for _, part in ipairs(model:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    foundPart = part
+                    break
+                end
             end
+        end
+        if foundPart then
+            table.insert(possibleFurniture, extractFurnitureData(model, folderId, foundPart))
         end
     end
    
-    debugPrint("Furniture not found: " .. name)
+    if #possibleFurniture > 0 then
+        local randomIndex = math.random(1, #possibleFurniture)
+        local selected = possibleFurniture[randomIndex]
+        debugPrint("Selected random furniture from " .. #possibleFurniture .. " options: folder " .. selected.folderId .. " part " .. selected.partName)
+        return selected
+    end
+   
+    debugPrint("Furniture not found: " .. name .. " (no instances available)")
     return nil
 end
 -- Separate function to call ExitSeatStates (called only once after furniture use)
@@ -307,14 +333,11 @@ local function handleFurnitureActivation(furnitureName)
    
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
-        task.wait(1) -- Short wait before exiting
-        callExitSeatStatesOnce() -- Exit immediately after short wait
-        task.wait(19) -- Wait remaining time for ailment cure
+        task.wait(20) -- Wait for ailment cure
+        callExitSeatStatesOnce() -- Call only once after wait
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
-        -- Even on failure, try to exit if possible
-        callExitSeatStatesOnce()
         return false
     end
 end
@@ -964,4 +987,4 @@ debugPrint("UPDATED: findFurnitureByName now searches HouseInteriors.furniture a
 debugPrint("UPDATED: checkAndBuyMissingFurniture now only includes camping_shower and sleeping_bag.")
 debugPrint("UPDATED: Removed piano task and home requirement.")
 debugPrint("UPDATED: Removed all home detection functions and checks.")
-debugPrint("UPDATED: ExitSeatStates now called shortly after furniture activation to prevent sticking, followed by remaining wait time.")
+debugPrint("UPDATED: findFurnitureByName now picks a random furniture instance from all available to distribute load across multiple accounts.")
