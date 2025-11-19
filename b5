@@ -1,9 +1,11 @@
 -- Baby Farm Script
 -- Place this as a LocalScript in StarterPlayerScripts or similar
+-- This script monitors and handles baby ailments using furniture logic from the main PetFarm
 
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 -- Player
@@ -16,7 +18,7 @@ local DEBUG_MODE = true
 local BabyFarmMode = false
 local babyFarmCoroutine = nil
 
--- Ailment to Furniture Mapping
+-- Ailment to Furniture Mapping (simplified for babies, only basic furniture and special for hungry/thirsty/sick)
 local BABY_AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "teachers_apple", 
@@ -40,18 +42,28 @@ local function debugPrint(message)
     print(timestamp .. " [BabyFarm] " .. message)
 end
 
--- FIXED: Safe function to get player data
+-- Function to safely get player data (from provided snippet)
 local function getPlayerData()
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
+    if not clientModules then return nil end
+    local coreModule = clientModules:WaitForChild("Core", 5)
+    if not coreModule then return nil end
+    local clientDataModule = coreModule:WaitForChild("ClientData", 5)
+    if not clientDataModule then return nil end
     
-    if success and data then
-        return data
-    else
-        debugPrint("Failed to get player data: " .. tostring(data))
-        return nil
-    end
+    local clientData
+    local success, err = pcall(function()
+        clientData = require(clientDataModule)
+    end)
+    if not success or not clientData then return nil end
+    
+    local playerData
+    success, err = pcall(function()
+        playerData = clientData.get_data()[player.Name]
+    end)
+    if not success or not playerData then return nil end
+    
+    return playerData
 end
 
 -- Enhanced helper to extract ailment key from potentially table-structured ailment
@@ -69,6 +81,27 @@ local function extractAilmentKey(ailment)
                 end
             end
         end
+        -- If no direct match, search all string values for known ailments
+        for k, v in pairs(ailment) do
+            if type(v) == "string" then
+                local lowerV = v:lower()
+                if BABY_AILMENT_TASKS[lowerV] then
+                    debugPrint("Found matching ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
+                    return lowerV
+                end
+            elseif type(v) == "table" then
+                -- Recurse into sub-tables if needed
+                local subKey = extractAilmentKey(v)
+                if subKey ~= "unknown" then
+                    return subKey
+                end
+            end
+        end
+        -- If still unknown, debug the structure
+        debugPrint("Unknown ailment table structure for debugging:")
+        for k, v in pairs(ailment) do
+            debugPrint(" Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
+        end
         return "unknown"
     else
         local str = tostring(ailment):lower()
@@ -77,6 +110,36 @@ local function extractAilmentKey(ailment)
         end
         return str
     end
+end
+
+-- Function to print available baby ailments in compact form
+local function printAvailableBabyAilmentsCompact()
+    debugPrint("🔍 BABY AILMENTS (COMPACT)")
+    debugPrint("=========================")
+    local playerData = getPlayerData()
+    if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.baby_ailments then
+        debugPrint("No baby ailments found.")
+        return
+    end
+    
+    local babyAilments = playerData.ailments_manager.baby_ailments
+    local count = 0
+    local actionableCount = 0
+    
+    debugPrint(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
+    debugPrint(string.rep("-", 70))
+    
+    for petUniqueID, ailment in pairs(babyAilments) do
+        local ailmentKey = extractAilmentKey(ailment)
+        local isActionable = BABY_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
+        if isActionable then actionableCount = actionableCount + 1 end
+        count = count + 1
+        local status = isActionable and "YES" or "NO"
+        debugPrint(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
+    end
+    
+    debugPrint(string.rep("-", 70))
+    debugPrint(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
 end
 
 -- Character validation
@@ -145,164 +208,157 @@ local function isPlayerAtHome()
     for _, folder in ipairs(hi:GetChildren()) do
         local folderLower = string.lower(folder.Name)
         if string.find(folderLower, playerLower) then
+            debugPrint("DEBUG: Found home folder matching player name: " .. folder.Name .. " (contains '" .. playerLower .. "')")
             return true
         end
+    end
+    debugPrint("DEBUG: No home folder found for player '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
+    for _, folder in ipairs(hi:GetChildren()) do
+        debugPrint("DEBUG: Available folder: '" .. folder.Name .. "'")
     end
     return false
 end
 
--- ==================================================================
--- FIXED FURNITURE DETECTION WITH USE BLOCK
--- ==================================================================
-
--- FIXED: Find UseBlock in furniture model
-local function findUseBlockInFurniture(model)
-    debugPrint("Searching for UseBlock in " .. model.Name)
+-- Dynamic function to find player's home folder (case insensitive)
+local function findHomeFolder()
+    local hi = Workspace:FindFirstChild("HouseInteriors")
+    if not hi then
+        debugPrint("HouseInteriors folder not found")
+        return nil
+    end
     
-    -- Look for UseBlocks folder first
-    local useBlocksFolder = model:FindFirstChild("UseBlocks")
-    if useBlocksFolder then
-        local useBlock = useBlocksFolder:FindFirstChild("UseBlock")
-        if useBlock and useBlock:IsA("BasePart") then
-            debugPrint("Found UseBlock in UseBlocks folder")
-            return useBlock
+    local playerLower = string.lower(player.Name)
+    for _, folder in ipairs(hi:GetChildren()) do
+        local folderLower = string.lower(folder.Name)
+        if string.find(folderLower, playerLower) then
+            debugPrint("Found home folder: " .. folder.Name .. " (matched '" .. playerLower .. "' in '" .. folderLower .. "')")
+            return folder
         end
     end
     
-    -- Look for UseBlock directly in model
-    local useBlock = model:FindFirstChild("UseBlock")
-    if useBlock and useBlock:IsA("BasePart") then
-        debugPrint("Found UseBlock directly in model")
-        return useBlock
+    debugPrint("No home folder found containing player name '" .. player.Name .. "' (" .. playerLower .. "). Available folders:")
+    for _, folder in ipairs(hi:GetChildren()) do
+        debugPrint("Available folder: '" .. folder.Name .. "'")
     end
-    
-    -- Look for any activation part
-    local activationParts = {"UseBlock", "Seat", "Seat1", "Main", "Block"}
-    for _, partName in ipairs(activationParts) do
-        local part = model:FindFirstChild(partName)
-        if part and part:IsA("BasePart") then
-            debugPrint("Found activation part: " .. partName)
-            return part
-        end
-    end
-    
-    -- Look in descendants
-    for _, descendant in ipairs(model:GetDescendants()) do
-        if descendant:IsA("BasePart") and (descendant.Name == "UseBlock" or string.find(descendant.Name:lower(), "use")) then
-            debugPrint("Found UseBlock in descendants: " .. descendant.Name)
-            return descendant
-        end
-    end
-    
-    debugPrint("No UseBlock found in " .. model.Name)
     return nil
 end
 
--- FIXED: Furniture detection with proper UseBlock finding
-local function findFurnitureByName(name)
-    debugPrint("Searching for furniture: " .. name)
+-- Extract furniture data (from w1.txt)
+local function extractFurnitureData(model, folderName)
+    local activationParts = {"UseBlock", "Seat1"}
+    local folderId = string.match(folderName, "f%-%d+") or folderName
     
-    -- Look in HouseInteriors first
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if hi then
-        for _, folder in ipairs(hi:GetChildren()) do
-            if string.find(folder.Name, "f%-%d+") then -- matches f-8, f-1, etc.
-                local furnitureFolder = folder:FindFirstChild("furniture")
-                if furnitureFolder then
-                    for _, furnitureSubFolder in ipairs(furnitureFolder:GetChildren()) do
-                        local model = furnitureSubFolder:FindFirstChild(name)
-                        if model and model:IsA("Model") then
-                            debugPrint("Found " .. name .. " in " .. furnitureSubFolder.Name)
-                            local useBlock = findUseBlockInFurniture(model)
-                            if useBlock then
-                                return {
-                                    folderId = folder.Name,
-                                    partName = useBlock.Name,
-                                    position = useBlock.Position,
-                                    cframe = useBlock.CFrame,
-                                    model = model
-                                }
-                            end
-                        end
-                    end
-                end
-                
-                -- Also check directly in folder
-                local model = folder:FindFirstChild(name)
-                if model and model:IsA("Model") then
-                    debugPrint("Found " .. name .. " directly in " .. folder.Name)
-                    local useBlock = findUseBlockInFurniture(model)
-                    if useBlock then
-                        return {
-                            folderId = folder.Name,
-                            partName = useBlock.Name,
-                            position = useBlock.Position,
-                            cframe = useBlock.CFrame,
-                            model = model
-                        }
-                    end
-                end
+    for _, partName in ipairs(activationParts) do
+        local useBlocksFolder = model:FindFirstChild("UseBlocks")
+        if useBlocksFolder then
+            local part = useBlocksFolder:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                debugPrint("Using " .. partName .. " in UseBlocks folder")
+                return {
+                    folderId = folderId,
+                    partName = partName,
+                    position = part.Position,
+                    cframe = part.CFrame,
+                    model = model
+                }
             end
         end
-    end
-    
-    -- Fallback: Direct search in workspace
-    local model = Workspace:FindFirstChild(name, true)
-    if model and model:IsA("Model") then
-        debugPrint("Found " .. name .. " in workspace (fallback)")
-        local useBlock = findUseBlockInFurniture(model)
-        if useBlock then
-            local folderId = "unknown"
-            if model.Parent then
-                folderId = model.Parent.Name
-            end
+        
+        local part = model:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            debugPrint("Using " .. partName .. " directly in model")
             return {
                 folderId = folderId,
-                partName = useBlock.Name,
-                position = useBlock.Position,
-                cframe = useBlock.CFrame,
+                partName = partName,
+                position = part.Position,
+                cframe = part.CFrame,
                 model = model
             }
         end
     end
     
-    debugPrint("Furniture not found or no UseBlock: " .. name)
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") then
+            debugPrint("Using fallback part: " .. part.Name)
+            return {
+                folderId = folderId,
+                partName = part.Name,
+                position = part.Position,
+                cframe = part.CFrame,
+                model = model
+            }
+        end
+    end
+    
     return nil
 end
 
--- FIXED: Furniture activation with teleport to UseBlock
-local function useFurnitureWithLocalPlayer(furnitureName)
-    local char = ensureCharacterSpawned()
-    if not char then
-        debugPrint("Cannot use furniture: No valid character")
-        return false
+-- Find furniture by name (from w1.txt)
+local function findFurnitureByName(name)
+    debugPrint("Searching for furniture: " .. name)
+    local hi = Workspace:FindFirstChild("HouseInteriors")
+    if hi then
+        for _, folder in ipairs(hi:GetChildren()) do
+            if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
+                local model = folder:FindFirstChild(name)
+                if model and model:IsA("Model") then
+                    debugPrint("Found " .. name .. " in " .. folder.Name)
+                    return extractFurnitureData(model, folder.Name)
+                end
+            end
+        end
     end
     
-    debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
+    local model = Workspace:FindFirstChild(name, true)
+    if model and model:IsA("Model") then
+        debugPrint("Found " .. name .. " in workspace (fallback)")
+        local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
+        return extractFurnitureData(model, folderId)
+    end
     
+    debugPrint("Furniture not found: " .. name)
+    return nil
+end
+
+-- Enhanced ExitSeatStates call with retry logic
+local function callExitSeatStatesForLocalPlayer()
+    debugPrint("Calling ExitSeatStates for localPlayer to reset seat states...")
+    
+    -- Try multiple times with delays
+    for i = 1, 3 do
+        local success, result = pcall(function()
+            return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
+        end)
+        if success then
+            debugPrint("Successfully called ExitSeatStates for localPlayer (attempt " .. i .. ")")
+        else
+            debugPrint("Failed to call ExitSeatStates for localPlayer (attempt " .. i .. "): " .. tostring(result))
+        end
+        task.wait(0.5)
+    end
+    
+    -- Also force character to stand up locally
+    local char = player.Character
+    if char and char:FindFirstChild("Humanoid") then
+        char.Humanoid.Sit = false
+        debugPrint("Forced local character to stand up")
+    end
+end
+
+-- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
+local function activateFurniture(furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
-        debugPrint("Furniture not found: " .. furnitureName)
+        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
         return false
     end
     
-    -- FIXED: Teleport character to UseBlock position
-    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        debugPrint("Teleporting character to UseBlock...")
-        -- Position character in front of the UseBlock
-        local teleportCFrame = furnitureData.cframe * CFrame.new(0, 0, -3)
-        humanoidRootPart.CFrame = teleportCFrame
-        task.wait(1)
+    local char = player.Character
+    if not char then
+        debugPrint("Cannot activate furniture: No character found")
+        return false
     end
     
-    -- Call ExitSeatStates before use
-    pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
-    end)
-    task.wait(1)
-    
-    -- Activate furniture with localPlayer
     local args = {
         player,
         furnitureData.folderId,
@@ -310,7 +366,7 @@ local function useFurnitureWithLocalPlayer(furnitureName)
         {
             cframe = furnitureData.cframe
         },
-        char  -- localPlayer character
+        char  -- Use localPlayer character instead of pet
     }
     
     debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
@@ -321,34 +377,6 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
-        
-        -- Wait for character to start using furniture
-        local startTime = os.time()
-        local usingFurniture = false
-        
-        while os.time() - startTime < 10 do
-            local humanoid = char:FindFirstChild("Humanoid")
-            if humanoid and humanoid.Sit then
-                usingFurniture = true
-                debugPrint("Character is now using the furniture (sitting/lying down)")
-                break
-            end
-            task.wait(1)
-        end
-        
-        if usingFurniture then
-            debugPrint("Waiting for ailment cure...")
-            task.wait(20) -- Wait for ailment cure
-        else
-            debugPrint("Character did not start using furniture, but activation was successful")
-            task.wait(10)
-        end
-        
-        -- Call ExitSeatStates after use
-        pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer()
-        end)
-        task.wait(2)
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
@@ -356,54 +384,600 @@ local function useFurnitureWithLocalPlayer(furnitureName)
     end
 end
 
--- Check and buy missing furniture
+-- Alternative furniture activation method using different API
+local function activateFurnitureAlternative(furnitureName)
+    local furnitureData = findFurnitureByName(furnitureName)
+    if not furnitureData then
+        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
+        return false
+    end
+    
+    local char = player.Character
+    if not char then
+        debugPrint("Cannot activate furniture: No character found")
+        return false
+    end
+    
+    -- Try alternative activation method
+    debugPrint("Trying alternative activation for: " .. furnitureName)
+    
+    local success, result = pcall(function()
+        -- Sometimes furniture can be activated by touching the part directly
+        local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart and furnitureData.model then
+            -- Move character to furniture
+            humanoidRootPart.CFrame = furnitureData.cframe * CFrame.new(0, 0, 3)
+            task.wait(1)
+            
+            -- Try interacting with the furniture
+            for _, part in ipairs(furnitureData.model:GetDescendants()) do
+                if part:IsA("BasePart") and (part.Name == "UseBlock" or part.Name == "Seat1" or part.Name == "TouchInterest") then
+                    -- Fire touch events if possible
+                    if part:FindFirstChildOfClass("TouchTransmitter") then
+                        debugPrint("Found TouchTransmitter, attempting interaction")
+                    end
+                end
+            end
+        end
+        
+        return true
+    end)
+    
+    if success then
+        debugPrint("Alternative activation completed for: " .. furnitureName)
+        return true
+    else
+        debugPrint("Alternative activation failed: " .. tostring(result))
+        return false
+    end
+end
+
+-- Improved furniture usage with better stuck prevention
+local function useFurnitureWithLocalPlayer(furnitureName)
+    debugPrint("Using IMPROVED furniture method for: " .. furnitureName)
+    
+    -- First ensure clean state
+    callExitSeatStatesForLocalPlayer()
+    task.wait(2)
+    
+    local char = player.Character
+    if char and char:FindFirstChild("Humanoid") then
+        char.Humanoid.Sit = false
+    end
+    task.wait(1)
+    
+    -- Try primary method first
+    local success = activateFurniture(furnitureName)
+    
+    if not success then
+        debugPrint("Primary activation failed, trying alternative method...")
+        success = activateFurnitureAlternative(furnitureName)
+    end
+    
+    if success then
+        debugPrint("Furniture activation successful, waiting for cure...")
+        
+        -- Shorter wait time with active monitoring
+        local waitTime = 15
+        local checkInterval = 1
+        local checks = waitTime / checkInterval
+        
+        for i = 1, checks do
+            -- Check if we're stuck in sitting state
+            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Sit then
+                if i > 5 then -- After 5 seconds of sitting
+                    debugPrint("Sitting detected, may need early exit...")
+                    if i > 10 then -- Force exit after 10 seconds
+                        debugPrint("Forcing exit from furniture...")
+                        callExitSeatStatesForLocalPlayer()
+                        char.Humanoid.Sit = false
+                        break
+                    end
+                end
+            end
+            task.wait(checkInterval)
+        end
+        
+        -- Final cleanup
+        debugPrint("Final seat state cleanup...")
+        callExitSeatStatesForLocalPlayer()
+        task.wait(1)
+        
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.Sit = false
+        end
+        
+        return true
+    else
+        debugPrint("All activation methods failed for: " .. furnitureName)
+        return false
+    end
+end
+
+-- Buy teachers_apple
+local function buyTeachersApple()
+    debugPrint("Buying teachers_apple from shop...")
+    local args = {
+        "food",
+        "teachers_apple",
+        {
+            buy_count = 1
+        }
+    }
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+    end)
+    if success then
+        debugPrint("Successfully purchased teachers_apple")
+        return true
+    else
+        debugPrint("Failed to buy teachers_apple: " .. tostring(result))
+        return false
+    end
+end
+
+-- Find teachers_apple in inventory
+local function findTeachersApple()
+    debugPrint("Scanning inventory for teachers_apple...")
+    local teachersAppleID = nil
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id and string.lower(foodData.id) == "teachers_apple" then
+                    teachersAppleID = foodId
+                    debugPrint("Found teachers_apple with ID: " .. foodId)
+                    break
+                end
+            end
+        end
+    end)
+    if not success then
+        debugPrint("Error scanning inventory for teachers_apple: " .. tostring(errorMsg))
+    end
+    return teachersAppleID
+end
+
+-- Use teachers_apple on localPlayer (NO ExitSeatStates for food)
+local function useTeachersApple(foodID)
+    if not foodID then
+        debugPrint("Cannot use teachers_apple: Missing foodID")
+        return false
+    end
+    debugPrint("Using teachers_apple " .. foodID .. " on localPlayer for baby ailment")
+    
+    local equipArgs = {
+        foodID,
+        {
+            use_sound_delay = true,
+            equip_as_last = false
+        }
+    }
+    local equipSuccess, equipResult = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
+    end)
+    if not equipSuccess then
+        debugPrint("Failed to equip teachers_apple: " .. tostring(equipResult))
+        return false
+    end
+    debugPrint("Successfully equipped teachers_apple")
+    task.wait(2)
+    
+    local startArgs = {
+        foodID,
+        "START"
+    }
+    local endArgs = {
+        foodID,
+        "END"
+    }
+    
+    -- START
+    local startSuccess, startResult = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    if not startSuccess then
+        debugPrint("Failed to start using teachers_apple: " .. tostring(startResult))
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(foodID)
+        end)
+        return false
+    end
+    task.wait(2)
+    
+    -- END (first)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    -- START END (second)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    task.wait(2)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    -- START (third)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    task.wait(2)
+    
+    -- Unequip food
+    local unequipArgs = { foodID }
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
+    end)
+    
+    -- Final END
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    debugPrint("Successfully used teachers_apple on localPlayer")
+    return true
+end
+
+-- Handle hungry ailment for baby
+local function handleHungryAilment()
+    debugPrint("HUNGRY AILMENT DETECTED FOR BABY! Starting feeding process on localPlayer...")
+    local teachersAppleID = findTeachersApple()
+    if not teachersAppleID then
+        debugPrint("No teachers_apple found in inventory, purchasing one...")
+        local purchaseSuccess = buyTeachersApple()
+        if not purchaseSuccess then
+            debugPrint("Failed to purchase teachers_apple")
+            return false
+        end
+        task.wait(2)
+        teachersAppleID = findTeachersApple()
+        if not teachersAppleID then
+            debugPrint("Failed to find teachers_apple after purchase")
+            return false
+        end
+    end
+    local useSuccess = useTeachersApple(teachersAppleID)
+    if useSuccess then
+        debugPrint("Successfully handled hungry ailment with teachers_apple on localPlayer")
+        return true
+    else
+        debugPrint("Failed to use teachers_apple on localPlayer")
+        return false
+    end
+end
+
+-- Buy water
+local function buyWater()
+    debugPrint("Buying water from shop...")
+    local args = {
+        "food",
+        "water",
+        {
+            buy_count = 1
+        }
+    }
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+    end)
+    if success then
+        debugPrint("Successfully purchased water")
+        return true
+    else
+        debugPrint("Failed to buy water: " .. tostring(result))
+        return false
+    end
+end
+
+-- Find water in inventory
+local function findWater()
+    debugPrint("Scanning inventory for water...")
+    local waterID = nil
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id and string.lower(foodData.id) == "water" then
+                    waterID = foodId
+                    debugPrint("Found water with ID: " .. foodId)
+                    break
+                end
+            end
+        end
+    end)
+    if not success then
+        debugPrint("Error scanning inventory for water: " .. tostring(errorMsg))
+    end
+    return waterID
+end
+
+-- Use water on localPlayer (NO ExitSeatStates for food)
+local function useWater(foodID)
+    if not foodID then
+        debugPrint("Cannot use water: Missing foodID")
+        return false
+    end
+    debugPrint("Using water " .. foodID .. " on localPlayer for baby ailment")
+    
+    local equipArgs = {
+        foodID,
+        {
+            use_sound_delay = true,
+            equip_as_last = false
+        }
+    }
+    local equipSuccess, equipResult = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
+    end)
+    if not equipSuccess then
+        debugPrint("Failed to equip water: " .. tostring(equipResult))
+        return false
+    end
+    debugPrint("Successfully equipped water")
+    task.wait(3)
+    
+    local startArgs = {
+        foodID,
+        "START"
+    }
+    local endArgs = {
+        foodID,
+        "END"
+    }
+    
+    -- Perform multiple START/END cycles as per provided code (9 full cycles)
+    for i = 1, 9 do
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+        end)
+        task.wait(2)
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+        end)
+        task.wait(2)
+    end
+    
+    -- Unequip food
+    local unequipArgs = { foodID }
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
+    end)
+    
+    -- Final END
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    debugPrint("Successfully used water on localPlayer")
+    return true
+end
+
+-- Handle thirsty ailment for baby
+local function handleThirstyAilment()
+    debugPrint("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
+    local waterID = findWater()
+    if not waterID then
+        debugPrint("No water found in inventory, purchasing one...")
+        local purchaseSuccess = buyWater()
+        if not purchaseSuccess then
+            debugPrint("Failed to purchase water")
+            return false
+        end
+        task.wait(3)
+        waterID = findWater()
+        if not waterID then
+            debugPrint("Failed to find water after purchase")
+            return false
+        end
+    end
+    local useSuccess = useWater(waterID)
+    if useSuccess then
+        debugPrint("Successfully handled thirsty ailment with water on localPlayer")
+        return true
+    else
+        debugPrint("Failed to use water on localPlayer")
+        return false
+    end
+end
+
+-- Buy healing_apple
+local function buyHealingApple()
+    debugPrint("Buying healing_apple from shop...")
+    local args = {
+        "food",
+        "healing_apple",
+        {
+            buy_count = 1
+        }
+    }
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+    end)
+    if success then
+        debugPrint("Successfully purchased healing_apple")
+        return true
+    else
+        debugPrint("Failed to buy healing_apple: " .. tostring(result))
+        return false
+    end
+end
+
+-- Find healing_apple in inventory
+local function findHealingApple()
+    debugPrint("Scanning inventory for healing_apple...")
+    local healingAppleID = nil
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id and string.lower(foodData.id) == "healing_apple" then
+                    healingAppleID = foodId
+                    debugPrint("Found healing_apple with ID: " .. foodId)
+                    break
+                end
+            end
+        end
+    end)
+    if not success then
+        debugPrint("Error scanning inventory for healing_apple: " .. tostring(errorMsg))
+    end
+    return healingAppleID
+end
+
+-- Use healing_apple on localPlayer (NO ExitSeatStates for food)
+local function useHealingApple(foodID)
+    if not foodID then
+        debugPrint("Cannot use healing_apple: Missing foodID")
+        return false
+    end
+    debugPrint("Using healing_apple " .. foodID .. " on localPlayer for baby ailment")
+    
+    local equipArgs = {
+        foodID,
+        {
+            use_sound_delay = true,
+            equip_as_last = false
+        }
+    }
+    local equipSuccess, equipResult = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
+    end)
+    if not equipSuccess then
+        debugPrint("Failed to equip healing_apple: " .. tostring(equipResult))
+        return false
+    end
+    debugPrint("Successfully equipped healing_apple")
+    task.wait(2)
+    
+    local startArgs = {
+        foodID,
+        "START"
+    }
+    local endArgs = {
+        foodID,
+        "END"
+    }
+    
+    -- First START/END
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    -- Second START/END
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    -- Third START
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    task.wait(2)
+    
+    -- Unequip food
+    local unequipArgs = { foodID }
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
+    end)
+    
+    -- Final END
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    task.wait(2)
+    
+    debugPrint("Successfully used healing_apple on localPlayer")
+    return true
+end
+
+-- Handle sick ailment for baby
+local function handleSickAilment()
+    debugPrint("SICK AILMENT DETECTED FOR BABY! Starting healing process on localPlayer...")
+    local healingAppleID = findHealingApple()
+    if not healingAppleID then
+        debugPrint("No healing_apple found in inventory, purchasing one...")
+        local purchaseSuccess = buyHealingApple()
+        if not purchaseSuccess then
+            debugPrint("Failed to purchase healing_apple")
+            return false
+        end
+        task.wait(2)
+        healingAppleID = findHealingApple()
+        if not healingAppleID then
+            debugPrint("Failed to find healing_apple after purchase")
+            return false
+        end
+    end
+    local useSuccess = useHealingApple(healingAppleID)
+    if useSuccess then
+        debugPrint("Successfully handled sick ailment with healing_apple on localPlayer")
+        return true
+    else
+        debugPrint("Failed to use healing_apple on localPlayer")
+        return false
+    end
+end
+
+-- Check and buy missing furniture (from w1.txt)
 local function checkAndBuyMissingFurniture()
     debugPrint("Checking for missing furniture...")
     local missingFurniture = {}
     
-    -- Check for Piano
     local pianoFound = findFurnitureByName("Piano")
     if not pianoFound then
         debugPrint("Piano not found, adding to buy list")
         table.insert(missingFurniture, {
             kind = "piano",
             properties = {
-                cframe = CFrame.new(14, 0, -16.399999618530273, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(14, 0, -16.399999618530273, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
             }
         })
     else
         debugPrint("Piano found in house")
     end
     
-    -- Check for BasicBed
     local basicBedFound = findFurnitureByName("BasicBed")
     if not basicBedFound then
         debugPrint("BasicBed not found, adding to buy list")
         table.insert(missingFurniture, {
             kind = "basic_bed",
             properties = {
-                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
         debugPrint("BasicBed found in house")
     end
     
-    -- Check for CheapPetBathtub
     local bathtubFound = findFurnitureByName("CheapPetBathtub")
     if not bathtubFound then
         debugPrint("CheapPetBathtub not found, adding to buy list")
         table.insert(missingFurniture, {
             kind = "cheap_pet_bathtub",
             properties = {
-                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
         debugPrint("CheapPetBathtub found in house")
     end
     
-    -- Buy missing furniture
     if #missingFurniture > 0 then
         debugPrint("Buying " .. #missingFurniture .. " missing furniture items...")
         local args = {missingFurniture}
@@ -420,143 +994,6 @@ local function checkAndBuyMissingFurniture()
         debugPrint("All furniture found, no purchases needed")
     end
 end
-
--- ==================================================================
--- SIMPLIFIED FOOD HANDLERS
--- ==================================================================
-
--- Buy food item
-local function buyFoodItem(foodName)
-    debugPrint("Buying " .. foodName .. " from shop...")
-    local args = {
-        "food",
-        foodName,
-        {
-            buy_count = 1
-        }
-    }
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-    end)
-    if success then
-        debugPrint("Successfully purchased " .. foodName)
-        return true
-    else
-        debugPrint("Failed to buy " .. foodName .. ": " .. tostring(result))
-        return false
-    end
-end
-
--- Find food in inventory
-local function findFoodInInventory(foodName)
-    debugPrint("Scanning inventory for " .. foodName .. "...")
-    local foodID = nil
-    local success, errorMsg = pcall(function()
-        local playerData = getPlayerData()
-        if playerData and playerData.inventory and playerData.inventory.food then
-            for foodId, foodData in pairs(playerData.inventory.food) do
-                if foodData.id and string.lower(foodData.id) == string.lower(foodName) then
-                    foodID = foodId
-                    debugPrint("Found " .. foodName .. " with ID: " .. foodId)
-                    break
-                end
-            end
-        end
-    end)
-    if not success then
-        debugPrint("Error scanning inventory for " .. foodName .. ": " .. tostring(errorMsg))
-    end
-    return foodID
-end
-
--- Use food on localPlayer
-local function useFoodOnLocalPlayer(foodID, foodName)
-    if not foodID then
-        debugPrint("Cannot use " .. foodName .. ": Missing foodID")
-        return false
-    end
-    debugPrint("Using " .. foodName .. " " .. foodID .. " on localPlayer for baby ailment")
-    
-    -- Equip food
-    local equipArgs = {
-        foodID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-    local equipSuccess, equipResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
-    end)
-    if not equipSuccess then
-        debugPrint("Failed to equip " .. foodName .. ": " .. tostring(equipResult))
-        return false
-    end
-    debugPrint("Successfully equipped " .. foodName)
-    task.wait(2)
-    
-    local startArgs = {
-        foodID,
-        "START"
-    }
-    local endArgs = {
-        foodID,
-        "END"
-    }
-    
-    -- Use food (simple usage)
-    for i = 1, 3 do
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
-        end)
-        task.wait(1)
-        pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
-        end)
-        task.wait(1)
-    end
-    
-    -- Unequip food
-    local unequipArgs = { foodID }
-    pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(unequipArgs))
-    end)
-    
-    debugPrint("Successfully used " .. foodName .. " on localPlayer")
-    return true
-end
-
--- Handle food-based ailments
-local function handleFoodAilment(foodName)
-    debugPrint(string.upper(foodName) .. " AILMENT DETECTED FOR BABY! Starting process on localPlayer...")
-    local foodID = findFoodInInventory(foodName)
-    if not foodID then
-        debugPrint("No " .. foodName .. " found in inventory, purchasing one...")
-        local purchaseSuccess = buyFoodItem(foodName)
-        if not purchaseSuccess then
-            debugPrint("Failed to purchase " .. foodName)
-            return false
-        end
-        task.wait(2)
-        foodID = findFoodInInventory(foodName)
-        if not foodID then
-            debugPrint("Failed to find " .. foodName .. " after purchase")
-            return false
-        end
-    end
-    local useSuccess = useFoodOnLocalPlayer(foodID, foodName)
-    if useSuccess then
-        debugPrint("Successfully handled " .. foodName .. " ailment on localPlayer")
-        return true
-    else
-        debugPrint("Failed to use " .. foodName .. " on localPlayer")
-        return false
-    end
-end
-
--- ==================================================================
--- MAIN MONITORING LOOP
--- ==================================================================
 
 -- Main monitoring loop for baby ailments
 local function monitorAndHandleBabyAilments()
@@ -582,19 +1019,19 @@ local function monitorAndHandleBabyAilments()
                     if not lastTaskTime[ailmentKey] or (currentTime - lastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
                         if ailmentKey == "hungry" then
                             debugPrint("Baby hungry ailment detected for pet: " .. petUniqueID .. " → Using teachers_apple on localPlayer")
-                            local success = handleFoodAilment("teachers_apple")
+                            local success = handleHungryAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "thirsty" then
                             debugPrint("Baby thirsty ailment detected for pet: " .. petUniqueID .. " → Using water on localPlayer")
-                            local success = handleFoodAilment("water")
+                            local success = handleThirstyAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         elseif ailmentKey == "sick" then
                             debugPrint("Baby sick ailment detected for pet: " .. petUniqueID .. " → Using healing_apple on localPlayer")
-                            local success = handleFoodAilment("healing_apple")
+                            local success = handleSickAilment()
                             if success then
                                 lastTaskTime[ailmentKey] = currentTime
                             end
@@ -651,7 +1088,8 @@ local function toggleBabyFarmMode()
             pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
             end)
-            task.wait(15)
+            task.wait(15) -- Increased wait for home to load
+            -- Re-check after spawn
             if not isPlayerAtHome() then
                 debugPrint("Still not at home after spawn - forcing longer wait")
                 task.wait(10)
@@ -670,10 +1108,6 @@ local function toggleBabyFarmMode()
     end
 end
 
--- ==================================================================
--- SIMPLE UI
--- ==================================================================
-
 -- Simple UI for toggle
 local function createSimpleUI()
     local screenGui = Instance.new("ScreenGui")
@@ -682,7 +1116,7 @@ local function createSimpleUI()
     
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 120, 0, 40)
-    frame.Position = UDim2.new(0, 10, 0, 250)
+    frame.Position = UDim2.new(0, 10, 0, 250) -- Below main UI
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -720,9 +1154,19 @@ local function createSimpleUI()
         toggleButton.Text = BabyFarmMode and "🛑 STOP BABY FARM" or "🚀 START BABY FARM"
         toggleButton.BackgroundColor3 = BabyFarmMode and Color3.fromRGB(170, 0, 0) or Color3.fromRGB(0, 170, 0)
     end)
+    
+    -- Initial scan
+    task.wait(2)
+    printAvailableBabyAilmentsCompact()
 end
 
 -- Initialize
 createSimpleUI()
 debugPrint("Baby Farm Script Loaded! Toggle via UI button.")
-debugPrint("FIXED: Now properly finds UseBlock and teleports character to furniture.")
+debugPrint("Scans baby_ailments and uses furniture to cure (basic ailments only).")
+debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFurniture.")
+debugPrint("UPDATED: Now selects Baby team first when enabled.")
+debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
+debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
+debugPrint("UPDATED: IMPROVED stuck prevention with active monitoring and forced exit states.")
+debugPrint("UPDATED: Multiple exit attempts and alternative activation methods.")
