@@ -1,0 +1,284 @@
+-- Small Script to Go to Main Map and Then to Specific Character Position
+-- Based on logic from ress0 — копия.txt
+-- Added respawn and unsubscribe from home at the beginning
+-- Added choose Baby team at the beginning (from b1.txt)
+-- Added baby ailment detection and monitoring (from b1.txt, simplified to print ailments periodically)
+
+repeat task.wait() until game:IsLoaded()
+repeat task.wait() until game.Players.LocalPlayer
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
+
+-----------------------------------------------------
+-- UTILITIES (Simplified from ress0)
+-----------------------------------------------------
+local function log(msg) print("[MainMap Teleporter] " .. tostring(msg)) end
+local function getChar() return player.Character or player.CharacterAdded:Wait() end
+local function safeTp(pos)
+    return pcall(function()
+        local hrp = getChar():FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = CFrame.new(pos); task.wait(0.3) end
+    end)
+end
+local function setCam(pos, look)
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        if cam then cam.CameraType = Enum.CameraType.Scriptable; cam.CFrame = CFrame.new(pos, look) end
+    end)
+end
+local function resetCam()
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        if cam then cam.CameraType = Enum.CameraType.Custom end
+    end)
+end
+local function pressW()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+    end)
+end
+local function isNear(pos, dist)
+    dist = dist or 60
+    local success, result = pcall(function()
+        local hrp = getChar():FindFirstChild("HumanoidRootPart")
+        return hrp and (hrp.Position - pos).Magnitude < dist
+    end)
+    return success and result or false
+end
+
+-----------------------------------------------------
+-- BABY AILMENT DETECTION (from b1.txt)
+-----------------------------------------------------
+-- Ailment to Furniture Mapping (simplified)
+local BABY_AILMENT_TASKS = {
+    sleepy = "BasicBed",
+    hungry = "teachers_apple",
+    thirsty = "water",
+    dirty = "CheapPetBathtub",
+    bored = "Piano",
+    sick = "healing_apple"
+}
+
+-- Function to safely get player data
+local function getPlayerData()
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
+    if not clientModules then return nil end
+    local coreModule = clientModules:WaitForChild("Core", 5)
+    if not coreModule then return nil end
+    local clientDataModule = coreModule:WaitForChild("ClientData", 5)
+    if not clientDataModule then return nil end
+   
+    local clientData
+    local success, err = pcall(function()
+        clientData = require(clientDataModule)
+    end)
+    if not success or not clientData then return nil end
+   
+    local playerData
+    success, err = pcall(function()
+        playerData = clientData.get_data()[player.Name]
+    end)
+    if not success or not playerData then return nil end
+   
+    return playerData
+end
+
+-- Enhanced helper to extract ailment key
+local function extractAilmentKey(ailment)
+    if type(ailment) == "table" then
+        local candidates = {"type", "name", "ailment", "id", "key", "kind"}
+        for _, field in ipairs(candidates) do
+            local val = ailment[field]
+            if type(val) == "string" then
+                local lowerVal = val:lower()
+                if BABY_AILMENT_TASKS[lowerVal] then
+                    log("Extracted ailment '" .. lowerVal .. "' from field '" .. field .. "'")
+                    return lowerVal
+                end
+            end
+        end
+        for k, v in pairs(ailment) do
+            if type(v) == "string" then
+                local lowerV = v:lower()
+                if BABY_AILMENT_TASKS[lowerV] then
+                    log("Found matching ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
+                    return lowerV
+                end
+            elseif type(v) == "table" then
+                local subKey = extractAilmentKey(v)
+                if subKey ~= "unknown" then
+                    return subKey
+                end
+            end
+        end
+        log("Unknown ailment table structure")
+        return "unknown"
+    else
+        local str = tostring(ailment):lower()
+        if BABY_AILMENT_TASKS[str] then
+            return str
+        end
+        return str
+    end
+end
+
+-- Function to print available baby ailments in compact form
+local function printAvailableBabyAilmentsCompact()
+    log("🔍 BABY AILMENTS (COMPACT)")
+    log("=========================")
+    local playerData = getPlayerData()
+    if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.baby_ailments then
+        log("No baby ailments found.")
+        return
+    end
+   
+    local babyAilments = playerData.ailments_manager.baby_ailments
+    local count = 0
+    local actionableCount = 0
+   
+    log(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
+    log(string.rep("-", 70))
+   
+    for petUniqueID, ailment in pairs(babyAilments) do
+        local ailmentKey = extractAilmentKey(ailment)
+        local isActionable = BABY_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
+        if isActionable then actionableCount = actionableCount + 1 end
+        count = count + 1
+        local status = isActionable and "YES" or "NO"
+        log(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
+    end
+   
+    log(string.rep("-", 70))
+    log(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
+end
+
+-- Monitoring loop for baby ailments (prints every 10 seconds)
+local function monitorBabyAilments()
+    log("Starting baby ailment monitoring (detection only)...")
+    local lastScanTime = 0
+    local SCAN_INTERVAL = 10 -- seconds
+   
+    coroutine.wrap(function()
+        while true do
+            local currentTime = os.time()
+            if currentTime - lastScanTime >= SCAN_INTERVAL then
+                printAvailableBabyAilmentsCompact()
+                lastScanTime = currentTime
+            end
+            task.wait(SCAN_INTERVAL)
+        end
+    end)()
+end
+
+-----------------------------------------------------
+-- SELECT BABY TEAM (from b1.txt)
+-----------------------------------------------------
+local function selectBabyTeam()
+    log("Selecting Baby team...")
+    local API = ReplicatedStorage:WaitForChild("API")
+    local args = {
+        "Babies",
+        {
+            dont_respawn = true,
+            source_for_logging = "avatar_editor"
+        }
+    }
+    local success, result = pcall(function()
+        return API:WaitForChild("TeamAPI/ChooseTeam"):InvokeServer(unpack(args))
+    end)
+    if success then
+        log("Successfully selected Baby team")
+        return true
+    else
+        log("Failed to select Baby team: " .. tostring(result))
+        return false
+    end
+end
+
+-----------------------------------------------------
+-- RESPAWN AND UNSUBSCRIBE AT BEGINNING
+-----------------------------------------------------
+log("Performing initial respawn and unsubscribe...")
+local API = ReplicatedStorage:WaitForChild("API")
+-- Initial respawn using TeamAPI
+pcall(function()
+    API:WaitForChild("TeamAPI/Spawn"):InvokeServer()
+end)
+task.wait(9)
+-- Initial unsubscribe from house
+pcall(function()
+    local unsubscribeAPI = API:FindFirstChild("HousingAPI/UnsubscribeFromHouse")
+    if unsubscribeAPI then
+        if unsubscribeAPI:IsA("RemoteFunction") then
+            unsubscribeAPI:InvokeServer(player, true)
+        elseif unsubscribeAPI:IsA("RemoteEvent") then
+            unsubscribeAPI:FireServer(player, true)
+        end
+    end
+end)
+task.wait(7)
+-- Select Baby team after respawn and unsubscribe
+selectBabyTeam()
+task.wait(2)
+
+-----------------------------------------------------
+-- GO TO MAIN MAP
+-----------------------------------------------------
+local function goToMainMap()
+    log("Starting teleport to Main Map...")
+    for attempt = 1, 3 do
+        log("Attempt " .. attempt)
+        -- Teleport to initial position (no respawn here, done at beginning)
+        local initialPos = Vector3.new(-3025.614, 6529.577, -8968.435)
+        if safeTp(initialPos) then
+            setCam(Vector3.new(-3025.623, 6532.164, -8970.206), Vector3.new(0, 0, 1))
+            pressW()
+            task.wait(15)
+            -- Check if near Main Map position
+            local targetPos = Vector3.new(-255.10, 30.89, -1831.46)
+            if isNear(targetPos, 50) then
+                resetCam()
+                log("Arrived at Main Map near " .. tostring(targetPos) .. "!")
+                -- Wait 2 seconds, then go to Character position
+                task.wait(2)
+                local characterPos = Vector3.new(-604.54, 26.49, -1538.53)
+                local cameraPos = Vector3.new(-598.88, 33.84, -1546.60)
+                if safeTp(characterPos) then
+                    -- Set camera looking towards character position
+                    setCam(cameraPos, characterPos)
+                    log("Teleported to Character position: " .. tostring(characterPos) .. " with camera at " .. tostring(cameraPos))
+                    -- Start baby ailment detection monitoring
+                    task.wait(2)
+                    monitorBabyAilments()
+                end
+                return true
+            else
+                log("Not near target, retrying...")
+            end
+        end
+        resetCam()
+        task.wait(2)
+    end
+    log("Failed to reach Main Map after 3 attempts.")
+    return false
+end
+
+-- Run the function
+goToMainMap()
