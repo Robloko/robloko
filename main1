@@ -1,0 +1,151 @@
+-- UTILITIES
+local player = game.Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Workspace = game:GetService("Workspace")
+
+-- Logging function
+local function log(msg)
+    print("[Nursery Farmer] " .. tostring(msg))
+end
+
+-- Get player character
+local function getChar()
+    return player.Character or player.CharacterAdded:Wait()
+end
+
+-- Safely teleport to a position
+local function safeTp(pos)
+    return pcall(function()
+        local hrp = getChar():FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(pos)
+            task.wait(0.3)
+        end
+    end)
+end
+
+-- Set camera position and direction
+local function setCam(pos, look)
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        if cam then
+            cam.CameraType = Enum.CameraType.Scriptable
+            cam.CFrame = CFrame.new(pos, look)
+        end
+    end)
+end
+
+-- Reset camera to default
+local function resetCam()
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        if cam then
+            cam.CameraType = Enum.CameraType.Custom
+        end
+    end)
+end
+
+-- Simulate pressing the W key to move forward
+local function pressW()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+    end)
+end
+
+-- Check if player is near a position
+local function isNear(pos, dist)
+    dist = dist or 60
+    local success, result = pcall(function()
+        local hrp = getChar():FindFirstChild("HumanoidRootPart")
+        return hrp and (hrp.Position - pos).Magnitude < dist
+    end)
+    return success and result or false
+end
+
+-- Modified gotoMain function with customizable positions and additional teleport
+local function gotoMain(teleportPos, camPos, camLook, finalPos, finalCamPos, finalCamLook, additionalPos)
+    -- Default positions
+    teleportPos = teleportPos or Vector3.new(-3025.614, 6529.577, -8968.435)
+    camPos = camPos or Vector3.new(-3025.623, 6532.164, -8970.206)
+    camLook = camLook or Vector3.new(0, 0, 1)
+    finalPos = finalPos or Vector3.new(-247.17, 31.50, -1481.08)
+    finalCamPos = finalCamPos or Vector3.new(-247.18, 39.65, -1491.06)
+    finalCamLook = finalCamLook or Vector3.new(-247.18, 39.65, -1391.06)
+    additionalPos = additionalPos or Vector3.new(-604.54, 26.49, -1538.53)
+
+    -- Attempt to spawn and exit house
+    for attempt = 1, 3 do
+        log("Teleport attempt " .. attempt)
+
+        -- Spawn the player
+        local spawnSuccess, spawnError = pcall(function()
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
+        end)
+        if not spawnSuccess then
+            log("Failed to spawn: " .. spawnError)
+            return false
+        end
+        task.wait(9)
+
+        -- Exit house
+        pcall(function()
+            local unsubscribeAPI = ReplicatedStorage.API:FindFirstChild("HousingAPI/UnsubscribeFromHouse")
+            if unsubscribeAPI then
+                if unsubscribeAPI:IsA("RemoteFunction") then
+                    unsubscribeAPI:InvokeServer(player, true)
+                elseif unsubscribeAPI:IsA("RemoteEvent") then
+                    unsubscribeAPI:FireServer(player, true)
+                end
+            end
+        end)
+        task.wait(7)
+
+        -- Teleport to main area
+        if safeTp(teleportPos) then
+            setCam(camPos, camLook)
+            pressW()
+            task.wait(15)
+
+            -- Check if near final position and teleport
+            if isNear(finalPos, 50) then
+                if safeTp(finalPos) then
+                    setCam(finalCamPos, finalCamLook)
+                    task.wait(10) -- Wait 10 seconds
+                    safeTp(additionalPos) -- Teleport to additional position
+                end
+            end
+        end
+
+        resetCam()
+        task.wait(2)
+    end
+
+    return false
+end
+
+-- Example usage
+gotoMain(
+    Vector3.new(-3025.614, 6529.577, -8968.435), -- Teleport position
+    Vector3.new(-3025.623, 6532.164, -8970.206), -- Camera position
+    Vector3.new(0, 0, 1),                         -- Camera look direction
+    Vector3.new(-255.10, 30.89, -1831.46),       -- Intermediate position
+    Vector3.new(-247.17, 31.50, -1481.08),       -- Final teleport position
+    Vector3.new(-247.18, 39.65, -1491.06),       -- Final camera position
+    Vector3.new(-247.18, 39.65, -1391.06),       -- Final camera look direction
+    Vector3.new(-604.54, 26.49, -1538.53)        -- Additional teleport position
+)
