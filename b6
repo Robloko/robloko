@@ -302,21 +302,9 @@ local function findFurnitureByName(name)
     debugPrint("Furniture not found: " .. name)
     return nil
 end
--- Call ExitSeatStates after furniture use
-local function callExitSeatStates()
-    debugPrint("Calling ExitSeatStates to reset seat states...")
-    local char = player.Character or player.CharacterAdded:Wait()
-    local success, result = pcall(function()
-        return game:GetService("ReplicatedStorage").API["AdoptAPI/ExitSeatStates"]:FireServer(char)
-    end)
-    if success then
-        debugPrint("Successfully called ExitSeatStates")
-    else
-        debugPrint("Failed to call ExitSeatStates: " .. tostring(result))
-    end
-end
--- Activate furniture with localPlayer (updated to use HousingAPI/ActivateFurniture)
-local function activateFurniture(furnitureName)
+-- Separate function to handle furniture activation detection, wait, and ExitSeatStates
+local function handleFurnitureActivation(furnitureName)
+    debugPrint("Activating furniture detected: " .. furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
         debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
@@ -347,26 +335,23 @@ local function activateFurniture(furnitureName)
    
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
+        task.wait(20) -- Wait for ailment cure
+        local currentChar = player.Character or player.CharacterAdded:Wait()
+        pcall(function()
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(currentChar)
+        end)
+        debugPrint("Called ExitSeatStates after 20s wait for " .. furnitureName)
+        task.wait(2)
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
         return false
     end
 end
--- Use furniture with localPlayer (with ExitSeatStates call)
+-- Use furniture with localPlayer (now uses handleFurnitureActivation)
 local function useFurnitureWithLocalPlayer(furnitureName)
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
-    local success = activateFurniture(furnitureName)
-    if success then
-        task.wait(20) -- Wait for ailment cure
-        -- Call ExitSeatStates after furniture use (BasicBed, CheapPetBathtub, Piano)
-        callExitSeatStates()
-        task.wait(2)
-        return true
-    else
-        debugPrint("Failed to activate furniture with localPlayer")
-        return false
-    end
+    return handleFurnitureActivation(furnitureName)
 end
 -- Buy teachers_apple
 local function buyTeachersApple()
@@ -1026,6 +1011,6 @@ debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFur
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
 debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
-debugPrint("UPDATED: Calls ExitSeatStates after furniture use (BasicBed, CheapPetBathtub, Piano).")
+debugPrint("UPDATED: Separate handleFurnitureActivation function for activation + 20s wait + ExitSeatStates.")
 debugPrint("UPDATED: Food items (teachers_apple, water, healing_apple) do NOT call ExitSeatStates.")
-debugPrint("UPDATED: Fixed ExitSeatStates to fetch character internally.")
+debugPrint("UPDATED: Uses exact WaitForChild paths for ExitSeatStates.")
