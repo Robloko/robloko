@@ -18,7 +18,7 @@
 --             - For play: Throw toy sequence with squeaky_bone
 --             - Auto-selects best starter pet and equips
 --             - Monitors regular ailments_manager for selected pet
---             - Assumes script runs in house for furniture (added goToHome with safe calls)
+--             - REMOVED: goToHome as not needed
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -96,65 +96,6 @@ local function isNear(pos, dist)
         return hrp and (hrp.Position - pos).Magnitude < dist
     end)
     return success and result or false
-end
-
------------------------------------------------------
--- GO TO HOME FUNCTION (For furniture access) - FIXED SAFE CALL
------------------------------------------------------
-local function goToHome()
-    log("Going to home...")
-    local playerData = getPlayerData()
-    if not playerData or not playerData.home or not playerData.home.id then
-        log("No home ID found in player data, skipping home subscribe")
-        return false
-    end
-
-    local API = ReplicatedStorage:WaitForChild("API")
-    local HousingAPI = API:WaitForChild("HousingAPI", 5)
-    if not HousingAPI then
-        log("HousingAPI not found, skipping home subscribe")
-        return false
-    end
-
-    local subscribeAPI = HousingAPI:FindFirstChild("SubscribeToHouse")
-    if not subscribeAPI then
-        log("SubscribeToHouse remote not found, skipping home subscribe")
-        return false
-    end
-
-    local success = false
-    pcall(function()
-        if subscribeAPI:IsA("RemoteFunction") then
-            success, _ = subscribeAPI:InvokeServer(playerData.home.id)
-        elseif subscribeAPI:IsA("RemoteEvent") then
-            subscribeAPI:FireServer(playerData.home.id)
-            success = true
-        end
-    end)
-
-    if success then
-        task.wait(5)
-        log("Successfully subscribed to home")
-
-        -- Lock door safely
-        local lockAPI = HousingAPI:FindFirstChild("SetDoorLocked")
-        if lockAPI then
-            pcall(function()
-                if lockAPI:IsA("RemoteFunction") then
-                    lockAPI:InvokeServer(true)
-                elseif lockAPI:IsA("RemoteEvent") then
-                    lockAPI:FireServer(true)
-                end
-            end)
-            log("Door locked")
-        else
-            log("SetDoorLocked remote not found, skipping lock")
-        end
-        return true
-    else
-        log("Failed to subscribe to home")
-        return false
-    end
 end
 
 -----------------------------------------------------
@@ -493,7 +434,6 @@ local function handleBeachPartyAilment()
         resetCam()
         log("Successfully teleported to beach_party position: " .. tostring(BEACH_PARTY_CHARACTER_POS))
         task.wait(5) -- Brief stay
-        goToHome() -- Return home after
         return true
     else
         log("Failed to teleport for beach_party ailment")
@@ -510,7 +450,6 @@ local function handleBoredAilment()
         resetCam()
         log("Successfully teleported to bored position: " .. tostring(BORED_CHARACTER_POS))
         task.wait(5) -- Brief stay
-        goToHome() -- Return home after
         return true
     else
         log("Failed to teleport for bored ailment")
@@ -530,7 +469,6 @@ local function handleSchoolAilment()
         pressS()
         log("Successfully teleported to school position: " .. tostring(SCHOOL_CHARACTER_POS) .. " and pressed W")
         task.wait(5)
-        goToHome()
         return true
     else
         log("Failed to teleport for school ailment")
@@ -550,7 +488,6 @@ local function handleSalonAilment()
         pressS()
         log("Successfully teleported to salon position: " .. tostring(SALON_CHARACTER_POS) .. " and pressed W")
         task.wait(5)
-        goToHome()
         return true
     else
         log("Failed to teleport for salon ailment")
@@ -570,7 +507,6 @@ local function handlePizzaPartyAilment()
         pressS()
         log("Successfully teleported to pizza_party position: " .. tostring(PIZZA_PARTY_CHARACTER_POS) .. " and pressed W")
         task.wait(5)
-        goToHome()
         return true
     else
         log("Failed to teleport for pizza_party ailment")
@@ -1152,10 +1088,10 @@ local PET_AILMENT_TASKS = {
     pet_me = "PET_ME_HANDLER"  -- Not implemented
 }
 
--- Find best starter pet (from w1) - FIXED WITH STRING.FIND
+-- Find best starter pet (from w1) - FIXED RETURN LOGIC
 local function findBestStarterPet()
     log("Finding best starter pet...")
-    local success, errorMsg = pcall(function()
+    local success, result = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         if playerData and playerData.inventory and playerData.inventory.pets then
@@ -1193,9 +1129,12 @@ local function findBestStarterPet()
                 end
             end
         end
+        return nil
     end)
-    if not success then
-        log("Error finding starter pet: " .. tostring(errorMsg))
+    if success and result then
+        return result
+    elseif not success then
+        log("Error finding starter pet: " .. tostring(result))
     end
     log("No suitable starter pet found")
     return nil
@@ -1631,16 +1570,10 @@ if PetID then
     else
         log("PetFarm: Failed to equip pet, but continuing monitoring")
     end
+    coroutine.wrap(monitorAndHandlePetAilments)()
+    log("PetFarm: Started monitoring for pet " .. tostring(PetID))
 else
     log("PetFarm: No suitable pet found, skipping regular pet monitoring")
-end
-
--- GO TO HOME FOR FURNITURE-BASED AILMENTS - FIXED
-local homeSuccess = goToHome()
-if homeSuccess then
-    log("Successfully went to home for furniture access")
-else
-    log("Failed to go to home, furniture-based ailments may not work")
 end
 
 -- BUY MISSING FURNITURE
@@ -1649,11 +1582,5 @@ task.wait(3)
 
 -- START MONITORING COROUTINES
 coroutine.wrap(monitorAndHandleBabyAilments)()
-if PetID then
-    coroutine.wrap(monitorAndHandlePetAilments)()
-    log("PetFarm: Started monitoring for pet " .. tostring(PetID))
-else
-    log("PetFarm: No pet selected, skipping regular monitoring")
-end
 
 log("Baby + PetFarm system fully started! Monitoring both baby and regular pet ailments.")
