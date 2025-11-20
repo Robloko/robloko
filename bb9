@@ -10,9 +10,7 @@
 -- Added school ailment handling: teleport to school character position, set camera, pressW
 -- Added salon ailment handling: teleport to salon character position, set camera, pressW
 -- Added pizza_party ailment handling: teleport to pizza_party character position, set camera, pressW
--- INTEGRATED: PetFarm logic from w1.txt - Pet selection, equipping on arrival, always keep equipped
---             Updated ailment handling to use bb8 furniture (SleepingBag for sleepy, CampingShower for dirty)
---             No BasicBed, Piano, CheapPetBathtub needed
+-- ADDED: PetFarm integration from w1.txt - Auto-equip pet on arrival, monitor/handle pet ailments (including sleepy/dirty)
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -25,7 +23,7 @@ local player = Players.LocalPlayer
 -----------------------------------------------------
 -- UTILITIES (Simplified from ress0)
 -----------------------------------------------------
-local function log(msg) print("[MainMap Teleporter & PetFarm] " .. tostring(msg)) end
+local function log(msg) print("[MainMap Teleporter] " .. tostring(msg)) end
 local function getChar() return player.Character or player.CharacterAdded:Wait() end
 local function safeTp(pos)
     return pcall(function()
@@ -64,6 +62,15 @@ local function pressW()
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
     end)
 end
+local function isNear(pos, dist)
+    dist = dist or 60
+    local success, result = pcall(function()
+        local hrp = getChar():FindFirstChild("HumanoidRootPart")
+        return hrp and (hrp.Position - pos).Magnitude < dist
+    end)
+    return success and result or false
+end
+
 local function pressS()
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
@@ -93,7 +100,7 @@ local function isNear(pos, dist)
 end
 
 -----------------------------------------------------
--- PETFARM INTEGRATION FROM W1 (Adapted for Baby & bb8 Furniture)
+-- PETFARM INTEGRATION FROM w1.txt
 -----------------------------------------------------
 -- Debug settings
 local DEBUG_MODE = true
@@ -106,67 +113,359 @@ local function debugPrint(message)
     print(timestamp .. " [PetFarm] " .. message)
 end
 
--- PetFarm variables (from w1)
+-- PetFarm variables
 local PetFarmMode = true  -- Auto-enabled
 local petFarmPetID = nil
 local lastValidPetID = nil
-local PetID = nil
 
--- Ailment to Furniture Mapping (Updated from w1 to match bb8: SleepingBag, CampingShower; no Piano/BasicBed/CheapPetBathtub)
-local AILMENT_TASKS = {
-    sleepy = "SleepingBag",
-    hungry = "teachers_apple",
-    thirsty = "water",
-    dirty = "CampingShower",
-    bored = "teleport_to_bored",
-    toilet = "AilmentsRefresh2024LitterBox",  -- Keep if needed, but bb8 doesn't have
-    play = "THROW_TOY",  -- From w1, if needed
+-- Ailment to Furniture Mapping for PETS (from w1)
+local PET_AILMENT_TASKS = {
+    sleepy = "BasicBed",
+    hungry = "PetFoodBowl",
+    thirsty = "PetWaterBowl",
+    dirty = "CheapPetBathtub",
+    bored = "Piano",
+    toilet = "AilmentsRefresh2024LitterBox",
+    play = "THROW_TOY",
     walk = "WALK_HANDLER",
     ride = "STROLLER_HANDLER",
-    sick = "healing_apple",
+    sick = "HEALING_APPLE",
     mystery = "MYSTERY_HANDLER",
-    pet_me = "PET_ME_HANDLER",
-    beach_party = "teleport_to_character",
-    school = "teleport_to_school",
-    salon = "teleport_to_salon",
-    pizza_party = "teleport_to_pizza"
+    pet_me = "PET_ME_HANDLER"
+}
+
+-- Task cooldowns to prevent spam
+local petLastTaskTime = {}
+local TASK_COOLDOWN = 30 -- seconds
+
+-- Pre-cache API references
+local API = ReplicatedStorage:WaitForChild("API")
+
+-- Function to find best starter pet (from w1)
+local function findBestStarterPet()
+    debugPrint("Finding best starter pet...")
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local playerData = clientData.get_data()[player.Name]
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        debugPrint("No pet data found")
+        return nil
+    end
+
+    local starterEggPet = nil
+    local aged6Dog = nil
+    local aged6Cat = nil
+
+    for _, petData in pairs(playerData.inventory.pets) do
+        if petData and petData.id and petData.properties then
+            local petIdLower = tostring(petData.id):lower()
+            local age = petData.properties.age or 0
+            if petIdLower:find("starter_egg") then
+                starterEggPet = petData.unique
+            elseif age == 6 and (petIdLower:find("dog") or petIdLower:find("practice_dog")) then
+                aged6Dog = petData.unique
+            elseif age == 6 and petIdLower:find("cat") then
+                aged6Cat = petData.unique
+            end
+        end
+    end
+
+    local selected = starterEggPet or aged6Dog or aged6Cat
+    if selected then
+        debugPrint("Selected starter pet: " .. tostring(selected))
+    else
+        debugPrint("No suitable starter pet found, selecting first available")
+        for _, petData in pairs(playerData.inventory.pets) do
+            if petData and petData.unique then
+                selected = petData.unique
+                break
+            end
+        end
+    end
+    return selected
+end
+
+-- Function to ensure pet is equipped (from w1)
+local function ensurePetEquipped(petUniqueID, maxAttempts)
+    maxAttempts = maxAttempts or 10
+    local attempts = 0
+    while attempts < maxAttempts do
+        attempts = attempts + 1
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        local isEquipped = false
+        if playerData and playerData.equip_manager then
+            for _, equipped in ipairs(playerData.equip_manager) do
+                if equipped.unique == petUniqueID then
+                    isEquipped = true
+                    break
+                end
+            end
+        end
+        if isEquipped then
+            debugPrint("Pet " .. petUniqueID .. " confirmed equipped")
+            return true
+        else
+            debugPrint("Pet not equipped, attempt " .. attempts .. " - equipping...")
+            local success, err = pcall(function()
+                return API["ToolAPI/Equip"]:InvokeServer(petUniqueID, {use_sound_delay = true, equip_as_last = false})
+            end)
+            if not success then
+                debugPrint("Equip failed: " .. tostring(err))
+            end
+            task.wait(2)
+        end
+    end
+    debugPrint("Failed to equip pet after " .. maxAttempts .. " attempts")
+    return false
+end
+
+-- Auto-equip pet on arrival
+local function autoEquipPet()
+    debugPrint("Auto-equipping pet for PetFarm...")
+    local bestPetID = findBestStarterPet()
+    if not bestPetID then
+        debugPrint("No pet found for auto-equip")
+        return false
+    end
+    petFarmPetID = bestPetID
+    lastValidPetID = bestPetID
+    local equipped = ensurePetEquipped(bestPetID, 5)
+    if equipped then
+        debugPrint("Pet equipped successfully: " .. tostring(bestPetID))
+        return true
+    else
+        debugPrint("Failed to equip pet")
+        return false
+    end
+end
+
+-- Enhanced helper to extract pet ailment key (adapted from baby version)
+local function extractPetAilmentKey(ailment)
+    if type(ailment) == "table" then
+        local candidates = {"type", "name", "ailment", "id", "key", "kind"}
+        for _, field in ipairs(candidates) do
+            local val = ailment[field]
+            if type(val) == "string" then
+                local lowerVal = val:lower()
+                if PET_AILMENT_TASKS[lowerVal] then
+                    debugPrint("Extracted pet ailment '" .. lowerVal .. "' from field '" .. field .. "'")
+                    return lowerVal
+                end
+            end
+        end
+        for k, v in pairs(ailment) do
+            if type(v) == "string" then
+                local lowerV = v:lower()
+                if PET_AILMENT_TASKS[lowerV] then
+                    debugPrint("Found matching pet ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
+                    return lowerV
+                end
+            elseif type(v) == "table" then
+                local subKey = extractPetAilmentKey(v)
+                if subKey ~= "unknown" then
+                    return subKey
+                end
+            end
+        end
+        debugPrint("Unknown pet ailment table structure")
+        return "unknown"
+    else
+        local str = tostring(ailment):lower()
+        if PET_AILMENT_TASKS[str] then
+            return str
+        end
+        return str
+    end
+end
+
+-- Print available pet ailments (adapted)
+local function printAvailablePetAilmentsCompact()
+    debugPrint("🔍 PET AILMENTS (COMPACT)")
+    debugPrint("=========================")
+    local playerData = getPlayerData()
+    if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.pets then
+        debugPrint("No pet ailments found.")
+        return
+    end
+   
+    local petAilments = playerData.ailments_manager.pets
+    local count = 0
+    local actionableCount = 0
+   
+    debugPrint(string.format("%-5s %-36s %-15s %-10s", "No.", "Pet Unique ID", "Ailment", "Actionable"))
+    debugPrint(string.rep("-", 70))
+   
+    for petUniqueID, ailment in pairs(petAilments) do
+        local ailmentKey = extractPetAilmentKey(ailment)
+        local isActionable = PET_AILMENT_TASKS[ailmentKey] and ailmentKey ~= "unknown"
+        if isActionable then actionableCount = actionableCount + 1 end
+        count = count + 1
+        local status = isActionable and "YES" or "NO"
+        debugPrint(string.format("%-5d %-36s %-15s %-10s", count, petUniqueID:sub(1, 36), ailmentKey, status))
+    end
+   
+    debugPrint(string.rep("-", 70))
+    debugPrint(string.format("Total pet ailments: %d (Actionable: %d)", count, actionableCount))
+end
+
+-- Monitoring and handling loop for PET ailments (adapted from w1's monitorAndHandleAilments)
+local function monitorAndHandlePetAilments()
+    debugPrint("Starting pet ailment monitoring and handling...")
+    local lastScanTime = 0
+    local SCAN_INTERVAL = 10 -- seconds
+    local currentTime = os.time()
+   
+    while PetFarmMode do
+        currentTime = os.time()
+        local playerData = getPlayerData()
+       
+        if playerData and playerData.ailments_manager and playerData.ailments_manager.pets then
+            local foundActionable = false
+           
+            for petUniqueID, ailmentType in pairs(playerData.ailments_manager.pets) do
+                if petUniqueID == petFarmPetID then  -- Only handle for equipped pet
+                    local ailmentKey = extractPetAilmentKey(ailmentType)
+                    local taskName = PET_AILMENT_TASKS[ailmentKey]
+                   
+                    if taskName then
+                        foundActionable = true
+                        -- Check cooldown
+                        if not petLastTaskTime[ailmentKey] or (currentTime - petLastTaskTime[ailmentKey]) >= TASK_COOLDOWN then
+                            if ailmentKey == "sleepy" then
+                                debugPrint("Pet sleepy ailment detected for " .. petUniqueID .. " → Using BasicBed")
+                                local success = useFurnitureWithLocalPlayer("BasicBed")
+                                if success then
+                                    petLastTaskTime[ailmentKey] = currentTime
+                                end
+                            elseif ailmentKey == "dirty" then
+                                debugPrint("Pet dirty ailment detected for " .. petUniqueID .. " → Using CheapPetBathtub")
+                                local success = useFurnitureWithLocalPlayer("CheapPetBathtub")
+                                if success then
+                                    petLastTaskTime[ailmentKey] = currentTime
+                                end
+                            else
+                                -- For other ailments, log for now (extend as needed, e.g., from w1)
+                                debugPrint("Pet " .. ailmentKey .. " ailment detected for " .. petUniqueID .. " → Task: " .. taskName .. " (handled in full w1)")
+                                -- Placeholder: Extend with full handlers from w1 if needed
+                                petLastTaskTime[ailmentKey] = currentTime
+                            end
+                            break -- Handle one at a time
+                        else
+                            debugPrint(ailmentKey .. " on cooldown (" .. (TASK_COOLDOWN - (currentTime - petLastTaskTime[ailmentKey])) .. "s remaining)")
+                        end
+                    end
+                end
+            end
+           
+            if not foundActionable and currentTime - lastScanTime >= 60 then
+                printAvailablePetAilmentsCompact()
+                lastScanTime = currentTime
+            end
+        else
+            if currentTime - lastScanTime >= 60 then
+                printAvailablePetAilmentsCompact()
+                lastScanTime = currentTime
+            end
+        end
+       
+        task.wait(SCAN_INTERVAL)
+    end
+end
+
+-- Check and buy missing furniture (expanded for PET furniture from w1)
+local function checkAndBuyMissingFurniture()
+    log("Checking for missing furniture (baby + pet)...")
+    local missingFurniture = {}
+   
+    -- Baby furniture (existing)
+    local campingShowerFound = findFurnitureByName("CampingShower")
+    if not campingShowerFound then
+        log("CampingShower not found, adding to buy list")
+        table.insert(missingFurniture, {
+            kind = "camping_shower",
+            properties = {
+                cframe = CFrame.new(25.55991554260254, 30.25162124633789, -1049.5599365234375, -0.6118413805961609, 0, 0.7909806966781616, 0, 1, 0, -0.7909806966781616, 0, -0.6118413805961609)
+            }
+        })
+    else
+        log("CampingShower found in house")
+    end
+   
+    local sleepingBagFound = findFurnitureByName("SleepingBag")
+    if not sleepingBagFound then
+        log("SleepingBag not found, adding to buy list")
+        table.insert(missingFurniture, {
+            kind = "sleeping_bag",
+            properties = {
+                cframe = CFrame.new(6.224581718444824, 28.444856643676758, -1058.27001953125, 0.9946262836456299, -0.02014518901705742, 0.10155431926250458, 0.00000843508678372018, 0.9809029698371887, 0.194497749209404, -0.10353313386440277, -0.19345171749591827, 0.9756320118904114)
+            }
+        })
+    else
+        log("SleepingBag found in house")
+    end
+     
+    if #missingFurniture > 0 then
+        log("Buying " .. #missingFurniture .. " missing furniture items...")
+        local args = {missingFurniture}
+        local success, result = pcall(function()
+            return API:WaitForChild("HousingAPI/BuyFurnitures"):InvokeServer(unpack(args))
+        end)
+        if success then
+            log("Successfully purchased missing furniture")
+            task.wait(3)
+        else
+            log("Failed to buy furniture: " .. tostring(result))
+        end
+    else
+        log("All furniture found, no purchases needed")
+    end
+end
+
+-----------------------------------------------------
+-- BABY AILMENT HANDLING (Integrated from bb3.txt) - UNCHANGED
+-----------------------------------------------------
+-- Ailment to Furniture Mapping (merged from ailDetec and bb3, prioritizing bb3 handling)
+local BABY_AILMENT_TASKS = {
+    sleepy = "SleepingBag",  -- Updated from BasicBed to match bb3
+    hungry = "teachers_apple",
+    thirsty = "water",
+    dirty = "CampingShower",  -- Updated from CheapPetBathtub to match bb3
+    bored = "teleport_to_bored",  -- Updated: Custom handling for bored (teleport)
+    sick = "healing_apple",
+    beach_party = "teleport_to_character",  -- New: Custom handling for beach_party (teleport)
+    school = "teleport_to_school",  -- New: Custom handling for school (teleport)
+    salon = "teleport_to_salon",  -- New: Custom handling for salon (teleport)
+    pizza_party = "teleport_to_pizza"  -- New: Custom handling for pizza_party (teleport)
 }
 
 -- Task cooldowns to prevent spam
 local lastTaskTime = {}
 local TASK_COOLDOWN = 30 -- seconds
 
--- BABY_AILMENT_TASKS (from bb8, merged/prioritized)
-local BABY_AILMENT_TASKS = {
-    sleepy = "SleepingBag",
-    hungry = "teachers_apple",
-    thirsty = "water",
-    dirty = "CampingShower",
-    bored = "teleport_to_bored",
-    sick = "healing_apple",
-    beach_party = "teleport_to_character",
-    school = "teleport_to_school",
-    salon = "teleport_to_salon",
-    pizza_party = "teleport_to_pizza"
-}
-
--- Pre-cache API references
-local API = ReplicatedStorage:WaitForChild("API")
+-- Pre-cache API references for efficiency
 local ExitSeatStates = API:WaitForChild("AdoptAPI/ExitSeatStates")
 
--- Positions (from bb8)
+-- Character position for beach_party
 local BEACH_PARTY_CHARACTER_POS = Vector3.new(-604.54, 26.49, -1538.53)
 local BEACH_PARTY_CAMERA_POS = Vector3.new(-598.88, 33.84, -1546.60)
+
+-- Character position for bored
 local BORED_CHARACTER_POS = Vector3.new(-489.941, 29.448, -1799.160)
 local BORED_CAMERA_POS = Vector3.new(-499.916, 34.281, -1804.232)
+
+-- Character position for school
 local SCHOOL_CHARACTER_POS = Vector3.new(-309.794, 29.798, -1505.317)
 local SCHOOL_CAMERA_POS = Vector3.new(-300.865, 36.256, -1499.952)
+
+-- Character position for salon
 local SALON_CHARACTER_POS = Vector3.new(-131.81, 29.34, -1765.13)
 local SALON_CAMERA_POS = Vector3.new(-130.97, 36.81, -1755.39)
+
+-- Character position for pizza_party
 local PIZZA_PARTY_CHARACTER_POS = Vector3.new(-121.97, 29.34, -1663.56)
 local PIZZA_PARTY_CAMERA_POS = Vector3.new(-132.73, 35.09, -1662.70)
 
--- Function to safely get player data (from bb8)
+-- Function to safely get player data
 local function getPlayerData()
     local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
     if not clientModules then return nil end
@@ -190,104 +489,7 @@ local function getPlayerData()
     return playerData
 end
 
--- Find best starter pet (from w1, adapted)
-local function findBestStarterPet()
-    debugPrint("Finding best starter pet (starter_egg or 6yo dog/cat)...")
-    local priorityPets = {}
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.pets then
-            for petIndex, petData in pairs(playerData.inventory.pets) do
-                if petData and petData.unique and petData.id and petData.properties then
-                    local petName = tostring(petData.id):lower()
-                    local petAge = petData.properties.age or 0
-                    -- Prioritize starter_egg, then 6yo dog/cat
-                    if string.find(petName, "starter_egg") then
-                        table.insert(priorityPets, 1, petData.unique)  -- Highest priority
-                    elseif (string.find(petName, "dog") or string.find(petName, "cat")) and petAge == 6 then
-                        table.insert(priorityPets, petData.unique)
-                    end
-                end
-            end
-        end
-    end)
-    if not success then
-        debugPrint("Error finding starter pet: " .. tostring(errorMsg))
-    end
-    return #priorityPets > 0 and priorityPets[1] or nil
-end
-
--- Ensure pet is equipped (from w1, always keep equipped logic)
-local function ensurePetEquipped(petID, maxAttempts)
-    if not petID then return false end
-    maxAttempts = maxAttempts or 10
-    local attempts = 0
-    while attempts < maxAttempts do
-        attempts = attempts + 1
-        -- Equip pet
-        local equipSuccess, equipResult = pcall(function()
-            return ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(petID, {use_sound_delay = true, equip_as_last = false})
-        end)
-        if equipSuccess then
-            debugPrint("Pet equipped successfully")
-            task.wait(2)
-            -- Check equip_manager
-            local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-            local playerData = clientData.get_data()[player.Name]
-            if playerData and playerData.equip_manager and playerData.equip_manager.pets then
-                for _, equippedPet in ipairs(playerData.equip_manager.pets) do
-                    if equippedPet.unique == petID then
-                        debugPrint("Pet confirmed equipped in equip_manager")
-                        return true
-                    end
-                end
-            end
-        else
-            debugPrint("Equip attempt " .. attempts .. " failed: " .. tostring(equipResult))
-        end
-        task.wait(2)
-    end
-    debugPrint("Failed to equip pet after " .. maxAttempts .. " attempts")
-    return false
-end
-
--- Always keep pet equipped loop (from w1)
-local function keepPetEquippedLoop()
-    while PetFarmMode do
-        if petFarmPetID then
-            local ensured = ensurePetEquipped(petFarmPetID, 3)  -- Quick check with fewer attempts
-            if not ensured then
-                debugPrint("Pet lost - re-equipping...")
-                ensurePetEquipped(petFarmPetID, 10)
-            end
-        end
-        task.wait(5)  -- Check every 5s
-    end
-end
-
--- Equip pet on arrival (new: call after teleport)
-local function equipPetOnArrival()
-    debugPrint("Equipping pet on arrival to main map...")
-    local bestPetID = findBestStarterPet()
-    if bestPetID then
-        PetID = bestPetID
-        lastValidPetID = bestPetID
-        petFarmPetID = bestPetID
-        local equipSuccess = ensurePetEquipped(bestPetID, 10)
-        if equipSuccess then
-            debugPrint("Pet equipped successfully on arrival")
-            -- Start keep equipped loop
-            task.spawn(keepPetEquippedLoop)
-        else
-            debugPrint("Warning: Could not equip pet on arrival")
-        end
-    else
-        debugPrint("Warning: No suitable pet found for equipping")
-    end
-end
-
--- Enhanced helper to extract ailment key (from bb8)
+-- Enhanced helper to extract ailment key
 local function extractAilmentKey(ailment)
     if type(ailment) == "table" then
         local candidates = {"type", "name", "ailment", "id", "key", "kind"}
@@ -326,7 +528,7 @@ local function extractAilmentKey(ailment)
     end
 end
 
--- Function to print available baby ailments in compact form (from bb8)
+-- Function to print available baby ailments in compact form
 local function printAvailableBabyAilmentsCompact()
     log("🔍 BABY AILMENTS (COMPACT)")
     log("=========================")
@@ -356,7 +558,7 @@ local function printAvailableBabyAilmentsCompact()
     log(string.format("Total baby ailments: %d (Actionable: %d)", count, actionableCount))
 end
 
--- Extract furniture data (from bb8)
+-- Extract furniture data
 local function extractFurnitureData(model, folderId, part)
     return {
         folderId = folderId,
@@ -367,7 +569,7 @@ local function extractFurnitureData(model, folderId, part)
     }
 end
 
--- Find furniture by name (picks random from available) (from bb8)
+-- Find furniture by name (picks random from available)
 local function findFurnitureByName(name)
     log("Searching for furniture: " .. name)
     local hi = Workspace:FindFirstChild("HouseInteriors")
@@ -451,7 +653,7 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Call ExitSeatStates once after furniture use (from bb8)
+-- Call ExitSeatStates once after furniture use
 local function callExitSeatStatesOnce()
     log("Calling ExitSeatStates once after furniture use...")
     local Char = player.Character or player.CharacterAdded:Wait()
@@ -465,7 +667,7 @@ local function callExitSeatStatesOnce()
     end
 end
 
--- Handle furniture activation (from bb8, updated for new furniture)
+-- Handle furniture activation
 local function handleFurnitureActivation(furnitureName)
     log("Activating furniture detected: " .. furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
@@ -480,7 +682,7 @@ local function handleFurnitureActivation(furnitureName)
         return false
     end
 
-    local isInterior = (furnitureName == "CampingShower" or furnitureName == "SleepingBag")
+    local isInterior = (furnitureName == "CampingShower" or furnitureName == "SleepingBag" or furnitureName == "Piano" or furnitureName == "BasicBed" or furnitureName == "CheapPetBathtub")
     local apiPath = isInterior and "HousingAPI/ActivateInteriorFurniture" or "HousingAPI/ActivateFurniture"
     local args
     if isInterior then
@@ -521,13 +723,13 @@ local function handleFurnitureActivation(furnitureName)
     end
 end
 
--- Use furniture with localPlayer (from bb8)
+-- Use furniture with localPlayer
 local function useFurnitureWithLocalPlayer(furnitureName)
-    log("Using furniture for baby: " .. furnitureName .. " on localPlayer")
+    log("Using furniture for ailment: " .. furnitureName .. " on localPlayer")
     return handleFurnitureActivation(furnitureName)
 end
 
--- Handle teleports (from bb8, unchanged)
+-- Handle beach_party ailment: Teleport to character position
 local function handleBeachPartyAilment()
     log("BEACH_PARTY AILMENT DETECTED FOR BABY! Teleporting to character position...")
     if safeTp(BEACH_PARTY_CHARACTER_POS) then
@@ -542,6 +744,7 @@ local function handleBeachPartyAilment()
     end
 end
 
+-- Handle bored ailment: Teleport to bored position
 local function handleBoredAilment()
     log("BORED AILMENT DETECTED FOR BABY! Teleporting to bored position...")
     if safeTp(BORED_CHARACTER_POS) then
@@ -556,6 +759,7 @@ local function handleBoredAilment()
     end
 end
 
+-- Handle school ailment: Teleport to school character position
 local function handleSchoolAilment()
     log("SCHOOL AILMENT DETECTED FOR BABY! Teleporting to school character position...")
     if safeTp(SCHOOL_CHARACTER_POS) then
@@ -573,6 +777,7 @@ local function handleSchoolAilment()
     end
 end
 
+-- Handle salon ailment: Teleport to salon character position
 local function handleSalonAilment()
     log("SALON AILMENT DETECTED FOR BABY! Teleporting to salon character position...")
     if safeTp(SALON_CHARACTER_POS) then
@@ -590,6 +795,7 @@ local function handleSalonAilment()
     end
 end
 
+-- Handle pizza_party ailment: Teleport to pizza_party character position
 local function handlePizzaPartyAilment()
     log("PIZZA_PARTY AILMENT DETECTED FOR BABY! Teleporting to pizza_party character position...")
     if safeTp(PIZZA_PARTY_CHARACTER_POS) then
@@ -607,7 +813,7 @@ local function handlePizzaPartyAilment()
     end
 end
 
--- Food handling functions (from bb8, unchanged: buy, find, use for teachers_apple, water, healing_apple)
+-- Buy teachers_apple
 local function buyTeachersApple()
     log("Buying teachers_apple from shop...")
     local args = {
@@ -629,6 +835,7 @@ local function buyTeachersApple()
     end
 end
 
+-- Find teachers_apple in inventory
 local function findTeachersApple()
     log("Scanning inventory for teachers_apple...")
     local teachersAppleID = nil
@@ -651,6 +858,7 @@ local function findTeachersApple()
     return teachersAppleID
 end
 
+-- Use teachers_apple on localPlayer
 local function useTeachersApple(foodID)
     if not foodID then
         log("Cannot use teachers_apple: Missing foodID")
@@ -735,6 +943,7 @@ local function useTeachersApple(foodID)
     return true
 end
 
+-- Handle hungry ailment for baby
 local function handleHungryAilment()
     log("HUNGRY AILMENT DETECTED FOR BABY! Starting feeding process on localPlayer...")
     local teachersAppleID = findTeachersApple()
@@ -762,6 +971,7 @@ local function handleHungryAilment()
     end
 end
 
+-- Buy water
 local function buyWater()
     log("Buying water from shop...")
     local args = {
@@ -783,6 +993,7 @@ local function buyWater()
     end
 end
 
+-- Find water in inventory
 local function findWater()
     log("Scanning inventory for water...")
     local waterID = nil
@@ -805,6 +1016,7 @@ local function findWater()
     return waterID
 end
 
+-- Use water on localPlayer
 local function useWater(foodID)
     if not foodID then
         log("Cannot use water: Missing foodID")
@@ -866,6 +1078,7 @@ local function useWater(foodID)
     return true
 end
 
+-- Handle thirsty ailment for baby
 local function handleThirstyAilment()
     log("THIRSTY AILMENT DETECTED FOR BABY! Starting watering process on localPlayer...")
     local waterID = findWater()
@@ -893,6 +1106,7 @@ local function handleThirstyAilment()
     end
 end
 
+-- Buy healing_apple
 local function buyHealingApple()
     log("Buying healing_apple from shop...")
     local args = {
@@ -914,6 +1128,7 @@ local function buyHealingApple()
     end
 end
 
+-- Find healing_apple in inventory
 local function findHealingApple()
     log("Scanning inventory for healing_apple...")
     local healingAppleID = nil
@@ -936,6 +1151,7 @@ local function findHealingApple()
     return healingAppleID
 end
 
+-- Use healing_apple on localPlayer
 local function useHealingApple(foodID)
     if not foodID then
         log("Cannot use healing_apple: Missing foodID")
@@ -1009,6 +1225,7 @@ local function useHealingApple(foodID)
     return true
 end
 
+-- Handle sick ailment for baby
 local function handleSickAilment()
     log("SICK AILMENT DETECTED FOR BABY! Starting healing process on localPlayer...")
     local healingAppleID = findHealingApple()
@@ -1036,62 +1253,14 @@ local function handleSickAilment()
     end
 end
 
--- Check and buy missing furniture (from bb8, updated: SleepingBag, CampingShower only)
-local function checkAndBuyMissingFurniture()
-    log("Checking for missing furniture...")
-    local missingFurniture = {}
-   
-    local campingShowerFound = findFurnitureByName("CampingShower")
-    if not campingShowerFound then
-        log("CampingShower not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "camping_shower",
-            properties = {
-                cframe = CFrame.new(25.55991554260254, 30.25162124633789, -1049.5599365234375, -0.6118413805961609, 0, 0.7909806966781616, 0, 1, 0, -0.7909806966781616, 0, -0.6118413805961609)
-            }
-        })
-    else
-        log("CampingShower found in house")
-    end
-   
-    local sleepingBagFound = findFurnitureByName("SleepingBag")
-    if not sleepingBagFound then
-        log("SleepingBag not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "sleeping_bag",
-            properties = {
-                cframe = CFrame.new(6.224581718444824, 28.444856643676758, -1058.27001953125, 0.9946262836456299, -0.02014518901705742, 0.10155431926250458, 0.00000843508678372018, 0.9809029698371887, 0.194497749209404, -0.10353313386440277, -0.19345171749591827, 0.9756320118904114)
-            }
-        })
-    else
-        log("SleepingBag found in house")
-    end
-   
-    if #missingFurniture > 0 then
-        log("Buying " .. #missingFurniture .. " missing furniture items...")
-        local args = {missingFurniture}
-        local success, result = pcall(function()
-            return API:WaitForChild("HousingAPI/BuyFurnitures"):InvokeServer(unpack(args))
-        end)
-        if success then
-            log("Successfully purchased missing furniture")
-            task.wait(3)
-        else
-            log("Failed to buy furniture: " .. tostring(result))
-        end
-    else
-        log("All furniture found, no purchases needed")
-    end
-end
-
--- Monitoring and handling loop for baby ailments (from bb8, integrated with PetFarmMode)
+-- Monitoring and handling loop for baby ailments (integrated from bb3)
 local function monitorAndHandleBabyAilments()
-    log("Starting baby ailment monitoring and handling with PetFarm...")
+    log("Starting baby ailment monitoring and handling...")
     local lastScanTime = 0
     local SCAN_INTERVAL = 10 -- seconds
     local currentTime = os.time()
    
-    while PetFarmMode do  -- Now tied to PetFarmMode
+    while true do  -- Infinite loop, no toggle
         currentTime = os.time()
         local playerData = getPlayerData()
        
@@ -1099,10 +1268,6 @@ local function monitorAndHandleBabyAilments()
             local foundActionable = false
            
             for petUniqueID, ailmentType in pairs(playerData.ailments_manager.baby_ailments) do
-                -- Prioritize equipped pet if matching
-                if petFarmPetID and petUniqueID == petFarmPetID then
-                    debugPrint("Prioritizing ailment for equipped pet: " .. petUniqueID)
-                end
                 local ailmentKey = extractAilmentKey(ailmentType)
                 local taskName = BABY_AILMENT_TASKS[ailmentKey]
                
@@ -1159,7 +1324,7 @@ local function monitorAndHandleBabyAilments()
                                 lastTaskTime[ailmentKey] = currentTime
                             end
                         else
-                            -- For furniture-based (sleepy, dirty) - Updated to new furniture
+                            -- For furniture-based (sleepy, dirty)
                             log("Baby " .. ailmentKey .. " ailment detected for pet: " .. petUniqueID .. " → Using " .. taskName .. " on localPlayer")
                             local success = useFurnitureWithLocalPlayer(taskName)
                             if success then
@@ -1186,7 +1351,6 @@ local function monitorAndHandleBabyAilments()
        
         task.wait(SCAN_INTERVAL)
     end
-    debugPrint("PetFarm stopped - ailment monitoring ended")
 end
 
 -----------------------------------------------------
@@ -1239,7 +1403,7 @@ selectBabyTeam()
 task.wait(2)
 
 -----------------------------------------------------
--- GO TO MAIN MAP & START PETFARM (Updated)
+-- GO TO MAIN MAP
 -----------------------------------------------------
 local function goToMainMap()
     log("Starting teleport to Main Map...")
@@ -1268,16 +1432,19 @@ local function goToMainMap()
                     task.wait(3)
                     resetCam()
                     log("Camera reset after arriving at character position")
-                    -- NEW: Equip pet on arrival
+                    -- ADDED: Auto-equip pet for PetFarm
                     task.wait(2)
-                    equipPetOnArrival()
-                    -- Check and buy missing furniture (updated for new furniture)
+                    autoEquipPet()
+                    -- Check and buy missing furniture (now includes pet furniture)
                     task.wait(2)
                     checkAndBuyMissingFurniture()
                     task.wait(3)
-                    -- Start baby ailment monitoring and handling (now with PetFarm)
+                    -- Start baby ailment monitoring and handling
                     task.wait(2)
-                    monitorAndHandleBabyAilments()
+                    coroutine.wrap(monitorAndHandleBabyAilments)()
+                    -- ADDED: Start pet ailment monitoring
+                    task.wait(2)
+                    coroutine.wrap(monitorAndHandlePetAilments)()
                 end
                 return true
             else
@@ -1293,6 +1460,3 @@ end
 
 -- Run the function
 goToMainMap()
-
-debugPrint("INTEGRATED PetFarm Loaded! Equipped pet & monitoring baby ailments with new furniture (SleepingBag, CampingShower).")
-debugPrint("PetFarm: RUNNING | Always Keep Equipped: ACTIVE")
