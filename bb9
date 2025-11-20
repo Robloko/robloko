@@ -13,12 +13,12 @@
 -- INTEGRATED: PetFarm logic from w1.txt for regular pet ailments
 --             - Updated furniture: SleepingBag (sleepy), CampingShower (dirty), AilmentsRefresh2024LitterBox (toilet)
 --             - Removed BasicBed, Piano, CheapPetBathtub
---             - For hungry/thirsty: Buy teachers_apple/water and feed pet like healing_apple logic from w1
+--             - For hungry/thirsty: Buy teachers_apple/water and feed the pet like with pet apple healing logic from w1
 --             - For bored: Teleport like bb8
 --             - For play: Throw toy sequence with squeaky_bone
 --             - Auto-selects best starter pet and equips
 --             - Monitors regular ailments_manager for selected pet
---             - Assumes script runs in house for furniture (added goToHome)
+--             - Assumes script runs in house for furniture (added goToHome with safe calls)
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
@@ -99,28 +99,62 @@ local function isNear(pos, dist)
 end
 
 -----------------------------------------------------
--- GO TO HOME FUNCTION (For furniture access)
+-- GO TO HOME FUNCTION (For furniture access) - FIXED SAFE CALL
 -----------------------------------------------------
 local function goToHome()
     log("Going to home...")
     local playerData = getPlayerData()
-    if playerData and playerData.home and playerData.home.id then
-        local success = pcall(function()
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/SubscribeToHouse"):InvokeServer(playerData.home.id)
-        end)
-        if success then
-            task.wait(5)
-            log("Successfully subscribed to home")
-            -- Lock door
+    if not playerData or not playerData.home or not playerData.home.id then
+        log("No home ID found in player data, skipping home subscribe")
+        return false
+    end
+
+    local API = ReplicatedStorage:WaitForChild("API")
+    local HousingAPI = API:WaitForChild("HousingAPI", 5)
+    if not HousingAPI then
+        log("HousingAPI not found, skipping home subscribe")
+        return false
+    end
+
+    local subscribeAPI = HousingAPI:FindFirstChild("SubscribeToHouse")
+    if not subscribeAPI then
+        log("SubscribeToHouse remote not found, skipping home subscribe")
+        return false
+    end
+
+    local success = false
+    pcall(function()
+        if subscribeAPI:IsA("RemoteFunction") then
+            success, _ = subscribeAPI:InvokeServer(playerData.home.id)
+        elseif subscribeAPI:IsA("RemoteEvent") then
+            subscribeAPI:FireServer(playerData.home.id)
+            success = true
+        end
+    end)
+
+    if success then
+        task.wait(5)
+        log("Successfully subscribed to home")
+
+        -- Lock door safely
+        local lockAPI = HousingAPI:FindFirstChild("SetDoorLocked")
+        if lockAPI then
             pcall(function()
-                ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/SetDoorLocked"):InvokeServer(true)
+                if lockAPI:IsA("RemoteFunction") then
+                    lockAPI:InvokeServer(true)
+                elseif lockAPI:IsA("RemoteEvent") then
+                    lockAPI:FireServer(true)
+                end
             end)
             log("Door locked")
-            return true
+        else
+            log("SetDoorLocked remote not found, skipping lock")
         end
+        return true
+    else
+        log("Failed to subscribe to home")
+        return false
     end
-    log("Failed to go to home")
-    return false
 end
 
 -----------------------------------------------------
@@ -385,8 +419,20 @@ local function handleFurnitureActivation(furnitureName)
         return false
     end
 
+    local HousingAPI = API:WaitForChild("HousingAPI", 5)
+    if not HousingAPI then
+        log("HousingAPI not found for furniture activation")
+        return false
+    end
+
     local isInterior = (furnitureName == "CampingShower" or furnitureName == "SleepingBag" or furnitureName == "AilmentsRefresh2024LitterBox")
-    local apiPath = isInterior and "HousingAPI/ActivateInteriorFurniture" or "HousingAPI/ActivateFurniture"
+    local apiName = isInterior and "ActivateInteriorFurniture" or "ActivateFurniture"
+    local activateAPI = HousingAPI:FindFirstChild(apiName)
+    if not activateAPI then
+        log(apiName .. " remote not found")
+        return false
+    end
+
     local args
     if isInterior then
         args = {
@@ -409,10 +455,16 @@ local function handleFurnitureActivation(furnitureName)
         }
     end
    
-    log("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName .. " using " .. apiPath)
+    log("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName .. " using " .. apiName)
    
-    local success, result = pcall(function()
-        return API:WaitForChild(apiPath):InvokeServer(unpack(args))
+    local success = false
+    pcall(function()
+        if activateAPI:IsA("RemoteFunction") then
+            success, _ = activateAPI:InvokeServer(unpack(args))
+        elseif activateAPI:IsA("RemoteEvent") then
+            activateAPI:FireServer(unpack(args))
+            success = true
+        end
     end)
    
     if success then
@@ -421,7 +473,7 @@ local function handleFurnitureActivation(furnitureName)
         callExitSeatStatesOnce() -- Call only once after wait
         return true
     else
-        log("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
+        log("Failed to activate: " .. furnitureName)
         return false
     end
 end
@@ -1077,7 +1129,7 @@ local function monitorAndHandleBabyAilments()
 end
 
 -----------------------------------------------------
--- PETFARM LOGIC INTEGRATION FROM W1 (Updated)
+-- PETFARM LOGIC INTEGRATION FROM W1 (Updated) - FIXED PET SELECTION
 -----------------------------------------------------
 -- Pet selection variables
 local PetID = nil
@@ -1100,32 +1152,44 @@ local PET_AILMENT_TASKS = {
     pet_me = "PET_ME_HANDLER"  -- Not implemented
 }
 
--- Find best starter pet (from w1)
+-- Find best starter pet (from w1) - FIXED WITH STRING.FIND
 local function findBestStarterPet()
     log("Finding best starter pet...")
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         if playerData and playerData.inventory and playerData.inventory.pets then
+            local petName = nil
             -- Prefer starter_egg
             for petIndex, petData in pairs(playerData.inventory.pets) do
-                if petData.id == "starter_egg" then
-                    log("Found starter_egg")
-                    return petData.unique
+                if petData and petData.id and petData.unique then
+                    petName = petData.id:lower()
+                    if petName == "starter_egg" then
+                        log("Found starter_egg")
+                        return petData.unique
+                    end
                 end
             end
             -- Then 6yo dog
             for petIndex, petData in pairs(playerData.inventory.pets) do
-                if petData.id == "dog" and (petData.properties.age or 0) == 6 then
-                    log("Found 6yo dog")
-                    return petData.unique
+                if petData and petData.id and petData.unique and petData.properties then
+                    petName = petData.id:lower()
+                    local age = petData.properties.age or 0
+                    if string.find(petName, "dog") and age == 6 then
+                        log("Found 6yo dog")
+                        return petData.unique
+                    end
                 end
             end
             -- Then 6yo cat
             for petIndex, petData in pairs(playerData.inventory.pets) do
-                if petData.id == "cat" and (petData.properties.age or 0) == 6 then
-                    log("Found 6yo cat")
-                    return petData.unique
+                if petData and petData.id and petData.unique and petData.properties then
+                    petName = petData.id:lower()
+                    local age = petData.properties.age or 0
+                    if string.find(petName, "cat") and age == 6 then
+                        log("Found 6yo cat")
+                        return petData.unique
+                    end
                 end
             end
         end
@@ -1558,17 +1622,26 @@ task.wait(7)
 selectBabyTeam()
 task.wait(2)
 
--- AUTO-SELECT AND EQUIP PET FOR PETFARM
+-- AUTO-SELECT AND EQUIP PET FOR PETFARM - FIXED
 PetID = findBestStarterPet()
 if PetID then
     local equipped = ensurePetEquipped(PetID)
     if equipped then
         log("PetFarm: Equipped starter pet " .. tostring(PetID))
+    else
+        log("PetFarm: Failed to equip pet, but continuing monitoring")
     end
+else
+    log("PetFarm: No suitable pet found, skipping regular pet monitoring")
 end
 
--- GO TO HOME FOR FURNITURE-BASED AILMENTS
-goToHome()
+-- GO TO HOME FOR FURNITURE-BASED AILMENTS - FIXED
+local homeSuccess = goToHome()
+if homeSuccess then
+    log("Successfully went to home for furniture access")
+else
+    log("Failed to go to home, furniture-based ailments may not work")
+end
 
 -- BUY MISSING FURNITURE
 checkAndBuyMissingFurniture()
