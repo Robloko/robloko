@@ -1,6 +1,6 @@
--- Baby Farm Script (Modified)
+-- Baby Farm Script (Modified: Removed ExitSeatStates + Added ExitSeatStates Loop)
 -- Place this as a LocalScript in StarterPlayerScripts or similar
--- This script monitors and handles baby ailments using furniture logic
+-- This script monitors and handles baby ailments using furniture logic from the main PetFarm
 
 -- Services
 local Players = game:GetService("Players")
@@ -17,9 +17,8 @@ local DEBUG_MODE = true
 -- Baby Farm variables
 local BabyFarmMode = false
 local babyFarmCoroutine = nil
-local exitSeatStatesCoroutine = nil
 
--- Ailment to Furniture Mapping (simplified for babies)
+-- Ailment to Furniture Mapping (simplified for babies, only basic furniture and special for hungry/thirsty/sick)
 local BABY_AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "teachers_apple",
@@ -36,22 +35,14 @@ local TASK_COOLDOWN = 30 -- seconds
 -- Debug function
 local function debugPrint(message)
     if not DEBUG_MODE then return end
-    local timestamp = os.date("[%H:%M:%S]")
+    local hours = os.date("%H")
+    local minutes = os.date("%M")
+    local seconds = os.date("%S")
+    local timestamp = string.format("[%s:%s:%s]", hours, minutes, seconds)
     print(timestamp .. " [BabyFarm] " .. message)
 end
 
--- Simplified function to extract ailment key
-local function extractAilmentKey(ailment)
-    if type(ailment) == "string" then
-        return ailment:lower()
-    elseif type(ailment) == "table" and ailment.type then
-        return ailment.type:lower()
-    else
-        return "unknown"
-    end
-end
-
--- Function to safely get player data
+-- Function to safely get player data (from provided snippet)
 local function getPlayerData()
     local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 10)
     if not clientModules then return nil end
@@ -73,6 +64,50 @@ local function getPlayerData()
     if not success or not playerData then return nil end
 
     return playerData
+end
+
+-- Enhanced helper to extract ailment key from potentially table-structured ailment
+local function extractAilmentKey(ailment)
+    if type(ailment) == "table" then
+        local candidates = {"type", "name", "ailment", "id", "key", "kind"}
+        for _, field in ipairs(candidates) do
+            local val = ailment[field]
+            if type(val) == "string" then
+                local lowerVal = val:lower()
+                if BABY_AILMENT_TASKS[lowerVal] then
+                    debugPrint("Extracted ailment '" .. lowerVal .. "' from field '" .. field .. "'")
+                    return lowerVal
+                end
+            end
+        end
+
+        for k, v in pairs(ailment) do
+            if type(v) == "string" then
+                local lowerV = v:lower()
+                if BABY_AILMENT_TASKS[lowerV] then
+                    debugPrint("Found matching ailment string '" .. lowerV .. "' in table key '" .. tostring(k) .. "'")
+                    return lowerV
+                end
+            elseif type(v) == "table" then
+                local subKey = extractAilmentKey(v)
+                if subKey ~= "unknown" then
+                    return subKey
+                end
+            end
+        end
+
+        debugPrint("Unknown ailment table structure for debugging:")
+        for k, v in pairs(ailment) do
+            debugPrint(" Key: " .. tostring(k) .. " = " .. tostring(v) .. " (type: " .. type(v) .. ")")
+        end
+        return "unknown"
+    else
+        local str = tostring(ailment):lower()
+        if BABY_AILMENT_TASKS[str] then
+            return str
+        end
+        return str
+    end
 end
 
 -- Function to print available baby ailments in compact form
@@ -206,7 +241,7 @@ local function findHomeFolder()
     return nil
 end
 
--- Extract furniture data
+-- Extract furniture data (from w1.txt)
 local function extractFurnitureData(model, folderName)
     local activationParts = {"UseBlock", "Seat1"}
     local folderId = string.match(folderName, "f%-%d+") or folderName
@@ -256,7 +291,7 @@ local function extractFurnitureData(model, folderName)
     return nil
 end
 
--- Find furniture by name
+-- Find furniture by name (from w1.txt)
 local function findFurnitureByName(name)
     debugPrint("Searching for furniture: " .. name)
     local hi = Workspace:FindFirstChild("HouseInteriors")
@@ -283,7 +318,7 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Handle furniture activation
+-- Modified function to handle furniture activation (without ExitSeatStates)
 local function handleFurnitureActivation(furnitureName)
     debugPrint("Activating furniture detected: " .. furnitureName)
     local furnitureData = findFurnitureByName(furnitureName)
@@ -305,7 +340,7 @@ local function handleFurnitureActivation(furnitureName)
         {
             cframe = furnitureData.cframe
         },
-        char
+        char -- Use localPlayer character instead of pet
     }
 
     debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
@@ -317,6 +352,7 @@ local function handleFurnitureActivation(furnitureName)
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
         task.wait(20) -- Wait for ailment cure
+        debugPrint("Finished waiting for " .. furnitureName)
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
@@ -324,24 +360,10 @@ local function handleFurnitureActivation(furnitureName)
     end
 end
 
--- Use furniture with localPlayer
+-- Use furniture with localPlayer (now uses handleFurnitureActivation)
 local function useFurnitureWithLocalPlayer(furnitureName)
     debugPrint("Using furniture for baby: " .. furnitureName .. " on localPlayer")
     return handleFurnitureActivation(furnitureName)
-end
-
--- ExitSeatStates coroutine
-local function startExitSeatStatesLoop()
-    while BabyFarmMode do
-        local char = player.Character
-        if char then
-            debugPrint("Firing ExitSeatStates...")
-            pcall(function()
-                ReplicatedStorage.API["AdoptAPI/ExitSeatStates"]:FireServer(char)
-            end)
-        end
-        task.wait(30)
-    end
 end
 
 -- Buy teachers_apple
@@ -389,7 +411,7 @@ local function findTeachersApple()
     return teachersAppleID
 end
 
--- Use teachers_apple on localPlayer
+-- Use teachers_apple on localPlayer (NO ExitSeatStates for food)
 local function useTeachersApple(foodID)
     if not foodID then
         debugPrint("Cannot use teachers_apple: Missing foodID")
@@ -547,7 +569,7 @@ local function findWater()
     return waterID
 end
 
--- Use water on localPlayer
+-- Use water on localPlayer (NO ExitSeatStates for food)
 local function useWater(foodID)
     if not foodID then
         debugPrint("Cannot use water: Missing foodID")
@@ -581,7 +603,7 @@ local function useWater(foodID)
         "END"
     }
 
-    -- Perform multiple START/END cycles
+    -- Perform multiple START/END cycles as per provided code (9 full cycles)
     for i = 1, 9 do
         pcall(function()
             ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
@@ -682,7 +704,7 @@ local function findHealingApple()
     return healingAppleID
 end
 
--- Use healing_apple on localPlayer
+-- Use healing_apple on localPlayer (NO ExitSeatStates for food)
 local function useHealingApple(foodID)
     if not foodID then
         debugPrint("Cannot use healing_apple: Missing foodID")
@@ -784,7 +806,7 @@ local function handleSickAilment()
     end
 end
 
--- Check and buy missing furniture
+-- Check and buy missing furniture (from w1.txt)
 local function checkAndBuyMissingFurniture()
     debugPrint("Checking for missing furniture...")
     local missingFurniture = {}
@@ -808,7 +830,7 @@ local function checkAndBuyMissingFurniture()
         table.insert(missingFurniture, {
             kind = "basic_bed",
             properties = {
-                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(10, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
@@ -821,7 +843,7 @@ local function checkAndBuyMissingFurniture()
         table.insert(missingFurniture, {
             kind = "cheap_pet_bathtub",
             properties = {
-                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+                cframe = CFrame.new(12, 0, -10, 1, 0, 0, 0, 1, 0, 0, 0, 1) -- Default position
             }
         })
     else
@@ -952,11 +974,19 @@ local function toggleBabyFarmMode()
 
         -- Step 5: Start monitoring
         babyFarmCoroutine = coroutine.wrap(monitorAndHandleBabyAilments)()
-        exitSeatStatesCoroutine = coroutine.wrap(startExitSeatStatesLoop)()
+
+        -- Start ExitSeatStates loop
+        coroutine.wrap(function()
+            while BabyFarmMode do
+                pcall(function()
+                    game:GetService("ReplicatedStorage").API["AdoptAPI/ExitSeatStates"]:FireServer(game.Players.LocalPlayer.Character)
+                end)
+                task.wait(30)
+            end
+        end)()
     else
         debugPrint("Baby Farm: DISABLED")
         babyFarmCoroutine = nil
-        exitSeatStatesCoroutine = nil
     end
 end
 
@@ -1020,3 +1050,4 @@ debugPrint("All ailments now handled on localPlayer using HousingAPI/ActivateFur
 debugPrint("UPDATED: Now selects Baby team first when enabled.")
 debugPrint("UPDATED: Uses same furniture activation system as main PetFarm (HousingAPI/ActivateFurniture).")
 debugPrint("UPDATED: Enhanced furniture detection with UseBlock/Seat1 search.")
+debugPrint("UPDATED: Added ExitSeatStates loop every 30 seconds.")
