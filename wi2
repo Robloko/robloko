@@ -32,74 +32,153 @@ local Window = Rayfield:CreateWindow({
 -- Get player and character
 local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
-local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Create tabs
-local MainTab = Window:CreateTab("Main Farming", nil)
-local TeleportTab = Window:CreateTab("Teleport Settings", nil)
+-- Wait for humanoid root part
+local function getHumanoidRootPart()
+    if Character and Character:FindFirstChild("HumanoidRootPart") then
+        return Character.HumanoidRootPart
+    end
+    return nil
+end
 
 -- Settings table
 local Settings = {
-   StartFarming = false,
-   TeleportDelay = 1,
-   StartIndex = 32,
-   EndIndex = 188
+   StartFarming = false
 }
 
--- Function to teleport and collect gingerbread
+-- Function to safely teleport and collect gingerbread
 local function teleportAndCollect(index)
     pcall(function()
-        local interior = workspace.Interiors["MainMap!Christmas"]
-        local children = interior:GetChildren()
+        -- Get fresh character reference
+        Character = Player.Character
+        if not Character then return false end
         
-        if index <= #children then
-            local targetModel = children[index]
-            if targetModel and targetModel:FindFirstChild("GingerbreadMan") then
-                local gingerbreadPart = targetModel.GingerbreadMan
-                
-                -- Teleport to gingerbread
-                HumanoidRootPart.CFrame = gingerbreadPart.CFrame + Vector3.new(0, 3, 0)
-                
-                -- Small wait for teleport
-                task.wait(0.2)
-                
-                -- Collect gingerbread
-                game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16"):FireServer()
-                
-                return true
-            end
+        local humanoidRootPart = getHumanoidRootPart()
+        if not humanoidRootPart then return false end
+        
+        local interior = workspace.Interiors["MainMap!Christmas"]
+        if not interior then return false end
+        
+        local children = interior:GetChildren()
+        if index > #children then return false end
+        
+        local targetModel = children[index]
+        if not targetModel then return false end
+        
+        local gingerbreadPart = targetModel:FindFirstChild("GingerbreadMan")
+        if not gingerbreadPart then return false end
+        
+        -- Teleport to gingerbread with slight offset to avoid getting stuck
+        local targetCFrame = gingerbreadPart.CFrame + Vector3.new(0, 3, 0)
+        
+        -- Check if character is stuck (not moving)
+        local startPosition = humanoidRootPart.Position
+        
+        -- Teleport
+        humanoidRootPart.CFrame = targetCFrame
+        
+        -- Very small wait for teleport
+        task.wait(0.05)
+        
+        -- Check if we actually teleported
+        local currentPosition = humanoidRootPart.Position
+        local distanceMoved = (currentPosition - startPosition).Magnitude
+        
+        -- If we didn't move much, try different approach
+        if distanceMoved < 2 then
+            -- Try alternative teleport method
+            Character:PivotTo(targetCFrame)
+            task.wait(0.05)
         end
-        return false
+        
+        -- Collect gingerbread
+        game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16"):FireServer()
+        
+        return true
+    end)
+    return false
+end
+
+-- Function to check if player is stuck and fix it
+local function checkAndFixStuck()
+    pcall(function()
+        if not Character then return end
+        
+        local humanoid = Character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        
+        -- If humanoid is seated or platform standing, sit/stand to reset
+        if humanoid.Sit or humanoid.PlatformStand then
+            humanoid.Sit = false
+            humanoid.PlatformStand = false
+            task.wait(0.1)
+        end
+        
+        -- Try to move slightly to unstick
+        local humanoidRootPart = getHumanoidRootPart()
+        if humanoidRootPart then
+            humanoidRootPart.CFrame = humanoidRootPart.CFrame + Vector3.new(0, 0.1, 0)
+        end
     end)
 end
 
 -- Main farming function
 local function startGingerbreadFarm()
     while Settings.StartFarming do
-        for index = Settings.StartIndex, Settings.EndIndex do
-            if not Settings.StartFarming then break end
-            
-            local success = teleportAndCollect(index)
-            
-            if success then
-                Rayfield:Notify({
-                    Title = "Collecting",
-                    Content = "Collected gingerbread at index: " .. index,
-                    Duration = 1,
-                    Image = nil
-                })
+        pcall(function()
+            -- Get fresh character reference
+            Character = Player.Character
+            if not Character then 
+                task.wait(0.5)
+                return 
             end
             
-            -- Delay between teleports
-            task.wait(Settings.TeleportDelay)
-        end
+            -- Check and fix if stuck every 10 teleports
+            if math.random(1, 10) == 1 then
+                checkAndFixStuck()
+            end
+            
+            local interior = workspace.Interiors["MainMap!Christmas"]
+            if not interior then 
+                task.wait(1)
+                return 
+            end
+            
+            -- Loop through indices 32 to 188
+            for index = 32, 188 do
+                if not Settings.StartFarming then break end
+                
+                -- Skip if index doesn't exist
+                if index > #interior:GetChildren() then 
+                    task.wait(0.1)
+                    continue 
+                end
+                
+                local success = teleportAndCollect(index)
+                
+                -- Very short delay between teleports (0.1 seconds)
+                task.wait(0.1)
+                
+                -- If failed to teleport, wait a bit longer and try to fix
+                if not success then
+                    task.wait(0.2)
+                    checkAndFixStuck()
+                end
+            end
+            
+            -- Small delay before restarting loop
+            if Settings.StartFarming then
+                task.wait(0.1)
+            end
+        end)
         
-        -- Small delay before restarting loop
-        if Settings.StartFarming then
-            task.wait(1)
-        end
+        -- Error handling wait
+        task.wait(0.1)
     end
 end
+
+-- Create tab
+local MainTab = Window:CreateTab("Main Farming", nil)
 
 -- Create section for farming toggle
 MainTab:CreateSection("Gingerbread Farming")
@@ -112,11 +191,11 @@ local FarmToggle = MainTab:CreateToggle({
    Callback = function(State)
       Settings.StartFarming = State
       if State then
-          -- Start farming in a separate coroutine
+          -- Start farming in a separate thread
           coroutine.wrap(startGingerbreadFarm)()
           Rayfield:Notify({
              Title = "Started",
-             Content = "Gingerbread farming started!",
+             Content = "Gingerbread farming started!\nTeleporting every 0.1 seconds",
              Duration = 3,
              Image = nil
           })
@@ -131,103 +210,36 @@ local FarmToggle = MainTab:CreateToggle({
    end
 })
 
--- Create section for teleport settings
-TeleportTab:CreateSection("Teleport Configuration")
-
--- Create slider for teleport delay
-local DelaySlider = TeleportTab:CreateSlider({
-   Name = "Teleport Delay (seconds)",
-   Range = {0.5, 5},
-   Increment = 0.5,
-   Suffix = "s",
-   CurrentValue = Settings.TeleportDelay,
-   Flag = "TeleportDelay",
-   Callback = function(Value)
-      Settings.TeleportDelay = Value
-   end
+-- Create button to fix stuck character
+MainTab:CreateButton({
+    Name = "Fix Stuck Character",
+    Callback = function()
+        checkAndFixStuck()
+        Rayfield:Notify({
+            Title = "Fixed",
+            Content = "Attempted to fix stuck character",
+            Duration = 2,
+            Image = nil
+        })
+    end
 })
-
--- Create input for start index
-local StartIndexInput = TeleportTab:CreateInput({
-   Name = "Start Index",
-   PlaceholderText = "32",
-   RemoveTextAfterFocusLost = false,
-   CurrentValue = tostring(Settings.StartIndex),
-   Flag = "StartIndex",
-   Callback = function(Value)
-      local num = tonumber(Value)
-      if num and num > 0 then
-          Settings.StartIndex = num
-      end
-   end
-})
-
--- Create input for end index
-local EndIndexInput = TeleportTab:CreateInput({
-   Name = "End Index",
-   PlaceholderText = "188",
-   RemoveTextAfterFocusLost = false,
-   CurrentValue = tostring(Settings.EndIndex),
-   Flag = "EndIndex",
-   Callback = function(Value)
-      local num = tonumber(Value)
-      if num and num > 0 then
-          Settings.EndIndex = num
-      end
-   end
-})
-
--- Create button to test specific index
-TeleportTab:CreateButton({
-   Name = "Test Teleport to Index",
-   Callback = function()
-       local testIndex = Settings.StartIndex
-       teleportAndCollect(testIndex)
-       Rayfield:Notify({
-           Title = "Test Teleport",
-           Content = "Teleported to index: " .. testIndex,
-           Duration = 3,
-           Image = nil
-       })
-   end
-})
-
--- Create section for manual collection
-TeleportTab:CreateSection("Manual Collection")
-
--- Create button for the specific gingerbread locations you mentioned
-local specificIndices = {31, 32, 33, 34, 35, 188}
-
-for i, index in ipairs(specificIndices) do
-    TeleportTab:CreateButton({
-        Name = "Teleport to Index " .. index,
-        Callback = function()
-            teleportAndCollect(index)
-            Rayfield:Notify({
-                Title = "Teleported",
-                Content = "Teleported to gingerbread at index: " .. index,
-                Duration = 3,
-                Image = nil
-            })
-        end
-    })
-end
 
 -- Create label for instructions
 MainTab:CreateLabel("Toggle to start auto-farming gingerbread.")
-MainTab:CreateLabel("Configure teleport settings in the Teleport Settings tab.")
-
--- Notify user that the UI is loaded
-Rayfield:Notify({
-   Title = "UI Loaded",
-   Content = "Gingerbread Farm UI is ready!",
-   Duration = 5,
-   Image = nil
-})
+MainTab:CreateLabel("Farms indices 32-188 with 0.1s delay")
+MainTab:CreateLabel("Use 'Fix Stuck Character' if teleporting gets stuck")
 
 -- Character respawn handler
 Player.CharacterAdded:Connect(function(newChar)
     Character = newChar
-    repeat task.wait() until Character:FindFirstChild("HumanoidRootPart")
-    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    task.wait(0.5) -- Wait for character to fully load
 end)
+
+-- Initial notification
+task.wait(1)
+Rayfield:Notify({
+   Title = "UI Loaded",
+   Content = "Gingerbread Farm UI is ready!\nDelay: 0.1s between teleports",
+   Duration = 5,
+   Image = nil
+})
