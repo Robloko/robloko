@@ -1,4 +1,4 @@
--- Gingerbread Farm Script with Realistic Movement
+-- Gingerbread Farm Script with Realistic Movement & Targeted Collection
 -- Try multiple Rayfield sources
 local Rayfield = nil
 local success, err = pcall(function()
@@ -108,7 +108,7 @@ local Settings = {
     Notifications = true,
     CollectDelay = 0.5,
     UseHumanoid = true,
-    UsePathfinding = true,
+    UsePathfinding = false, -- Disabled by default to avoid issues
     RealisticTurning = true,
     SpeedVariation = true,
     NaturalPauses = true
@@ -179,7 +179,7 @@ local function findGingerbreadPositions()
                         table.insert(GingerbreadPositions, {
                             Index = i,
                             Position = pos,
-                            Model = gingerbread,
+                            Model = model, -- Store the parent model, not just the gingerbread part
                             ModelName = model.Name
                         })
                         foundCount = foundCount + 1
@@ -225,6 +225,8 @@ end
 
 -- Function to create a path to the target position
 local function createPath(targetPosition)
+    if not targetPosition then return nil end
+    
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -245,7 +247,7 @@ end
 
 -- Function to smoothly turn the character towards a direction
 local function smoothLookAt(targetPosition, turnSpeed)
-    if not Settings.RealisticTurning then return end
+    if not Settings.RealisticTurning or not targetPosition or not HumanoidRootPart then return false end
     
     local lookVector = (targetPosition - HumanoidRootPart.Position).Unit
     local currentLookVector = HumanoidRootPart.CFrame.LookVector
@@ -289,7 +291,7 @@ end
 
 -- Enhanced function to walk to position like a real player
 local function walkToPosition(targetPosition)
-    if not Character or not HumanoidRootPart or not Humanoid then
+    if not Character or not HumanoidRootPart or not Humanoid or not targetPosition then
         return false
     end
     
@@ -315,6 +317,11 @@ local function walkToPosition(targetPosition)
     
     while tick() - startTime < timeout do
         if not Settings.Farming then break end
+        
+        -- Ensure we have valid references
+        if not HumanoidRootPart or not Humanoid then
+            return false
+        end
         
         local currentPos = HumanoidRootPart.Position
         local direction = (targetPosition - currentPos)
@@ -348,34 +355,53 @@ local function walkToPosition(targetPosition)
         end
         
         -- Get our movement direction
-        local moveDirection
+        local moveDirection = Vector3.new(0, 0, 0) -- Initialize with zero vector
         
         if Settings.UsePathfinding and PathPoints and CurrentPathIndex <= #PathPoints then
             -- Use pathfinding
             local currentWaypoint = PathPoints[CurrentPathIndex]
-            local waypointPos = currentWaypoint.Position
-            local waypointDistance = (waypointPos - currentPos).Magnitude
-            
-            -- If we've reached the current waypoint, move to the next
-            if waypointDistance < 4 then
-                CurrentPathIndex = CurrentPathIndex + 1
-                if CurrentPathIndex > #PathPoints then
-                    -- We've reached the end of the path
-                    Humanoid:Move(Vector3.new(0, 0, 0))
-                    return true
+            if currentWaypoint and currentWaypoint.Position then
+                local waypointPos = currentWaypoint.Position
+                local waypointDistance = (waypointPos - currentPos).Magnitude
+                
+                -- If we've reached the current waypoint, move to the next
+                if waypointDistance < 4 then
+                    CurrentPathIndex = CurrentPathIndex + 1
+                    if CurrentPathIndex > #PathPoints then
+                        -- We've reached the end of the path
+                        Humanoid:Move(Vector3.new(0, 0, 0))
+                        return true
+                    end
+                else
+                    -- Move towards the current waypoint
+                    local dir = (waypointPos - currentPos).Unit
+                    if dir then
+                        moveDirection = dir
+                    end
                 end
-            else
-                -- Move towards the current waypoint
-                moveDirection = (waypointPos - currentPos).Unit
             end
         else
             -- Direct movement
-            moveDirection = direction.Unit
+            if direction and direction.Unit then
+                moveDirection = direction.Unit
+            end
+        end
+        
+        -- Ensure we have a valid direction before proceeding
+        if moveDirection.Magnitude == 0 then
+            task.wait(0.1)
+            continue
         end
         
         -- Apply speed variation
         local speedModifier = updateSpeedVariation()
         local adjustedSpeed = Settings.WalkSpeed * speedModifier
+        
+        -- Ensure we have valid values before multiplication
+        if not adjustedSpeed or not moveDirection then
+            task.wait(0.1)
+            continue
+        end
         
         -- Smoothly turn towards our movement direction
         if Settings.RealisticTurning then
@@ -383,8 +409,11 @@ local function walkToPosition(targetPosition)
             IsTurning = smoothLookAt(targetLookAt, 0.1)
         end
         
-        -- Move towards target
-        Humanoid:Move(moveDirection * adjustedSpeed)
+        -- Move towards target with safe multiplication
+        local moveVector = moveDirection * adjustedSpeed
+        if moveVector then
+            Humanoid:Move(moveVector)
+        end
         
         -- Add natural pauses occasionally
         if Settings.NaturalPauses and math.random() < 0.01 then
@@ -403,36 +432,90 @@ end
 -- Function to collect gingerbread at current position
 local function collectGingerbread()
     local collected = false
+    
+    -- We use pcall to prevent the entire script from crashing if something goes wrong
     pcall(function()
-        -- Try to collect using the remote
-        local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
-        if remote then
-            local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
-            if iceRemote then
-                iceRemote:FireServer()
-                collected = true
-                if Settings.Notifications then
-                    Rayfield:Notify({
-                        Title = "Collected",
-                        Content = "Gingerbread collected!",
-                        Duration = 1,
-                        Image = 4483362458
-                    })
+        -- Check if we have a current target to collect
+        if CurrentTargetIndex and GingerbreadPositions[CurrentTargetIndex] then
+            local gingerbreadModel = GingerbreadPositions[CurrentTargetIndex].Model
+            
+            if gingerbreadModel then
+                local captureRemote = nil
+
+                -- METHOD 1: Try the exact path from the screenshot first (most reliable)
+                local particleHolder = gingerbreadModel:FindFirstChild("ParticleHolder")
+                if particleHolder then
+                    local attachment = particleHolder:FindFirstChild("Attachment")
+                    if attachment then
+                        local remote = attachment:FindFirstChild("CaptureParticles")
+                        if remote and remote:IsA("RemoteEvent") then
+                            captureRemote = remote
+                        end
+                    end
                 end
-                task.wait(Settings.CollectDelay)
-            else
-                -- Try alternative remote names
-                for _, child in ipairs(remote:GetChildren()) do
-                    if string.find(child.Name:lower(), "iceskating") or string.find(child.Name:lower(), "winter") then
-                        child:FireServer()
-                        collected = true
-                        task.wait(Settings.CollectDelay)
-                        break
+
+                -- METHOD 2: If the exact path fails, search for any RemoteEvent with "Capture" or "Particle" in its name
+                if not captureRemote then
+                    for _, descendant in ipairs(gingerbreadModel:GetDescendants()) do
+                        if descendant:IsA("RemoteEvent") and (string.find(descendant.Name:lower(), "capture") or string.find(descendant.Name:lower(), "particle")) then
+                            captureRemote = descendant
+                            break -- Stop searching once we find one
+                        end
+                    end
+                end
+
+                -- METHOD 3: If still not found, try the old ReplicatedStorage method as a last resort
+                if not captureRemote then
+                    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+                    if remote then
+                        local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+                        if iceRemote then
+                            captureRemote = iceRemote
+                        else
+                            -- Try other alternative names
+                            for _, child in ipairs(remote:GetChildren()) do
+                                if string.find(child.Name:lower(), "iceskating") or string.find(child.Name:lower(), "winter") or string.find(child.Name:lower(), "gingerbread") then
+                                    captureRemote = child
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- If we found a remote event to use, fire it!
+                if captureRemote then
+                    captureRemote:FireServer()
+                    collected = true
+                    
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Collected!",
+                            Content = "Successfully collected gingerbread.",
+                            Duration = 1.5,
+                            Image = 4483362458
+                        })
+                    end
+                else
+                    -- If we get here, we couldn't find any way to collect
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Collection Failed",
+                            Content = "Could not find collection remote.",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
                     end
                 end
             end
         end
     end)
+    
+    -- Wait for the specified delay after attempting to collect
+    if collected then
+        task.wait(Settings.CollectDelay)
+    end
+    
     return collected
 end
 
@@ -464,7 +547,9 @@ local function farmGingerbread()
     
     -- First teleport to start position
     local startPos = GingerbreadPositions[Settings.StartIndex].Position
-    HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+    if startPos and HumanoidRootPart then
+        HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+    end
     
     if Settings.Notifications then
         Rayfield:Notify({
@@ -503,12 +588,16 @@ local function farmGingerbread()
             
             if not success then
                 -- If walking failed, teleport as fallback
-                HumanoidRootPart.CFrame = CFrame.new(gingerbreadData.Position + Vector3.new(0, 3, 0))
+                if gingerbreadData.Position and HumanoidRootPart then
+                    HumanoidRootPart.CFrame = CFrame.new(gingerbreadData.Position + Vector3.new(0, 3, 0))
+                end
                 task.wait(1)
             end
         else
             -- For first gingerbread or if walking is disabled
-            HumanoidRootPart.CFrame = CFrame.new(gingerbreadData.Position + Vector3.new(0, 3, 0))
+            if gingerbreadData.Position and HumanoidRootPart then
+                HumanoidRootPart.CFrame = CFrame.new(gingerbreadData.Position + Vector3.new(0, 3, 0))
+            end
             task.wait(1)
         end
         
@@ -541,7 +630,9 @@ local function farmGingerbread()
             
             -- Teleport back to start
             local startPos = GingerbreadPositions[Settings.StartIndex].Position
-            HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+            if startPos and HumanoidRootPart then
+                HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+            end
             task.wait(2)
             CurrentTargetIndex = Settings.StartIndex
         end
@@ -844,3 +935,4 @@ Rayfield:Notify({
 
 print("[Gingerbread Farm] UI Loaded Successfully!")
 print("[Gingerbread Farm] Movement Mode: Realistic Walking")
+print("[Gingerbread Farm] Collection Method: Targeted CaptureParticles")
