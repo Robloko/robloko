@@ -1,0 +1,498 @@
+-- Gingerbread Farm Script with Smooth Movement
+-- Try multiple Rayfield sources
+local Rayfield = nil
+local success, err = pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
+end)
+if not success then
+    success, err = pcall(function()
+        Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+    end)
+end
+if not success then
+    -- Fallback to simple UI if Rayfield fails
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Gingerbread Farm",
+        Text = "Failed to load Rayfield. Creating simple UI...",
+        Duration = 5
+    })
+    
+    -- Create a simple command-based system
+    local Settings = {
+        StartFarming = false,
+        MoveDelay = 2,
+        StartIndex = 32,
+        EndIndex = 188,
+        MovementSpeed = 16
+    }
+    
+    print("=== Gingerbread Farm Commands ===")
+    print("Type in chat or execute:")
+    print("!start - Start farming")
+    print("!stop - Stop farming")
+    print("!status - Check status")
+    print("================================")
+    
+    game:GetService("Players").LocalPlayer.Chatted:Connect(function(msg)
+        if msg:lower() == "!start" then
+            Settings.StartFarming = true
+            print("[Gingerbread Farm] Started farming!")
+        elseif msg:lower() == "!stop" then
+            Settings.StartFarming = false
+            print("[Gingerbread Farm] Stopped farming!")
+        elseif msg:lower() == "!status" then
+            print(string.format("[Gingerbread Farm] Status: %s", Settings.StartFarming and "Running" or "Stopped"))
+        end
+    end)
+    
+    return
+end
+
+-- If we get here, Rayfield loaded successfully
+local Player = game:GetService("Players").LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- Smooth movement function
+local function smoothMoveTo(position, speed)
+    local startPos = HumanoidRootPart.Position
+    local direction = (position - startPos)
+    local distance = direction.Magnitude
+    local unitDirection = direction.unit
+    
+    -- Enable walking
+    Humanoid:MoveTo(position)
+    
+    -- Calculate time based on distance and speed
+    local travelTime = distance / speed
+    
+    -- Gradually move with smooth interpolation
+    local startTime = tick()
+    local endTime = startTime + travelTime
+    
+    while tick() < endTime and Humanoid.MoveDirection.Magnitude > 0 do
+        local elapsed = tick() - startTime
+        local progress = elapsed / travelTime
+        progress = math.min(progress, 1)
+        
+        -- Move slightly faster at start, slower at end for realism
+        local easeProgress = progress * (2 - progress) -- Ease-out quad
+        
+        Humanoid:MoveTo(startPos + (direction * easeProgress))
+        
+        -- Small random movements to look natural
+        if math.random(1, 3) == 1 then
+            Humanoid:Move(Vector3.new(
+                math.random(-2, 2) * 0.1,
+                0,
+                math.random(-2, 2) * 0.1
+            ))
+        end
+        
+        task.wait(0.03) -- 30 FPS-like movement
+    end
+    
+    -- Final adjustment
+    Humanoid:MoveTo(position)
+    task.wait(0.2)
+end
+
+-- Create the window with proper settings
+local Window = Rayfield:CreateWindow({
+    Name = "🍪 Gingerbread Farm v2",
+    LoadingTitle = "Loading Gingerbread Farm...",
+    LoadingSubtitle = "With Smooth Movement",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "GingerbreadFarmConfig",
+        FileName = "Settings"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "noinvite",
+        RememberJoins = true
+    },
+    KeySystem = false
+})
+
+-- Verify window was created
+if not Window then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Error",
+        Text = "Failed to create window",
+        Duration = 5
+    })
+    return
+end
+
+-- Create tabs
+local MainTab = Window:CreateTab("Main", 4483362458)
+local MovementTab = Window:CreateTab("Movement", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+
+-- Settings
+local Settings = {
+    Farming = false,
+    MoveDelay = 2,
+    StartIndex = 32,
+    EndIndex = 188,
+    MovementSpeed = 16,
+    AntiAFK = true,
+    Notifications = true,
+    RandomizeMovement = true,
+    CollectDelay = 0.5,
+    HumanLike = true
+}
+
+-- Get gingerbread locations
+local gingerbreadLocations = {}
+local function cacheGingerbreadLocations()
+    gingerbreadLocations = {}
+    pcall(function()
+        local interior = workspace:FindFirstChild("Interiors")
+        if interior then
+            local christmas = interior:FindFirstChild("MainMap!Christmas")
+            if christmas then
+                for i, model in ipairs(christmas:GetChildren()) do
+                    local gingerbread = model:FindFirstChild("GingerbreadMan") or 
+                                     model:FindFirstChild("Gingerbread") or
+                                     model:FindFirstChildWhichIsA("BasePart")
+                    if gingerbread then
+                        table.insert(gingerbreadLocations, {
+                            Position = gingerbread.Position,
+                            CFrame = gingerbread.CFrame,
+                            Index = i,
+                            Model = model
+                        })
+                    end
+                end
+            end
+        end
+    end)
+    return #gingerbreadLocations
+end
+
+-- Human-like jump function
+local function humanJump()
+    if Humanoid.FloorMaterial ~= Enum.Material.Air then
+        Humanoid.Jump = true
+        task.wait(0.1)
+        Humanoid.Jump = false
+    end
+end
+
+-- Collect gingerbread
+local function collectGingerbread(index)
+    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+    if remote then
+        local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+        if iceRemote then
+            iceRemote:FireServer()
+            if Settings.Notifications then
+                Rayfield:Notify({
+                    Title = "Collected",
+                    Content = "Gingerbread #" .. index,
+                    Duration = 1,
+                    Image = 4483362458
+                })
+            end
+        end
+    end
+end
+
+-- Main farming function with smooth movement
+local function farmGingerbread()
+    local totalGingerbreads = cacheGingerbreadLocations()
+    if totalGingerbreads == 0 then
+        if Settings.Notifications then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "No gingerbread locations found!",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+        return
+    end
+    
+    -- Adjust indices based on available gingerbreads
+    local startIdx = math.max(1, math.min(Settings.StartIndex, totalGingerbreads))
+    local endIdx = math.max(1, math.min(Settings.EndIndex, totalGingerbreads))
+    
+    if startIdx > endIdx then
+        startIdx, endIdx = endIdx, startIdx
+    end
+    
+    while Settings.Farming do
+        for i = startIdx, endIdx do
+            if not Settings.Farming then break end
+            
+            local gingerbread = gingerbreadLocations[i]
+            if gingerbread then
+                -- Calculate target position (3 units above gingerbread)
+                local targetPos = gingerbread.Position + Vector3.new(0, 3, 0)
+                
+                -- Smooth movement to gingerbread
+                if Settings.HumanLike then
+                    -- Check distance first
+                    local distance = (targetPos - HumanoidRootPart.Position).Magnitude
+                    
+                    if distance > 10 then
+                        -- Long distance: move normally with possible jumps
+                        smoothMoveTo(targetPos, Settings.MovementSpeed)
+                        
+                        -- Random jump (20% chance)
+                        if Settings.RandomizeMovement and math.random(1, 5) == 1 then
+                            humanJump()
+                        end
+                    else
+                        -- Short distance: more precise movement
+                        Humanoid:MoveTo(targetPos)
+                        task.wait(0.5)
+                        
+                        -- Small random side-step for realism
+                        if Settings.RandomizeMovement and math.random(1, 3) == 1 then
+                            local sideStep = Vector3.new(
+                                math.random(-1, 1),
+                                0,
+                                math.random(-1, 1)
+                            )
+                            Humanoid:MoveTo(targetPos + sideStep)
+                            task.wait(0.2)
+                        end
+                    end
+                else
+                    -- Direct movement (less human-like)
+                    Humanoid:MoveTo(targetPos)
+                    task.wait(0.5)
+                end
+                
+                -- Wait to stabilize
+                task.wait(0.3)
+                
+                -- Collect the gingerbread
+                collectGingerbread(i)
+                
+                -- Random look around (human behavior)
+                if Settings.RandomizeMovement and math.random(1, 4) == 1 then
+                    -- Turn character slightly
+                    local currentCF = HumanoidRootPart.CFrame
+                    HumanoidRootPart.CFrame = currentCF * CFrame.Angles(0, math.rad(math.random(-30, 30)), 0)
+                    task.wait(0.2)
+                end
+                
+                -- Wait before next movement
+                task.wait(Settings.MoveDelay)
+            end
+        end
+        
+        -- Small break after completing a cycle
+        if Settings.Farming then
+            task.wait(1)
+            
+            -- Re-cache locations occasionally
+            if math.random(1, 3) == 1 then
+                cacheGingerbreadLocations()
+            end
+        end
+    end
+end
+
+-- Anti-AFK
+if Settings.AntiAFK then
+    local VirtualUser = game:GetService("VirtualUser")
+    game:GetService("Players").LocalPlayer.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+-- Main Tab
+MainTab:CreateSection("Farming Controls")
+
+local Toggle = MainTab:CreateToggle({
+    Name = "Start Farming",
+    CurrentValue = Settings.Farming,
+    Flag = "FarmingToggle",
+    Callback = function(Value)
+        Settings.Farming = Value
+        if Value then
+            Rayfield:Notify({
+                Title = "Started",
+                Content = "Gingerbread farming started with smooth movement!",
+                Duration = 3,
+                Image = 4483362458
+            })
+            task.spawn(farmGingerbread)
+        else
+            Rayfield:Notify({
+                Title = "Stopped",
+                Content = "Gingerbread farming stopped.",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Cache Locations",
+    Callback = function()
+        local count = cacheGingerbreadLocations()
+        Rayfield:Notify({
+            Title = "Cached",
+            Content = "Found " .. count .. " gingerbread locations!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Test Movement",
+    Callback = function()
+        Settings.Farming = false
+        task.wait(0.5)
+        
+        local gingerbread = gingerbreadLocations[Settings.StartIndex] or gingerbreadLocations[1]
+        if gingerbread then
+            local targetPos = gingerbread.Position + Vector3.new(0, 3, 0)
+            smoothMoveTo(targetPos, Settings.MovementSpeed)
+            task.wait(0.5)
+            Rayfield:Notify({
+                Title = "Test Complete",
+                Content = "Movement test successful!",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+-- Movement Tab
+MovementTab:CreateSection("Movement Settings")
+
+MovementTab:CreateSlider({
+    Name = "Movement Speed",
+    Range = {8, 32},
+    Increment = 1,
+    Suffix = "studs/sec",
+    CurrentValue = Settings.MovementSpeed,
+    Flag = "MovementSpeed",
+    Callback = function(Value)
+        Settings.MovementSpeed = Value
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Delay Between",
+    Range = {0.5, 5},
+    Increment = 0.1,
+    Suffix = "seconds",
+    CurrentValue = Settings.MoveDelay,
+    Flag = "MoveDelay",
+    Callback = function(Value)
+        Settings.MoveDelay = Value
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Human-like Movement",
+    CurrentValue = Settings.HumanLike,
+    Flag = "HumanLike",
+    Callback = function(Value)
+        Settings.HumanLike = Value
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Randomize Movement",
+    CurrentValue = Settings.RandomizeMovement,
+    Flag = "RandomizeMovement",
+    Callback = function(Value)
+        Settings.RandomizeMovement = Value
+    end
+})
+
+MovementTab:CreateInput({
+    Name = "Start Index",
+    PlaceholderText = "32",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.StartIndex),
+    Flag = "StartIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.StartIndex = num
+        end
+    end
+})
+
+MovementTab:CreateInput({
+    Name = "End Index",
+    PlaceholderText = "188",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.EndIndex),
+    Flag = "EndIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.EndIndex = num
+        end
+    end
+})
+
+-- Settings Tab
+SettingsTab:CreateSection("Preferences")
+
+SettingsTab:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = Settings.AntiAFK,
+    Flag = "AntiAFK",
+    Callback = function(Value)
+        Settings.AntiAFK = Value
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Notifications",
+    CurrentValue = Settings.Notifications,
+    Flag = "Notifications",
+    Callback = function(Value)
+        Settings.Notifications = Value
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Save Settings",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Settings Saved",
+            Content = "Your settings have been saved!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+-- Character handling
+Player.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+    Humanoid = newChar:WaitForChild("Humanoid")
+end)
+
+-- Initial setup
+cacheGingerbreadLocations()
+
+-- Initial notification
+Rayfield:Notify({
+    Title = "Gingerbread Farm v2",
+    Content = "Smooth movement activated! 🍪",
+    Duration = 5,
+    Image = 4483362458
+})
+
+print("[Gingerbread Farm v2] Smooth movement script loaded!")
