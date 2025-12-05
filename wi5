@@ -1,4 +1,4 @@
--- Gingerbread Farm Script with Smooth Movement
+-- Gingerbread Farm Script with Natural Movement
 -- Try multiple Rayfield sources
 local Rayfield = nil
 local success, err = pcall(function()
@@ -20,7 +20,7 @@ if not success then
     -- Create a simple command-based system
     local Settings = {
         StartFarming = false,
-        WalkSpeed = 16,
+        MoveDelay = 2,
         StartIndex = 32,
         EndIndex = 188
     }
@@ -31,7 +31,7 @@ if not success then
     print("!start - Start farming")
     print("!stop - Stop farming")
     print("!status - Check status")
-    print("!speed [number] - Set walking speed")
+    print("!setdelay [number] - Set movement delay")
     print("================================")
     
     -- Listen for chat commands
@@ -44,11 +44,11 @@ if not success then
             print("[Gingerbread Farm] Stopped farming!")
         elseif msg:lower() == "!status" then
             print(string.format("[Gingerbread Farm] Status: %s", Settings.StartFarming and "Running" or "Stopped"))
-        elseif msg:lower():sub(1, 6) == "!speed" then
-            local speed = tonumber(msg:sub(8))
-            if speed then
-                Settings.WalkSpeed = speed
-                print(string.format("[Gingerbread Farm] Speed set to: %s", speed))
+        elseif msg:lower():sub(1, 9) == "!setdelay" then
+            local delay = tonumber(msg:sub(11))
+            if delay then
+                Settings.MoveDelay = delay
+                print(string.format("[Gingerbread Farm] Delay set to: %s seconds", delay))
             end
         end
     end)
@@ -62,9 +62,6 @@ local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local Humanoid = Character:WaitForChild("Humanoid")
-
--- Smooth pathfinding service
-local PathfindingService = game:GetService("PathfindingService")
 
 -- Create the window with proper settings
 local Window = Rayfield:CreateWindow({
@@ -96,250 +93,158 @@ end
 
 -- Create tabs
 local MainTab = Window:CreateTab("Main", 4483362458)
-local TeleportTab = Window:CreateTab("Movement", 4483362458)
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 -- Settings
 local Settings = {
     Farming = false,
+    MoveDelay = 2,
     WalkSpeed = 16,
     StartIndex = 32,
     EndIndex = 188,
     AntiAFK = true,
     Notifications = true,
-    UsePathfinding = true,
-    CollectionDelay = 0.5,
-    PathfindingTimeout = 10
+    NaturalMovement = true
 }
 
--- Cache gingerbread locations
-local GingerbreadLocations = {}
-local LastCollectedIndex = 0
-
--- Function to find gingerbread at specific index
-local function findGingerbreadAtIndex(index)
-    local interior = workspace:FindFirstChild("Interiors")
-    if not interior then return nil end
-    
-    local christmas = interior:FindFirstChild("MainMap!Christmas")
-    if not christmas then return nil end
-    
-    local children = christmas:GetChildren()
-    if index > #children then return nil end
-    
-    local model = children[index]
-    if not model then return nil end
-    
-    local gingerbread = model:FindFirstChild("GingerbreadMan") or 
-                       model:FindFirstChild("Gingerbread") or
-                       model:FindFirstChildWhichIsA("BasePart")
-    
-    return gingerbread
-end
-
--- Function to walk smoothly to a target position
-local function walkToPosition(targetPosition)
-    if not Character or not HumanoidRootPart or not Humanoid then
-        return false
+-- Movement functions
+local function moveToPosition(targetPosition)
+    if not Settings.NaturalMovement then
+        -- Instant teleport
+        HumanoidRootPart.CFrame = CFrame.new(targetPosition)
+        return
     end
     
-    -- Calculate distance
-    local distance = (targetPosition - HumanoidRootPart.Position).Magnitude
+    -- Natural movement
+    local distance = (HumanoidRootPart.Position - targetPosition).Magnitude
     
-    -- If very close, just teleport
-    if distance < 5 then
+    if distance > 50 then
+        -- For long distances, teleport to save time
         HumanoidRootPart.CFrame = CFrame.new(targetPosition + Vector3.new(0, 3, 0))
-        return true
-    end
-    
-    -- Create path using PathfindingService
-    if Settings.UsePathfinding then
-        local path = PathfindingService:CreatePath({
-            AgentRadius = 2,
-            AgentHeight = 5,
-            AgentCanJump = true,
-            WaypointSpacing = 4,
-            Costs = {}
-        })
-        
-        -- Compute path
-        local success, errorMessage = pcall(function()
-            path:ComputeAsync(HumanoidRootPart.Position, targetPosition)
-        end)
-        
-        if not success or path.Status ~= Enum.PathStatus.Success then
-            -- Fallback: direct movement if pathfinding fails
-            Humanoid:MoveTo(targetPosition)
-            local startTime = tick()
-            while (HumanoidRootPart.Position - targetPosition).Magnitude > 10 and tick() - startTime < Settings.PathfindingTimeout do
-                Humanoid:MoveTo(targetPosition)
-                task.wait(0.1)
-            end
-        else
-            -- Follow the computed path
-            local waypoints = path:GetWaypoints()
-            
-            for _, waypoint in ipairs(waypoints) do
-                if not Settings.Farming then break end
-                
-                if waypoint.Action == Enum.PathWaypointAction.Jump then
-                    Humanoid.Jump = true
-                end
-                
-                Humanoid:MoveTo(waypoint.Position)
-                
-                -- Wait until reached waypoint or timeout
-                local startTime = tick()
-                while (HumanoidRootPart.Position - waypoint.Position).Magnitude > 4 and tick() - startTime < Settings.PathfindingTimeout do
-                    if not Settings.Farming then break end
-                    task.wait(0.1)
-                end
-                
-                if not Settings.Farming then break end
-            end
-        end
     else
-        -- Simple direct movement
+        -- Walk naturally to the target
         Humanoid:MoveTo(targetPosition)
+        
+        -- Wait until we reach the target or timeout after 5 seconds
         local startTime = tick()
-        while (HumanoidRootPart.Position - targetPosition).Magnitude > 5 and tick() - startTime < Settings.PathfindingTimeout do
+        while (HumanoidRootPart.Position - targetPosition).Magnitude > 3 and tick() - startTime < 5 do
             if not Settings.Farming then break end
+            Humanoid:MoveTo(targetPosition)
             task.wait(0.1)
         end
-    end
-    
-    return (HumanoidRootPart.Position - targetPosition).Magnitude < 10
-end
-
--- Function to collect gingerbread at current position
-local function collectGingerbread()
-    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
-    if remote then
-        local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
-        if iceRemote then
-            iceRemote:FireServer()
-            return true
+        
+        -- If we didn't reach, teleport the rest of the way
+        if (HumanoidRootPart.Position - targetPosition).Magnitude > 3 then
+            HumanoidRootPart.CFrame = CFrame.new(targetPosition + Vector3.new(0, 3, 0))
         end
     end
-    return false
 end
 
--- Pre-cache all gingerbread positions
-local function cacheGingerbreadPositions()
-    GingerbreadLocations = {}
+local function findGingerbreadPositions()
+    local positions = {}
     
-    local interior = workspace:FindFirstChild("Interiors")
-    if not interior then return end
-    
-    local christmas = interior:FindFirstChild("MainMap!Christmas")
-    if not christmas then return end
-    
-    for i = Settings.StartIndex, Settings.EndIndex do
-        local gingerbread = findGingerbreadAtIndex(i)
-        if gingerbread then
-            GingerbreadLocations[i] = gingerbread.Position
-        end
-    end
-    
-    print(string.format("[Gingerbread Farm] Cached %d gingerbread locations", #GingerbreadLocations))
-end
-
--- Main farming function with smooth movement
-local function farmGingerbreadSmoothly()
-    -- First teleport to start position
-    local startGingerbread = findGingerbreadAtIndex(Settings.StartIndex)
-    if startGingerbread then
-        HumanoidRootPart.CFrame = CFrame.new(startGingerbread.Position + Vector3.new(0, 3, 0))
-        task.wait(1)
-        
-        -- Collect first gingerbread
-        collectGingerbread()
-        LastCollectedIndex = Settings.StartIndex
-        
-        if Settings.Notifications then
-            Rayfield:Notify({
-                Title = "Started Collection",
-                Content = "Starting at gingerbread #" .. Settings.StartIndex,
-                Duration = 2,
-                Image = 4483362458
-            })
-        end
-    end
-    
-    -- Set walking speed
-    Humanoid.WalkSpeed = Settings.WalkSpeed
-    
-    -- Start sequential collection
-    for i = Settings.StartIndex + 1, Settings.EndIndex do
-        if not Settings.Farming then break end
-        
-        -- Find next gingerbread
-        local gingerbread = findGingerbreadAtIndex(i)
-        if gingerbread then
-            local targetPosition = gingerbread.Position
-            
-            -- Walk smoothly to the gingerbread
-            if Settings.Notifications then
-                Rayfield:Notify({
-                    Title = "Moving to",
-                    Content = "Gingerbread #" .. i,
-                    Duration = 1.5,
-                    Image = 4483362458
-                })
-            end
-            
-            local success = walkToPosition(targetPosition)
-            
-            if success then
-                -- Collect gingerbread
-                task.wait(Settings.CollectionDelay)
-                local collected = collectGingerbread()
-                
-                if collected then
-                    LastCollectedIndex = i
+    pcall(function()
+        local interior = workspace:FindFirstChild("Interiors")
+        if interior then
+            local christmas = interior:FindFirstChild("MainMap!Christmas")
+            if christmas then
+                for i, model in pairs(christmas:GetChildren()) do
+                    local gingerbread = model:FindFirstChild("GingerbreadMan") or 
+                                      model:FindFirstChild("Gingerbread") or
+                                      model:FindFirstChildWhichIsA("BasePart")
                     
-                    if Settings.Notifications then
-                        Rayfield:Notify({
-                            Title = "Collected",
-                            Content = "Gingerbread #" .. i,
-                            Duration = 1,
-                            Image = 4483362458
-                        })
+                    if gingerbread then
+                        positions[i] = gingerbread.Position
                     end
                 end
-            else
-                -- If failed to reach, teleport as fallback
-                if Settings.Notifications then
-                    Rayfield:Notify({
-                        Title = "Pathfinding Failed",
-                        Content = "Teleporting to gingerbread #" .. i,
-                        Duration = 2,
-                        Image = 4483362458
-                    })
-                end
-                
-                HumanoidRootPart.CFrame = CFrame.new(targetPosition + Vector3.new(0, 3, 0))
-                task.wait(Settings.CollectionDelay)
-                collectGingerbread()
-                LastCollectedIndex = i
             end
         end
-        
-        -- Small delay between movements
-        task.wait(0.3)
+    end)
+    
+    return positions
+end
+
+-- Farming function with sequential movement
+local function farmGingerbread()
+    Rayfield:Notify({
+        Title = "Starting",
+        Content = "Finding gingerbread positions...",
+        Duration = 3,
+        Image = 4483362458
+    })
+    
+    -- First teleport to the starting gingerbread
+    local positions = findGingerbreadPositions()
+    
+    if not positions[Settings.StartIndex] then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Could not find starting position!",
+            Duration = 5,
+            Image = 4483362458
+        })
+        return
     end
     
-    -- Stop farming when loop completes
-    if Settings.Farming then
-        Settings.Farming = false
-        if Settings.Notifications then
+    -- Teleport to the starting position
+    HumanoidRootPart.CFrame = CFrame.new(positions[Settings.StartIndex] + Vector3.new(0, 3, 0))
+    
+    if Settings.Notifications then
+        Rayfield:Notify({
+            Title = "Starting Position",
+            Content = "Teleported to gingerbread #" .. Settings.StartIndex,
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+    
+    task.wait(2) -- Wait a moment before starting
+    
+    -- Start sequential farming
+    for i = Settings.StartIndex, Settings.EndIndex do
+        if not Settings.Farming then break end
+        
+        -- Collect current gingerbread
+        pcall(function()
+            local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+            if remote then
+                local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+                if iceRemote then
+                    iceRemote:FireServer()
+                end
+            end
+        end)
+        
+        if Settings.Notifications and i % 5 == 0 then
             Rayfield:Notify({
-                Title = "Collection Complete",
-                Content = "Collected all gingerbreads from " .. Settings.StartIndex .. " to " .. Settings.EndIndex,
-                Duration = 5,
+                Title = "Collected",
+                Content = "Gingerbread #" .. i,
+                Duration = 1,
                 Image = 4483362458
             })
         end
+        
+        -- If this is not the last one, move to the next
+        if i < Settings.EndIndex then
+            local nextPos = positions[i + 1]
+            if nextPos then
+                moveToPosition(nextPos + Vector3.new(0, 3, 0))
+                task.wait(0.5) -- Brief pause before collecting next
+            end
+        end
+        
+        task.wait(Settings.MoveDelay)
+    end
+    
+    if Settings.Farming then
+        Rayfield:Notify({
+            Title = "Completed",
+            Content = "Finished collecting gingerbreads!",
+            Duration = 5,
+            Image = 4483362458
+        })
+        Settings.Farming = false
     end
 end
 
@@ -365,17 +270,11 @@ local Toggle = MainTab:CreateToggle({
         if Value then
             Rayfield:Notify({
                 Title = "Started",
-                Content = "Gingerbread farming started with smooth movement!",
-                Duration = 3,
+                Content = "Gingerbread farming started! Moving sequentially from #" .. Settings.StartIndex .. " to #" .. Settings.EndIndex,
+                Duration = 5,
                 Image = 4483362458
             })
-            -- Reset walk speed
-            if Humanoid then
-                Humanoid.WalkSpeed = Settings.WalkSpeed
-            end
-            -- Cache positions and start farming
-            cacheGingerbreadPositions()
-            task.spawn(farmGingerbreadSmoothly)
+            task.spawn(farmGingerbread)
         else
             Rayfield:Notify({
                 Title = "Stopped",
@@ -388,74 +287,59 @@ local Toggle = MainTab:CreateToggle({
 })
 
 MainTab:CreateButton({
-    Name = "Cache Gingerbread Positions",
+    Name = "Move to Start Position",
     Callback = function()
-        cacheGingerbreadPositions()
+        local positions = findGingerbreadPositions()
+        if positions[Settings.StartIndex] then
+            moveToPosition(positions[Settings.StartIndex] + Vector3.new(0, 3, 0))
+            Rayfield:Notify({
+                Title = "Teleported",
+                Content = "Moved to starting position #" .. Settings.StartIndex,
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Find All Positions",
+    Callback = function()
+        local positions = findGingerbreadPositions()
         Rayfield:Notify({
-            Title = "Positions Cached",
-            Content = string.format("Found %d gingerbread locations", #GingerbreadLocations),
-            Duration = 3,
+            Title = "Found Positions",
+            Content = "Found " .. #positions .. " gingerbread positions",
+            Duration = 5,
             Image = 4483362458
         })
     end
 })
 
-MainTab:CreateButton({
-    Name = "Go to Start Position",
-    Callback = function()
-        local gingerbread = findGingerbreadAtIndex(Settings.StartIndex)
-        if gingerbread then
-            local success = walkToPosition(gingerbread.Position)
-            if success then
-                Rayfield:Notify({
-                    Title = "Arrived",
-                    Content = "Reached gingerbread #" .. Settings.StartIndex,
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
-        end
-    end
-})
-
--- Movement Tab
+-- Teleport Tab
 TeleportTab:CreateSection("Movement Settings")
 
 TeleportTab:CreateSlider({
-    Name = "Walking Speed",
-    Range = {8, 50},
-    Increment = 1,
-    Suffix = "studs/sec",
-    CurrentValue = Settings.WalkSpeed,
-    Flag = "WalkSpeedSlider",
-    Callback = function(Value)
-        Settings.WalkSpeed = Value
-        if Humanoid then
-            Humanoid.WalkSpeed = Value
-        end
-    end
-})
-
-TeleportTab:CreateSlider({
-    Name = "Collection Delay",
-    Range = {0.1, 2},
+    Name = "Movement Delay",
+    Range = {0.5, 5},
     Increment = 0.1,
     Suffix = "seconds",
-    CurrentValue = Settings.CollectionDelay,
-    Flag = "CollectionDelaySlider",
+    CurrentValue = Settings.MoveDelay,
+    Flag = "MoveDelaySlider",
     Callback = function(Value)
-        Settings.CollectionDelay = Value
+        Settings.MoveDelay = Value
     end
 })
 
 TeleportTab:CreateToggle({
-    Name = "Use Pathfinding",
-    CurrentValue = Settings.UsePathfinding,
-    Flag = "UsePathfinding",
+    Name = "Natural Movement",
+    CurrentValue = Settings.NaturalMovement,
+    Flag = "NaturalMovement",
     Callback = function(Value)
-        Settings.UsePathfinding = Value
+        Settings.NaturalMovement = Value
     end
 })
+
+TeleportTab:CreateSection("Index Settings")
 
 TeleportTab:CreateInput({
     Name = "Start Index",
@@ -465,7 +349,7 @@ TeleportTab:CreateInput({
     Flag = "StartIndex",
     Callback = function(Value)
         local num = tonumber(Value)
-        if num and num > 0 then
+        if num then
             Settings.StartIndex = num
         end
     end
@@ -479,7 +363,7 @@ TeleportTab:CreateInput({
     Flag = "EndIndex",
     Callback = function(Value)
         local num = tonumber(Value)
-        if num and num > 0 then
+        if num then
             Settings.EndIndex = num
         end
     end
@@ -507,18 +391,14 @@ SettingsTab:CreateToggle({
 })
 
 SettingsTab:CreateButton({
-    Name = "Reset Character Speed",
+    Name = "Save Settings",
     Callback = function()
-        if Humanoid then
-            Humanoid.WalkSpeed = 16
-            Settings.WalkSpeed = 16
-            Rayfield:Notify({
-                Title = "Speed Reset",
-                Content = "Walk speed reset to 16",
-                Duration = 3,
-                Image = 4483362458
-            })
-        end
+        Rayfield:Notify({
+            Title = "Settings Saved",
+            Content = "Your settings have been saved!",
+            Duration = 3,
+            Image = 4483362458
+        })
     end
 })
 
@@ -527,19 +407,14 @@ Player.CharacterAdded:Connect(function(newChar)
     Character = newChar
     HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
     Humanoid = newChar:WaitForChild("Humanoid")
-    
-    -- Restore walk speed
-    if Humanoid and Settings.WalkSpeed then
-        Humanoid.WalkSpeed = Settings.WalkSpeed
-    end
 end)
 
 -- Initial notification
 Rayfield:Notify({
     Title = "Gingerbread Farm",
-    Content = "UI loaded with smooth movement! 🍪",
+    Content = "UI loaded successfully! 🍪\nWill move sequentially from #32 to #188",
     Duration = 5,
     Image = 4483362458
 })
 
-print("[Gingerbread Farm] UI Loaded Successfully with Smooth Movement!")
+print("[Gingerbread Farm] UI Loaded Successfully!")
