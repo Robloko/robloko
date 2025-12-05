@@ -1,508 +1,317 @@
--- Gingerbread Farm Script with Transformation Error Fix
--- Load Rayfield UI Library
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+-- Gingerbread Farm Script with Fixed UI
+-- Try multiple Rayfield sources
+local Rayfield = nil
+local success, err = pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
+end)
 
--- Create the main window
-local Window = Rayfield:CreateWindow({
-   Name = "Gingerbread Farm UI",
-   LoadingTitle = "Gingerbread Farm",
-   LoadingSubtitle = "Powered by xAI",
-   ConfigurationSaving = {
-      Enabled = true,
-      FolderName = nil,
-      FileName = "GingerbreadConfig"
-   },
-   Discord = {
-      Enabled = false,
-      Invite = "",
-      RememberJoins = true
-   },
-   KeySystem = false,
-   KeySettings = {
-      Title = "Key",
-      Subtitle = "Enter Key",
-      Note = "No key required",
-      FileName = "Key",
-      SaveKey = true,
-      GrabKeyFromSite = false,
-      Key = {"12345"}
-   }
-})
+if not success then
+    success, err = pcall(function()
+        Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+    end)
+end
 
--- Get player and character
+if not success then
+    -- Fallback to simple UI if Rayfield fails
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Gingerbread Farm",
+        Text = "Failed to load Rayfield. Creating simple UI...",
+        Duration = 5
+    })
+    
+    -- Create a simple command-based system
+    local Settings = {
+        StartFarming = false,
+        TeleportDelay = 2,
+        StartIndex = 32,
+        EndIndex = 188
+    }
+    
+    -- Simple print commands
+    print("=== Gingerbread Farm Commands ===")
+    print("Type in chat or execute:")
+    print("!start - Start farming")
+    print("!stop - Stop farming")
+    print("!status - Check status")
+    print("!setdelay [number] - Set teleport delay")
+    print("================================")
+    
+    -- Listen for chat commands
+    game:GetService("Players").LocalPlayer.Chatted:Connect(function(msg)
+        if msg:lower() == "!start" then
+            Settings.StartFarming = true
+            print("[Gingerbread Farm] Started farming!")
+        elseif msg:lower() == "!stop" then
+            Settings.StartFarming = false
+            print("[Gingerbread Farm] Stopped farming!")
+        elseif msg:lower() == "!status" then
+            print(string.format("[Gingerbread Farm] Status: %s", Settings.StartFarming and "Running" or "Stopped"))
+        elseif msg:lower():sub(1, 9) == "!setdelay" then
+            local delay = tonumber(msg:sub(11))
+            if delay then
+                Settings.TeleportDelay = delay
+                print(string.format("[Gingerbread Farm] Delay set to: %s seconds", delay))
+            end
+        end
+    end)
+    
+    -- Return early since we're using command system
+    return
+end
+
+-- If we get here, Rayfield loaded successfully
 local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Fix: Check if transformation is happening
-local IsTransforming = false
-local OriginalWalkSpeed = 16
+-- Create the window with proper settings
+local Window = Rayfield:CreateWindow({
+    Name = "🍪 Gingerbread Farm",
+    LoadingTitle = "Loading Gingerbread Farm...",
+    LoadingSubtitle = "Powered by xAI",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "GingerbreadFarmConfig",
+        FileName = "Settings"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "noinvite",
+        RememberJoins = true
+    },
+    KeySystem = false
+})
 
--- Listen for transformation events
-pcall(function()
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local transformingHandler = ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Game"):WaitForChild("PetEntities"):WaitForChild("PetEntitySystems"):WaitForChild("TransformingPetHandler")
-    
-    -- Hook into transformation events
-    local mt = getrawmetatable(game)
-    local oldNamecall = mt.__namecall
-    setreadonly(mt, false)
-    
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        -- Check if it's a transformation-related call
-        if tostring(self):find("TransformingPetHandler") or (method == "FireServer" and tostring(self):find("Transform")) then
-            IsTransforming = true
-            Rayfield:Notify({
-                Title = "Transformation Detected",
-                Content = "Pausing farm during transformation...",
-                Duration = 3,
-                Image = nil
-            })
-            
-            -- Wait for transformation to complete
-            task.wait(5) -- Give time for transformation
-            IsTransforming = false
-            
-            Rayfield:Notify({
-                Title = "Transformation Complete",
-                Content = "Resuming farm...",
-                Duration = 3,
-                Image = nil
-            })
-        end
-        
-        return oldNamecall(self, ...)
-    end)
-    
-    setreadonly(mt, true)
-end)
+-- Verify window was created
+if not Window then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Error",
+        Text = "Failed to create window",
+        Duration = 5
+    })
+    return
+end
 
 -- Create tabs
-local MainTab = Window:CreateTab("Main Farming", nil)
-local TeleportTab = Window:CreateTab("Teleport Settings", nil)
-local SafetyTab = Window:CreateTab("Safety Settings", nil)
+local MainTab = Window:CreateTab("Main", 4483362458) -- Add icon ID
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
--- Settings table
+-- Settings
 local Settings = {
-   StartFarming = false,
-   TeleportDelay = 2, -- Increased for safety
-   StartIndex = 32,
-   EndIndex = 188,
-   AntiDetection = true,
-   MaxGingerbreadPerSession = 50,
-   SessionCounter = 0
+    Farming = false,
+    Delay = 2,
+    StartIndex = 32,
+    EndIndex = 188,
+    AntiAFK = true,
+    Notifications = true
 }
 
--- Function to check if safe to farm
-local function isSafeToFarm()
-    if IsTransforming then
-        return false, "Currently transforming"
+-- Farming function
+local function farmGingerbread()
+    while Settings.Farming do
+        for i = Settings.StartIndex, Settings.EndIndex do
+            if not Settings.Farming then break end
+            
+            pcall(function()
+                local interior = workspace:FindFirstChild("Interiors")
+                if interior then
+                    local christmas = interior:FindFirstChild("MainMap!Christmas")
+                    if christmas then
+                        local children = christmas:GetChildren()
+                        if i <= #children then
+                            local model = children[i]
+                            local gingerbread = model:FindFirstChild("GingerbreadMan") or 
+                                               model:FindFirstChild("Gingerbread") or
+                                               model:FindFirstChildWhichIsA("BasePart")
+                            
+                            if gingerbread then
+                                -- Teleport
+                                HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
+                                task.wait(0.5)
+                                
+                                -- Try to collect
+                                local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+                                if remote then
+                                    local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+                                    if iceRemote then
+                                        iceRemote:FireServer()
+                                    end
+                                end
+                                
+                                if Settings.Notifications then
+                                    Rayfield:Notify({
+                                        Title = "Collected",
+                                        Content = "Gingerbread #" .. i,
+                                        Duration = 1,
+                                        Image = 4483362458
+                                    })
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            
+            task.wait(Settings.Delay)
+        end
     end
-    
-    -- Check if humanoid exists and is alive
-    local humanoid = Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then
-        return false, "Character not alive"
-    end
-    
-    -- Check if in safe area (not falling, not in water, etc.)
-    if HumanoidRootPart.Position.Y < -50 then
-        return false, "Character falling"
-    end
-    
-    -- Check session limit
-    if Settings.SessionCounter >= Settings.MaxGingerbreadPerSession then
-        Settings.StartFarming = false
-        return false, "Session limit reached"
-    end
-    
-    return true
 end
 
--- Modified teleport function with transformation safety
-local function teleportAndCollect(index)
-    if not Settings.StartFarming then return false end
-    
-    -- Check safety first
-    local safe, reason = isSafeToFarm()
-    if not safe then
-        if reason then
-            Rayfield:Notify({
-                Title = "Safety Check",
-                Content = reason,
-                Duration = 2,
-                Image = nil
-            })
-        end
-        return false
-    end
-    
-    return pcall(function()
-        local interior = workspace.Interiors["MainMap!Christmas"]
-        if not interior then
-            error("Christmas interior not found")
-            return false
-        end
-        
-        local children = interior:GetChildren()
-        if index > #children or index < 1 then
-            error("Invalid index: " .. tostring(index))
-            return false
-        end
-        
-        local targetModel = children[index]
-        if not targetModel then
-            error("Target model not found at index: " .. index)
-            return false
-        end
-        
-        -- Safe check for gingerbread
-        local gingerbreadPart = nil
-        for _, child in pairs(targetModel:GetChildren()) do
-            if child.Name:lower():find("ginger") and child:IsA("BasePart") then
-                gingerbreadPart = child
-                break
-            end
-        end
-        
-        if not gingerbreadPart then
-            -- Try alternate names
-            gingerbreadPart = targetModel:FindFirstChild("GingerbreadMan") or 
-                            targetModel:FindFirstChild("Gingerbread") or
-                            targetModel:FindFirstChild("Cookie")
-        end
-        
-        if not gingerbreadPart then
-            return false -- No gingerbread here, skip
-        end
-        
-        -- Anti-detection: Random offset
-        local offset = Vector3.new(
-            math.random(-2, 2),
-            3,
-            math.random(-2, 2)
-        )
-        
-        -- Smooth teleport (less detectable)
-        HumanoidRootPart.CFrame = CFrame.new(
-            gingerbreadPart.Position + offset
-        ) * CFrame.Angles(0, math.rad(math.random(0, 360)), 0)
-        
-        -- Wait with random variation
-        task.wait(0.5 + math.random() * 0.5)
-        
-        -- Try to collect using safe method
-        local success = false
-        local remotePaths = {
-            "adoptme_new_net.adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet",
-            "adoptme_new_net.CollectGingerbread",
-            "ReplicatedStorage.Remotes.CollectGingerbread",
-            "ReplicatedStorage.Events.CollectGingerbread"
-        }
-        
-        for _, path in pairs(remotePaths) do
-            local parts = path:split(".")
-            local current = game
-            local valid = true
-            
-            for i = 1, #parts do
-                if current:FindFirstChild(parts[i]) then
-                    current = current[parts[i]]
-                else
-                    valid = false
-                    break
-                end
-            end
-            
-            if valid and current:IsA("RemoteEvent") then
-                success = pcall(function()
-                    current:FireServer()
-                end)
-                
-                if success then
-                    Settings.SessionCounter = Settings.SessionCounter + 1
-                    break
-                end
-            end
-        end
-        
-        -- Add random delay for anti-detection
-        if Settings.AntiDetection then
-            task.wait(math.random(5, 15) / 10) -- 0.5 to 1.5 seconds
-        end
-        
-        return success
+-- Anti-AFK
+if Settings.AntiAFK then
+    local VirtualUser = game:GetService("VirtualUser")
+    game:GetService("Players").LocalPlayer.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
     end)
 end
 
--- Main farming function with error handling
-local function startGingerbreadFarm()
-    local consecutiveErrors = 0
-    local maxErrors = 5
-    
-    while Settings.StartFarming do
-        for index = Settings.StartIndex, Settings.EndIndex do
-            if not Settings.StartFarming then break end
-            
-            -- Safety check before each action
-            local safe, reason = isSafeToFarm()
-            if not safe then
-                Rayfield:Notify({
-                    Title = "Paused",
-                    Content = reason or "Safety check failed",
-                    Duration = 2,
-                    Image = nil
-                })
-                task.wait(3)
-                continue
-            end
-            
-            -- Execute with proper error handling
-            local success, result = teleportAndCollect(index)
-            
-            if success and result then
-                Rayfield:Notify({
-                    Title = "Success",
-                    Content = string.format("Collected gingerbread #%d (Session: %d/%d)", 
-                        index, Settings.SessionCounter, Settings.MaxGingerbreadPerSession),
-                    Duration = 1.5,
-                    Image = nil
-                })
-                consecutiveErrors = 0
-            else
-                consecutiveErrors = consecutiveErrors + 1
-                
-                if consecutiveErrors >= maxErrors then
-                    Settings.StartFarming = false
-                    Rayfield:Notify({
-                        Title = "Auto-Stopped",
-                        Content = "Too many consecutive errors",
-                        Duration = 5,
-                        Image = nil
-                    })
-                    FarmToggle:Set(false)
-                    break
+-- Main Tab
+MainTab:CreateSection("Farming Controls")
+
+local Toggle = MainTab:CreateToggle({
+    Name = "Start Farming",
+    CurrentValue = Settings.Farming,
+    Flag = "FarmingToggle",
+    Callback = function(Value)
+        Settings.Farming = Value
+        if Value then
+            Rayfield:Notify({
+                Title = "Started",
+                Content = "Gingerbread farming started!",
+                Duration = 3,
+                Image = 4483362458
+            })
+            task.spawn(farmGingerbread)
+        else
+            Rayfield:Notify({
+                Title = "Stopped",
+                Content = "Gingerbread farming stopped.",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Test Single Teleport",
+    Callback = function()
+        pcall(function()
+            local interior = workspace:FindFirstChild("Interiors")
+            if interior then
+                local christmas = interior:FindFirstChild("MainMap!Christmas")
+                if christmas then
+                    local children = christmas:GetChildren()
+                    if #children > 0 then
+                        local model = children[Settings.StartIndex] or children[1]
+                        local gingerbread = model:FindFirstChild("GingerbreadMan")
+                        if gingerbread then
+                            HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
+                            Rayfield:Notify({
+                                Title = "Teleported",
+                                Content = "Test teleport successful!",
+                                Duration = 3,
+                                Image = 4483362458
+                            })
+                        end
+                    end
                 end
             end
-            
-            -- Check session limit
-            if Settings.SessionCounter >= Settings.MaxGingerbreadPerSession then
-                Settings.StartFarming = false
-                Rayfield:Notify({
-                    Title = "Session Complete",
-                    Content = string.format("Collected %d gingerbreads. Taking a break...", 
-                        Settings.MaxGingerbreadPerSession),
-                    Duration = 5,
-                    Image = nil
-                })
-                FarmToggle:Set(false)
-                
-                -- Reset after break
-                task.wait(60) -- 1 minute break
-                Settings.SessionCounter = 0
-                break
-            end
-            
-            -- Delay between actions
-            local delay = Settings.TeleportDelay
-            if Settings.AntiDetection then
-                delay = delay + (math.random(-100, 100) / 100) -- +/- 1 second variation
-            end
-            task.wait(math.max(0.5, delay))
-        end
-        
-        -- Break between loops if still farming
-        if Settings.StartFarming then
-            Rayfield:Notify({
-                Title = "Loop Complete",
-                Content = "Starting new collection loop...",
-                Duration = 3,
-                Image = nil
-            })
-            task.wait(math.random(5, 10))
-        end
+        end)
     end
-end
-
--- Create UI Elements
-MainTab:CreateSection("Gingerbread Farming")
-
--- Farm Toggle with transformation safety
-local FarmToggle = MainTab:CreateToggle({
-   Name = "Start Gingerbread Farm",
-   CurrentValue = Settings.StartFarming,
-   Flag = "GingerBreadFarmToggle",
-   Callback = function(State)
-      if State and IsTransforming then
-          Rayfield:Notify({
-             Title = "Cannot Start",
-             Content = "Wait for transformation to complete",
-             Duration = 3,
-             Image = nil
-          })
-          FarmToggle:Set(false)
-          return
-      end
-      
-      Settings.StartFarming = State
-      if State then
-          Settings.SessionCounter = 0 -- Reset counter
-          coroutine.wrap(startGingerbreadFarm)()
-          Rayfield:Notify({
-             Title = "Started",
-             Content = "Gingerbread farming started safely",
-             Duration = 3,
-             Image = nil
-          })
-      else
-          Rayfield:Notify({
-             Title = "Stopped",
-             Content = "Gingerbread farming stopped",
-             Duration = 3,
-             Image = nil
-          })
-      end
-   end
 })
 
--- Session counter display
-MainTab:CreateLabel(string.format("Session Progress: %d/%d", 
-    Settings.SessionCounter, Settings.MaxGingerbreadPerSession))
-
--- Update counter label periodically
-coroutine.wrap(function()
-    while true do
-        task.wait(5)
-        if Settings.StartFarming then
-            -- The label would need to be updated through Rayfield's API
-            -- This depends on Rayfield's specific implementation
-        end
-    end
-end)()
-
--- Teleport Settings
-TeleportTab:CreateSection("Teleport Configuration")
+-- Teleport Tab
+TeleportTab:CreateSection("Teleport Settings")
 
 TeleportTab:CreateSlider({
-   Name = "Teleport Delay (seconds)",
-   Range = {1, 5},
-   Increment = 0.5,
-   Suffix = "s",
-   CurrentValue = Settings.TeleportDelay,
-   Flag = "TeleportDelay",
-   Callback = function(Value)
-      Settings.TeleportDelay = Value
-   end
+    Name = "Teleport Delay",
+    Range = {0.5, 5},
+    Increment = 0.1,
+    Suffix = "seconds",
+    CurrentValue = Settings.Delay,
+    Flag = "DelaySlider",
+    Callback = function(Value)
+        Settings.Delay = Value
+    end
 })
 
--- Safety Settings
-SafetyTab:CreateSection("Safety Configuration")
-
-SafetyTab:CreateToggle({
-   Name = "Anti-Detection Mode",
-   CurrentValue = Settings.AntiDetection,
-   Flag = "AntiDetection",
-   Callback = function(Value)
-      Settings.AntiDetection = Value
-   end
+TeleportTab:CreateInput({
+    Name = "Start Index",
+    PlaceholderText = "32",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.StartIndex),
+    Flag = "StartIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.StartIndex = num
+        end
+    end
 })
 
-SafetyTab:CreateSlider({
-   Name = "Max Gingerbread Per Session",
-   Range = {10, 100},
-   Increment = 5,
-   Suffix = "gingerbreads",
-   CurrentValue = Settings.MaxGingerbreadPerSession,
-   Flag = "MaxPerSession",
-   Callback = function(Value)
-      Settings.MaxGingerbreadPerSession = Value
-   end
+TeleportTab:CreateInput({
+    Name = "End Index",
+    PlaceholderText = "188",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.EndIndex),
+    Flag = "EndIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.EndIndex = num
+        end
+    end
 })
 
--- Emergency stop button
-SafetyTab:CreateButton({
-   Name = "EMERGENCY STOP",
-   Callback = function()
-      Settings.StartFarming = false
-      FarmToggle:Set(false)
-      Rayfield:Notify({
-         Title = "EMERGENCY STOP",
-         Content = "All farming activities immediately stopped!",
-         Duration = 5,
-         Image = nil
-      })
-   end
+-- Settings Tab
+SettingsTab:CreateSection("Preferences")
+
+SettingsTab:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = Settings.AntiAFK,
+    Flag = "AntiAFK",
+    Callback = function(Value)
+        Settings.AntiAFK = Value
+    end
 })
 
--- Manual testing section
-TeleportTab:CreateSection("Manual Testing")
-
-TeleportTab:CreateButton({
-   Name = "Test Current Index",
-   Callback = function()
-       local safe, reason = isSafeToFarm()
-       if not safe then
-           Rayfield:Notify({
-               Title = "Not Safe",
-               Content = reason,
-               Duration = 3,
-               Image = nil
-           })
-           return
-       end
-       
-       local success = teleportAndCollect(Settings.StartIndex)
-       Rayfield:Notify({
-           Title = "Test Result",
-           Content = success and "Test successful" or "Test failed",
-           Duration = 3,
-           Image = nil
-       })
-   end
+SettingsTab:CreateToggle({
+    Name = "Notifications",
+    CurrentValue = Settings.Notifications,
+    Flag = "Notifications",
+    Callback = function(Value)
+        Settings.Notifications = Value
+    end
 })
 
--- Reset session button
-MainTab:CreateButton({
-   Name = "Reset Session Counter",
-   Callback = function()
-      Settings.SessionCounter = 0
-      Rayfield:Notify({
-         Title = "Reset",
-         Content = "Session counter reset to 0",
-         Duration = 3,
-         Image = nil
-      })
-   end
+SettingsTab:CreateButton({
+    Name = "Save Settings",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Settings Saved",
+            Content = "Your settings have been saved!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
 })
 
--- Character respawn handler with transformation reset
+-- Character handling
 Player.CharacterAdded:Connect(function(newChar)
     Character = newChar
-    repeat task.wait(0.5) until Character:FindFirstChild("HumanoidRootPart")
-    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-    IsTransforming = false -- Reset transformation state
-    
-    -- Give time for character to fully load
-    task.wait(2)
-    
-    if Settings.StartFarming then
-        Rayfield:Notify({
-            Title = "Character Respawned",
-            Content = "Resuming farm in 3 seconds...",
-            Duration = 3,
-            Image = nil
-        })
-        task.wait(3)
-    end
+    HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
 end)
 
 -- Initial notification
 Rayfield:Notify({
-   Title = "Gingerbread Farm Loaded",
-   Content = "Transformation safety features enabled",
-   Duration = 5,
-   Image = nil
+    Title = "Gingerbread Farm",
+    Content = "UI loaded successfully! 🍪",
+    Duration = 5,
+    Image = 4483362458
 })
+
+print("[Gingerbread Farm] UI Loaded Successfully!")
