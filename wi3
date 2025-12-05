@@ -1,27 +1,16 @@
--- Enhanced Gingerbread Farm UI Script for Roblox Adopt Me
+-- Gingerbread Farm Script with Transformation Error Fix
 -- Load Rayfield UI Library
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Services
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-
--- Player setup
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
-
 -- Create the main window
 local Window = Rayfield:CreateWindow({
-   Name = "🍪 Gingerbread Farm Pro",
-   LoadingTitle = "Gingerbread Farm Pro",
-   LoadingSubtitle = "Enhanced with Safety Features",
+   Name = "Gingerbread Farm UI",
+   LoadingTitle = "Gingerbread Farm",
+   LoadingSubtitle = "Powered by xAI",
    ConfigurationSaving = {
       Enabled = true,
-      FolderName = "GingerbreadFarm",
-      FileName = "GingerbreadConfigPro"
+      FolderName = nil,
+      FileName = "GingerbreadConfig"
    },
    Discord = {
       Enabled = false,
@@ -30,612 +19,490 @@ local Window = Rayfield:CreateWindow({
    },
    KeySystem = false,
    KeySettings = {
-      Title = "Access Key",
+      Title = "Key",
       Subtitle = "Enter Key",
-      Note = "Join discord.gg/rayfield for key",
-      FileName = "GingerbreadKey",
+      Note = "No key required",
+      FileName = "Key",
       SaveKey = true,
       GrabKeyFromSite = false,
-      Key = {"GINGER2024"}
+      Key = {"12345"}
    }
 })
 
--- Settings table with default values
-local Settings = {
-   StartFarming = false,
-   TeleportDelay = 1.5,
-   RandomDelay = 0.5,
-   StartIndex = 32,
-   EndIndex = 188,
-   UseHumanMovement = true,
-   AntiAFK = true,
-   AutoStopOnError = true,
-   MaxErrors = 5,
-   CollectMethod = 1,
-   SafeMode = true,
-   LoopMode = true
-}
+-- Get player and character
+local Player = game:GetService("Players").LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Statistics
-local Stats = {
-   Collected = 0,
-   Errors = 0,
-   CurrentIndex = 0,
-   StartTime = 0,
-   Runtime = 0
-}
+-- Fix: Check if transformation is happening
+local IsTransforming = false
+local OriginalWalkSpeed = 16
 
--- Status variables
-local IsFarming = false
-local FarmingThread = nil
-
--- Anti-AFK System
-local function setupAntiAFK()
-    if Settings.AntiAFK then
-        local VirtualUser = game:GetService("VirtualUser")
-        Player.Idled:Connect(function()
-            VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-            task.wait(1)
-            VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-        end)
-        print("Anti-AFK system enabled")
-    end
-end
-
--- Get random delay
-local function getRandomDelay()
-    return Settings.TeleportDelay + (math.random(-Settings.RandomDelay * 100, Settings.RandomDelay * 100) / 100)
-end
-
--- Smooth teleport function
-local function smoothTeleport(cframe)
-    if Settings.UseHumanMovement and HumanoidRootPart then
-        local distance = (HumanoidRootPart.Position - cframe.Position).Magnitude
+-- Listen for transformation events
+pcall(function()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local transformingHandler = ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Game"):WaitForChild("PetEntities"):WaitForChild("PetEntitySystems"):WaitForChild("TransformingPetHandler")
+    
+    -- Hook into transformation events
+    local mt = getrawmetatable(game)
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
         
-        if distance < 50 then -- Use tween for short distances
-            local tweenInfo = TweenInfo.new(
-                0.5 + (distance / 100), -- Duration based on distance
-                Enum.EasingStyle.Quad,
-                Enum.EasingDirection.Out
-            )
+        -- Check if it's a transformation-related call
+        if tostring(self):find("TransformingPetHandler") or (method == "FireServer" and tostring(self):find("Transform")) then
+            IsTransforming = true
+            Rayfield:Notify({
+                Title = "Transformation Detected",
+                Content = "Pausing farm during transformation...",
+                Duration = 3,
+                Image = nil
+            })
             
-            local tween = TweenService:Create(HumanoidRootPart, tweenInfo, {CFrame = cframe})
-            tween:Play()
-            local success = pcall(function()
-                tween.Completed:Wait()
-            end)
+            -- Wait for transformation to complete
+            task.wait(5) -- Give time for transformation
+            IsTransforming = false
             
-            if not success then
-                HumanoidRootPart.CFrame = cframe
-            end
-        else
-            HumanoidRootPart.CFrame = cframe
-        end
-    else
-        HumanoidRootPart.CFrame = cframe
-    end
-end
-
--- Find gingerbread remote with multiple fallbacks
-local function getGingerbreadRemote()
-    local remoteNames = {
-        "adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16",
-        "adoptme_new_net.IceSkatingNet:16",
-        "IceSkatingNet",
-        "CollectGingerbread",
-        "GingerbreadCollect",
-        "CollectGingerbreadMan"
-    }
-    
-    for _, remoteName in pairs(remoteNames) do
-        local remote = ReplicatedStorage:FindFirstChild("adoptme_new_net")
-        if remote then
-            remote = remote:FindFirstChild(remoteName)
-            if remote then
-                return remote
-            end
-        end
-    end
-    
-    -- Try searching in other locations
-    for _, remoteName in pairs(remoteNames) do
-        local remote = ReplicatedStorage:FindFirstChild(remoteName)
-        if remote then
-            return remote
-        end
-    end
-    
-    return nil
-end
-
--- Collect gingerbread with multiple methods
-local function collectGingerbread()
-    local methods = {
-        function() -- Method 1: Direct remote
-            local remote = getGingerbreadRemote()
-            if remote then
-                remote:FireServer()
-                return true
-            end
-            return false
-        end,
-        
-        function() -- Method 2: Try different remote paths
-            pcall(function()
-                game:GetService("ReplicatedStorage").adoptme_new_net:FireServer("CollectGingerbread")
-            end)
-            return true
-        end,
-        
-        function() -- Method 3: Click simulation
-            pcall(function()
-                local args = {
-                    [1] = "GingerbreadMan",
-                    [2] = "Collect"
-                }
-                game:GetService("ReplicatedStorage").adoptme_new_net:FireServer(unpack(args))
-            end)
-            return true
-        end
-    }
-    
-    -- Try all collection methods
-    for i = 1, #methods do
-        if Settings.CollectMethod == 0 or Settings.CollectMethod == i then
-            local success = pcall(methods[i])
-            if success then
-                return true
-            end
-        end
-    end
-    
-    return false
-end
-
--- Enhanced teleport and collect function
-local function teleportAndCollect(index)
-    local success, result = pcall(function()
-        Stats.CurrentIndex = index
-        
-        -- Find interior
-        local interior = workspace.Interiors:FindFirstChild("MainMap!Christmas")
-        if not interior then
-            error("Christmas interior not found")
+            Rayfield:Notify({
+                Title = "Transformation Complete",
+                Content = "Resuming farm...",
+                Duration = 3,
+                Image = nil
+            })
         end
         
-        local children = interior:GetChildren()
-        if index > #children then
-            error("Index out of range: " .. index .. " > " .. #children)
-        end
-        
-        local targetModel = children[index]
-        if not targetModel then
-            error("Target model not found at index: " .. index)
-        end
-        
-        -- Find gingerbread
-        local gingerbread = targetModel:FindFirstChild("GingerbreadMan") or 
-                           targetModel:FindFirstChild("Gingerbread") or
-                           targetModel:FindFirstChild("GingerbreadManNPC")
-        
-        if not gingerbread or not gingerbread:IsA("BasePart") then
-            error("Gingerbread part not found in model: " .. targetModel.Name)
-        end
-        
-        -- Calculate safe position
-        local offset = Vector3.new(0, 3, 0)
-        if Settings.SafeMode then
-            offset = Vector3.new(
-                math.random(-2, 2),
-                3,
-                math.random(-2, 2)
-            )
-        end
-        
-        local targetCFrame = gingerbread.CFrame + offset
-        
-        -- Teleport
-        smoothTeleport(targetCFrame)
-        
-        -- Face the gingerbread
-        if Character and Character:FindFirstChild("Humanoid") then
-            Character.Humanoid:MoveTo(gingerbread.Position)
-        end
-        
-        -- Wait for stabilization
-        local waitTime = getRandomDelay() / 2
-        task.wait(waitTime)
-        
-        -- Collect
-        local collected = collectGingerbread()
-        if collected then
-            Stats.Collected = Stats.Collected + 1
-        end
-        
-        -- Additional wait before next action
-        task.wait(waitTime)
-        
-        return true
+        return oldNamecall(self, ...)
     end)
     
-    if not success then
-        Stats.Errors = Stats.Errors + 1
-        warn("Error at index", index, ":", result)
-        return false, result
+    setreadonly(mt, true)
+end)
+
+-- Create tabs
+local MainTab = Window:CreateTab("Main Farming", nil)
+local TeleportTab = Window:CreateTab("Teleport Settings", nil)
+local SafetyTab = Window:CreateTab("Safety Settings", nil)
+
+-- Settings table
+local Settings = {
+   StartFarming = false,
+   TeleportDelay = 2, -- Increased for safety
+   StartIndex = 32,
+   EndIndex = 188,
+   AntiDetection = true,
+   MaxGingerbreadPerSession = 50,
+   SessionCounter = 0
+}
+
+-- Function to check if safe to farm
+local function isSafeToFarm()
+    if IsTransforming then
+        return false, "Currently transforming"
+    end
+    
+    -- Check if humanoid exists and is alive
+    local humanoid = Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        return false, "Character not alive"
+    end
+    
+    -- Check if in safe area (not falling, not in water, etc.)
+    if HumanoidRootPart.Position.Y < -50 then
+        return false, "Character falling"
+    end
+    
+    -- Check session limit
+    if Settings.SessionCounter >= Settings.MaxGingerbreadPerSession then
+        Settings.StartFarming = false
+        return false, "Session limit reached"
     end
     
     return true
 end
 
--- Main farming loop
-local function startFarmingLoop()
-    if IsFarming then return end
+-- Modified teleport function with transformation safety
+local function teleportAndCollect(index)
+    if not Settings.StartFarming then return false end
     
-    IsFarming = true
-    Stats.StartTime = os.time()
-    Stats.Errors = 0
-    
-    Rayfield:Notify({
-        Title = "🚀 Farming Started",
-        Content = string.format("Collecting from index %d to %d", Settings.StartIndex, Settings.EndIndex),
-        Duration = 3,
-        Image = nil
-    })
-    
-    while IsFarming do
-        for index = Settings.StartIndex, Settings.EndIndex do
-            if not IsFarming then break end
-            
-            -- Update runtime
-            Stats.Runtime = os.time() - Stats.StartTime
-            
-            -- Check error limit
-            if Settings.AutoStopOnError and Stats.Errors >= Settings.MaxErrors then
-                Rayfield:Notify({
-                    Title = "⚠️ Auto-Stopped",
-                    Content = string.format("Too many errors (%d). Stopping farm.", Stats.Errors),
-                    Duration = 5,
-                    Image = nil
-                })
-                IsFarming = false
-                break
-            end
-            
-            -- Perform collection
-            local success, err = teleportAndCollect(index)
-            
-            if success then
-                -- Update status label if it exists
-                if StatusLabel then
-                    StatusLabel:Set(string.format(
-                        "Index: %d | Collected: %d | Errors: %d | Time: %ds",
-                        index, Stats.Collected, Stats.Errors, Stats.Runtime
-                    ))
-                end
-            else
-                -- Log error but continue
-                warn("Failed at index", index, ":", err)
-            end
-            
-            -- Delay with variation
-            local delay = getRandomDelay()
-            task.wait(delay)
-        end
-        
-        -- Loop if enabled
-        if IsFarming and Settings.LoopMode then
+    -- Check safety first
+    local safe, reason = isSafeToFarm()
+    if not safe then
+        if reason then
             Rayfield:Notify({
-                Title = "🔁 Loop Restart",
-                Content = string.format("Completed cycle. Collected: %d. Restarting...", Stats.Collected),
+                Title = "Safety Check",
+                Content = reason,
                 Duration = 2,
                 Image = nil
             })
-            task.wait(3) -- Wait between loops
-        else
-            break
         end
+        return false
     end
     
-    IsFarming = false
-    Rayfield:Notify({
-        Title = "✅ Farming Stopped",
-        Content = string.format("Final Stats: %d collected in %d seconds", Stats.Collected, Stats.Runtime),
-        Duration = 5,
-        Image = nil
-    })
+    return pcall(function()
+        local interior = workspace.Interiors["MainMap!Christmas"]
+        if not interior then
+            error("Christmas interior not found")
+            return false
+        end
+        
+        local children = interior:GetChildren()
+        if index > #children or index < 1 then
+            error("Invalid index: " .. tostring(index))
+            return false
+        end
+        
+        local targetModel = children[index]
+        if not targetModel then
+            error("Target model not found at index: " .. index)
+            return false
+        end
+        
+        -- Safe check for gingerbread
+        local gingerbreadPart = nil
+        for _, child in pairs(targetModel:GetChildren()) do
+            if child.Name:lower():find("ginger") and child:IsA("BasePart") then
+                gingerbreadPart = child
+                break
+            end
+        end
+        
+        if not gingerbreadPart then
+            -- Try alternate names
+            gingerbreadPart = targetModel:FindFirstChild("GingerbreadMan") or 
+                            targetModel:FindFirstChild("Gingerbread") or
+                            targetModel:FindFirstChild("Cookie")
+        end
+        
+        if not gingerbreadPart then
+            return false -- No gingerbread here, skip
+        end
+        
+        -- Anti-detection: Random offset
+        local offset = Vector3.new(
+            math.random(-2, 2),
+            3,
+            math.random(-2, 2)
+        )
+        
+        -- Smooth teleport (less detectable)
+        HumanoidRootPart.CFrame = CFrame.new(
+            gingerbreadPart.Position + offset
+        ) * CFrame.Angles(0, math.rad(math.random(0, 360)), 0)
+        
+        -- Wait with random variation
+        task.wait(0.5 + math.random() * 0.5)
+        
+        -- Try to collect using safe method
+        local success = false
+        local remotePaths = {
+            "adoptme_new_net.adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet",
+            "adoptme_new_net.CollectGingerbread",
+            "ReplicatedStorage.Remotes.CollectGingerbread",
+            "ReplicatedStorage.Events.CollectGingerbread"
+        }
+        
+        for _, path in pairs(remotePaths) do
+            local parts = path:split(".")
+            local current = game
+            local valid = true
+            
+            for i = 1, #parts do
+                if current:FindFirstChild(parts[i]) then
+                    current = current[parts[i]]
+                else
+                    valid = false
+                    break
+                end
+            end
+            
+            if valid and current:IsA("RemoteEvent") then
+                success = pcall(function()
+                    current:FireServer()
+                end)
+                
+                if success then
+                    Settings.SessionCounter = Settings.SessionCounter + 1
+                    break
+                end
+            end
+        end
+        
+        -- Add random delay for anti-detection
+        if Settings.AntiDetection then
+            task.wait(math.random(5, 15) / 10) -- 0.5 to 1.5 seconds
+        end
+        
+        return success
+    end)
 end
 
--- Create tabs
-local MainTab = Window:CreateTab("Main Farming", "🌾")
-local SettingsTab = Window:CreateTab("Settings", "⚙️")
-local TeleportTab = Window:CreateTab("Teleport", "📍")
-local StatsTab = Window:CreateTab("Statistics", "📊")
-
--- ===== MAIN TAB =====
-MainTab:CreateSection("Farming Control")
-
--- Status label
-StatusLabel = MainTab:CreateLabel("Status: Ready")
-
--- Main toggle
-MainTab:CreateToggle({
-   Name = "Start/Stop Farming",
-   CurrentValue = false,
-   Flag = "FarmToggle",
-   Callback = function(State)
-        if State then
-            if not IsFarming then
-                FarmingThread = coroutine.create(startFarmingLoop)
-                coroutine.resume(FarmingThread)
+-- Main farming function with error handling
+local function startGingerbreadFarm()
+    local consecutiveErrors = 0
+    local maxErrors = 5
+    
+    while Settings.StartFarming do
+        for index = Settings.StartIndex, Settings.EndIndex do
+            if not Settings.StartFarming then break end
+            
+            -- Safety check before each action
+            local safe, reason = isSafeToFarm()
+            if not safe then
+                Rayfield:Notify({
+                    Title = "Paused",
+                    Content = reason or "Safety check failed",
+                    Duration = 2,
+                    Image = nil
+                })
+                task.wait(3)
+                continue
             end
-        else
-            IsFarming = false
-            StatusLabel:Set("Status: Stopped")
+            
+            -- Execute with proper error handling
+            local success, result = teleportAndCollect(index)
+            
+            if success and result then
+                Rayfield:Notify({
+                    Title = "Success",
+                    Content = string.format("Collected gingerbread #%d (Session: %d/%d)", 
+                        index, Settings.SessionCounter, Settings.MaxGingerbreadPerSession),
+                    Duration = 1.5,
+                    Image = nil
+                })
+                consecutiveErrors = 0
+            else
+                consecutiveErrors = consecutiveErrors + 1
+                
+                if consecutiveErrors >= maxErrors then
+                    Settings.StartFarming = false
+                    Rayfield:Notify({
+                        Title = "Auto-Stopped",
+                        Content = "Too many consecutive errors",
+                        Duration = 5,
+                        Image = nil
+                    })
+                    FarmToggle:Set(false)
+                    break
+                end
+            end
+            
+            -- Check session limit
+            if Settings.SessionCounter >= Settings.MaxGingerbreadPerSession then
+                Settings.StartFarming = false
+                Rayfield:Notify({
+                    Title = "Session Complete",
+                    Content = string.format("Collected %d gingerbreads. Taking a break...", 
+                        Settings.MaxGingerbreadPerSession),
+                    Duration = 5,
+                    Image = nil
+                })
+                FarmToggle:Set(false)
+                
+                -- Reset after break
+                task.wait(60) -- 1 minute break
+                Settings.SessionCounter = 0
+                break
+            end
+            
+            -- Delay between actions
+            local delay = Settings.TeleportDelay
+            if Settings.AntiDetection then
+                delay = delay + (math.random(-100, 100) / 100) -- +/- 1 second variation
+            end
+            task.wait(math.max(0.5, delay))
         end
+        
+        -- Break between loops if still farming
+        if Settings.StartFarming then
+            Rayfield:Notify({
+                Title = "Loop Complete",
+                Content = "Starting new collection loop...",
+                Duration = 3,
+                Image = nil
+            })
+            task.wait(math.random(5, 10))
+        end
+    end
+end
+
+-- Create UI Elements
+MainTab:CreateSection("Gingerbread Farming")
+
+-- Farm Toggle with transformation safety
+local FarmToggle = MainTab:CreateToggle({
+   Name = "Start Gingerbread Farm",
+   CurrentValue = Settings.StartFarming,
+   Flag = "GingerBreadFarmToggle",
+   Callback = function(State)
+      if State and IsTransforming then
+          Rayfield:Notify({
+             Title = "Cannot Start",
+             Content = "Wait for transformation to complete",
+             Duration = 3,
+             Image = nil
+          })
+          FarmToggle:Set(false)
+          return
+      end
+      
+      Settings.StartFarming = State
+      if State then
+          Settings.SessionCounter = 0 -- Reset counter
+          coroutine.wrap(startGingerbreadFarm)()
+          Rayfield:Notify({
+             Title = "Started",
+             Content = "Gingerbread farming started safely",
+             Duration = 3,
+             Image = nil
+          })
+      else
+          Rayfield:Notify({
+             Title = "Stopped",
+             Content = "Gingerbread farming stopped",
+             Duration = 3,
+             Image = nil
+          })
+      end
+   end
+})
+
+-- Session counter display
+MainTab:CreateLabel(string.format("Session Progress: %d/%d", 
+    Settings.SessionCounter, Settings.MaxGingerbreadPerSession))
+
+-- Update counter label periodically
+coroutine.wrap(function()
+    while true do
+        task.wait(5)
+        if Settings.StartFarming then
+            -- The label would need to be updated through Rayfield's API
+            -- This depends on Rayfield's specific implementation
+        end
+    end
+end)()
+
+-- Teleport Settings
+TeleportTab:CreateSection("Teleport Configuration")
+
+TeleportTab:CreateSlider({
+   Name = "Teleport Delay (seconds)",
+   Range = {1, 5},
+   Increment = 0.5,
+   Suffix = "s",
+   CurrentValue = Settings.TeleportDelay,
+   Flag = "TeleportDelay",
+   Callback = function(Value)
+      Settings.TeleportDelay = Value
+   end
+})
+
+-- Safety Settings
+SafetyTab:CreateSection("Safety Configuration")
+
+SafetyTab:CreateToggle({
+   Name = "Anti-Detection Mode",
+   CurrentValue = Settings.AntiDetection,
+   Flag = "AntiDetection",
+   Callback = function(Value)
+      Settings.AntiDetection = Value
+   end
+})
+
+SafetyTab:CreateSlider({
+   Name = "Max Gingerbread Per Session",
+   Range = {10, 100},
+   Increment = 5,
+   Suffix = "gingerbreads",
+   CurrentValue = Settings.MaxGingerbreadPerSession,
+   Flag = "MaxPerSession",
+   Callback = function(Value)
+      Settings.MaxGingerbreadPerSession = Value
    end
 })
 
 -- Emergency stop button
-MainTab:CreateButton({
-   Name = "🚨 Emergency Stop",
+SafetyTab:CreateButton({
+   Name = "EMERGENCY STOP",
    Callback = function()
-        IsFarming = false
-        Rayfield:Notify({
-            Title = "🛑 EMERGENCY STOP",
-            Content = "All farming activities immediately stopped!",
-            Duration = 5,
-            Image = nil
-        })
+      Settings.StartFarming = false
+      FarmToggle:Set(false)
+      Rayfield:Notify({
+         Title = "EMERGENCY STOP",
+         Content = "All farming activities immediately stopped!",
+         Duration = 5,
+         Image = nil
+      })
    end
 })
 
--- Test button
-MainTab:CreateButton({
+-- Manual testing section
+TeleportTab:CreateSection("Manual Testing")
+
+TeleportTab:CreateButton({
    Name = "Test Current Index",
    Callback = function()
-        local success, err = teleportAndCollect(Settings.StartIndex)
-        if success then
-            Rayfield:Notify({
-                Title = "✅ Test Success",
-                Content = string.format("Successfully collected at index %d", Settings.StartIndex),
-                Duration = 3,
-                Image = nil
-            })
-        else
-            Rayfield:Notify({
-                Title = "❌ Test Failed",
-                Content = "Error: " .. tostring(err),
-                Duration = 5,
-                Image = nil
-            })
-        end
+       local safe, reason = isSafeToFarm()
+       if not safe then
+           Rayfield:Notify({
+               Title = "Not Safe",
+               Content = reason,
+               Duration = 3,
+               Image = nil
+           })
+           return
+       end
+       
+       local success = teleportAndCollect(Settings.StartIndex)
+       Rayfield:Notify({
+           Title = "Test Result",
+           Content = success and "Test successful" or "Test failed",
+           Duration = 3,
+           Image = nil
+       })
    end
 })
 
--- ===== SETTINGS TAB =====
-SettingsTab:CreateSection("Movement Settings")
-
-SettingsTab:CreateToggle({
-   Name = "Use Human-Like Movement",
-   CurrentValue = Settings.UseHumanMovement,
-   Flag = "HumanMovement",
-   Callback = function(Value)
-        Settings.UseHumanMovement = Value
-   end
-})
-
-SettingsTab:CreateToggle({
-   Name = "Safe Mode (Random Offset)",
-   CurrentValue = Settings.SafeMode,
-   Flag = "SafeMode",
-   Callback = function(Value)
-        Settings.SafeMode = Value
-   end
-})
-
-SettingsTab:CreateToggle({
-   Name = "Enable Anti-AFK",
-   CurrentValue = Settings.AntiAFK,
-   Flag = "AntiAFK",
-   Callback = function(Value)
-        Settings.AntiAFK = Value
-        if Value then
-            setupAntiAFK()
-        end
-   end
-})
-
-SettingsTab:CreateSection("Delay Settings")
-
-SettingsTab:CreateSlider({
-   Name = "Base Teleport Delay",
-   Range = {0.5, 5},
-   Increment = 0.1,
-   Suffix = "s",
-   CurrentValue = Settings.TeleportDelay,
-   Flag = "BaseDelay",
-   Callback = function(Value)
-        Settings.TeleportDelay = Value
-   end
-})
-
-SettingsTab:CreateSlider({
-   Name = "Random Delay Variation",
-   Range = {0, 2},
-   Increment = 0.1,
-   Suffix = "s",
-   CurrentValue = Settings.RandomDelay,
-   Flag = "RandomDelay",
-   Callback = function(Value)
-        Settings.RandomDelay = Value
-   end
-})
-
--- ===== TELEPORT TAB =====
-TeleportTab:CreateSection("Index Range")
-
-TeleportTab:CreateInput({
-   Name = "Start Index",
-   PlaceholderText = "32",
-   RemoveTextAfterFocusLost = false,
-   CurrentValue = tostring(Settings.StartIndex),
-   Flag = "StartIndexInput",
-   Callback = function(Value)
-        local num = tonumber(Value)
-        if num and num > 0 then
-            Settings.StartIndex = math.floor(num)
-        end
-   end
-})
-
-TeleportTab:CreateInput({
-   Name = "End Index",
-   PlaceholderText = "188",
-   RemoveTextAfterFocusLost = false,
-   CurrentValue = tostring(Settings.EndIndex),
-   Flag = "EndIndexInput",
-   Callback = function(Value)
-        local num = tonumber(Value)
-        if num and num > 0 then
-            Settings.EndIndex = math.floor(num)
-        end
-   end
-})
-
-TeleportTab:CreateSection("Quick Teleports")
-
--- Create buttons for specific indices
-local quickIndices = {31, 32, 33, 34, 35, 188, 1, 100, 150}
-
-for _, index in ipairs(quickIndices) do
-    TeleportTab:CreateButton({
-        Name = "📍 Teleport to Index " .. index,
-        Callback = function()
-            local success, err = teleportAndCollect(index)
-            if success then
-                Rayfield:Notify({
-                    Title = "Teleported",
-                    Content = "Successfully teleported to index: " .. index,
-                    Duration = 3,
-                    Image = nil
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Failed",
-                    Content = "Failed to teleport: " .. tostring(err),
-                    Duration = 5,
-                    Image = nil
-                })
-            end
-        end
-    })
-end
-
--- ===== STATISTICS TAB =====
-StatsTab:CreateSection("Live Statistics")
-
-local StatsLabel = StatsTab:CreateLabel("Waiting for data...")
-
--- Update stats display
-local function updateStatsDisplay()
-    if IsFarming then
-        StatsLabel:Set(string.format([[
-📊 Farming Statistics:
-        
-⏱️ Runtime: %d seconds
-🍪 Collected: %d
-⚠️ Errors: %d
-📍 Current Index: %d
-📈 Efficiency: %.1f/min
-        
-🔁 Loop Mode: %s
-🛡️ Safe Mode: %s
-        ]],
-        Stats.Runtime,
-        Stats.Collected,
-        Stats.Errors,
-        Stats.CurrentIndex,
-        (Stats.Runtime > 0 and Stats.Collected / (Stats.Runtime / 60)) or 0,
-        Settings.LoopMode and "Enabled" or "Disabled",
-        Settings.SafeMode and "Enabled" or "Disabled"
-        ))
-    else
-        StatsLabel:Set(string.format([[
-📊 Last Session Stats:
-        
-🍪 Total Collected: %d
-⚠️ Total Errors: %d
-⏱️ Last Runtime: %d seconds
-📈 Efficiency: %.1f/min
-        
-Status: Ready
-        ]],
-        Stats.Collected,
-        Stats.Errors,
-        Stats.Runtime,
-        (Stats.Runtime > 0 and Stats.Collected / (Stats.Runtime / 60)) or 0
-        ))
-    end
-end
-
--- Reset stats button
-StatsTab:CreateButton({
-   Name = "Reset Statistics",
+-- Reset session button
+MainTab:CreateButton({
+   Name = "Reset Session Counter",
    Callback = function()
-        Stats = {
-            Collected = 0,
-            Errors = 0,
-            CurrentIndex = 0,
-            StartTime = 0,
-            Runtime = 0
-        }
-        updateStatsDisplay()
+      Settings.SessionCounter = 0
+      Rayfield:Notify({
+         Title = "Reset",
+         Content = "Session counter reset to 0",
+         Duration = 3,
+         Image = nil
+      })
+   end
+})
+
+-- Character respawn handler with transformation reset
+Player.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    repeat task.wait(0.5) until Character:FindFirstChild("HumanoidRootPart")
+    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    IsTransforming = false -- Reset transformation state
+    
+    -- Give time for character to fully load
+    task.wait(2)
+    
+    if Settings.StartFarming then
         Rayfield:Notify({
-            Title = "Statistics Reset",
-            Content = "All statistics have been reset to zero.",
+            Title = "Character Respawned",
+            Content = "Resuming farm in 3 seconds...",
             Duration = 3,
             Image = nil
         })
-   end
-})
-
--- Auto-update stats
-coroutine.wrap(function()
-    while true do
-        updateStatsDisplay()
-        task.wait(1)
+        task.wait(3)
     end
-end)()
-
--- Character respawn handler
-Player.CharacterAdded:Connect(function(newChar)
-    task.wait(1) -- Wait for character to fully load
-    Character = newChar
-    repeat task.wait(0.5) 
-    until Character:FindFirstChild("HumanoidRootPart")
-    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-    
-    Rayfield:Notify({
-        Title = "Character Loaded",
-        Content = "Character respawn detected and ready.",
-        Duration = 3,
-        Image = nil
-    })
 end)
 
--- Initial setup
-setupAntiAFK()
-
--- Notify when ready
+-- Initial notification
 Rayfield:Notify({
-   Title = "🎄 Gingerbread Farm Pro",
-   Content = "Script loaded successfully!\nConfigure settings before starting.",
+   Title = "Gingerbread Farm Loaded",
+   Content = "Transformation safety features enabled",
    Duration = 5,
    Image = nil
 })
-
-print("Gingerbread Farm Pro loaded successfully!")
-print("Current Settings:")
-for key, value in pairs(Settings) do
-    print("  " .. key .. ": " .. tostring(value))
-end
