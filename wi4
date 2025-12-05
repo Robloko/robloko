@@ -1,0 +1,259 @@
+-- Gingerbread Farm Script with Fixed UI and Key System
+local Rayfield = nil
+local success, err = pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
+end)
+if not success then
+    success, err = pcall(function()
+        Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+    end)
+end
+
+if not success then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Gingerbread Farm",
+        Text = "Failed to load Rayfield. Script stopped.",
+        Duration = 5
+    })
+    return
+end
+
+-- Key System
+local validKeys = {
+    ["your_key_here"] = true, -- Замените на ваш ключ
+    ["another_key"] = true,
+}
+
+local function checkKey()
+    local key = Rayfield:Prompt({
+        Title = "Key System",
+        SubTitle = "Enter your key:",
+        Content = "Please enter a valid key to use the script.",
+    })
+
+    if validKeys[key] then
+        return true
+    else
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Invalid key! Script will close.",
+            Duration = 5,
+            Image = 4483362458
+        })
+        return false
+    end
+end
+
+if not checkKey() then return end
+
+-- Player and Character
+local Player = game:GetService("Players").LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+-- Create the window
+local Window = Rayfield:CreateWindow({
+    Name = "🍪 Gingerbread Farm",
+    LoadingTitle = "Loading Gingerbread Farm...",
+    LoadingSubtitle = "Powered by xAI",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "GingerbreadFarmConfig",
+        FileName = "Settings"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "noinvite",
+        RememberJoins = true
+    },
+    KeySystem = false
+})
+
+if not Window then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Error",
+        Text = "Failed to create window",
+        Duration = 5
+    })
+    return
+end
+
+-- Settings
+local Settings = {
+    Farming = false,
+    Delay = 2,
+    StartIndex = 32,
+    EndIndex = 188,
+    AntiAFK = true,
+    Notifications = true
+}
+
+-- Farming function (fixed to non-stop)
+local function farmGingerbread()
+    while Settings.Farming do
+        for i = Settings.StartIndex, Settings.EndIndex do
+            if not Settings.Farming then break end
+
+            pcall(function()
+                local interior = workspace:FindFirstChild("Interiors")
+                if interior then
+                    local christmas = interior:FindFirstChild("MainMap!Christmas")
+                    if christmas then
+                        local children = christmas:GetChildren()
+                        if i <= #children then
+                            local model = children[i]
+                            local gingerbread = model:FindFirstChild("GingerbreadMan") or
+                                               model:FindFirstChild("Gingerbread") or
+                                               model:FindFirstChildWhichIsA("BasePart")
+
+                            if gingerbread then
+                                HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
+                                task.wait(0.5)
+
+                                local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+                                if remote then
+                                    local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+                                    if iceRemote then
+                                        iceRemote:FireServer()
+                                    end
+                                end
+
+                                if Settings.Notifications then
+                                    Rayfield:Notify({
+                                        Title = "Collected",
+                                        Content = "Gingerbread #" .. i,
+                                        Duration = 1,
+                                        Image = 4483362458
+                                    })
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+
+            task.wait(Settings.Delay)
+        end
+    end
+end
+
+-- Anti-AFK
+if Settings.AntiAFK then
+    local VirtualUser = game:GetService("VirtualUser")
+    game:GetService("Players").LocalPlayer.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+-- Main Tab
+local MainTab = Window:CreateTab("Main", 4483362458)
+MainTab:CreateSection("Farming Controls")
+
+local Toggle = MainTab:CreateToggle({
+    Name = "Start Farming",
+    CurrentValue = Settings.Farming,
+    Flag = "FarmingToggle",
+    Callback = function(Value)
+        Settings.Farming = Value
+        if Value then
+            Rayfield:Notify({
+                Title = "Started",
+                Content = "Gingerbread farming started!",
+                Duration = 3,
+                Image = 4483362458
+            })
+            task.spawn(farmGingerbread)
+        else
+            Rayfield:Notify({
+                Title = "Stopped",
+                Content = "Gingerbread farming stopped.",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+-- Teleport Tab
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+TeleportTab:CreateSection("Teleport Settings")
+
+TeleportTab:CreateSlider({
+    Name = "Teleport Delay",
+    Range = {0.5, 5},
+    Increment = 0.1,
+    Suffix = "seconds",
+    CurrentValue = Settings.Delay,
+    Flag = "DelaySlider",
+    Callback = function(Value)
+        Settings.Delay = Value
+    end
+})
+
+TeleportTab:CreateInput({
+    Name = "Start Index",
+    PlaceholderText = "32",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.StartIndex),
+    Flag = "StartIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.StartIndex = num
+        end
+    end
+})
+
+TeleportTab:CreateInput({
+    Name = "End Index",
+    PlaceholderText = "188",
+    RemoveTextAfterFocusLost = false,
+    CurrentValue = tostring(Settings.EndIndex),
+    Flag = "EndIndex",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            Settings.EndIndex = num
+        end
+    end
+})
+
+-- Settings Tab
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+SettingsTab:CreateSection("Preferences")
+
+SettingsTab:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = Settings.AntiAFK,
+    Flag = "AntiAFK",
+    Callback = function(Value)
+        Settings.AntiAFK = Value
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Notifications",
+    CurrentValue = Settings.Notifications,
+    Flag = "Notifications",
+    Callback = function(Value)
+        Settings.Notifications = Value
+    end
+})
+
+-- Character handling
+Player.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+end)
+
+-- Initial notification
+Rayfield:Notify({
+    Title = "Gingerbread Farm",
+    Content = "UI loaded successfully! 🍪",
+    Duration = 5,
+    Image = 4483362458
+})
+
+print("[Gingerbread Farm] UI Loaded Successfully!")
