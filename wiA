@@ -1,75 +1,100 @@
--- UUID Finder (Paste and run)
-local function findAllUUIDs()
-    print("=== FINDING ALL UUIDs ===")
+-- Advanced Gingerbread Debugger
+local function deepDebugGingerbread(index)
+    print("\n=== DEEP DEBUG Gingerbread " .. index .. " ===")
     
-    local collectionRemote = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
     local christmasMap = workspace.Interiors["MainMap!Christmas"]
+    local gingerbread = christmasMap:GetChildren()[index]
     
-    -- UUID output array
-    local allUUIDs = {}
+    if not gingerbread then
+        print("No gingerbread at index", index)
+        return
+    end
     
-    for index = 32, 188 do
-        local gingerbread = christmasMap:GetChildren()[index]
-        if gingerbread and gingerbread.Name == "GingerbreadRig" then
-            local gingerMan = gingerbread:FindFirstChild("GingerbreadMan")
-            if gingerMan and gingerMan:IsA("MeshPart") then
-                -- Try to extract UUID from MeshId
-                local meshId = gingerMan.MeshId or ""
-                local uuid = meshId:match("{(........%-....%-....%-....%-............)}")
-                
+    print("Name:", gingerbread.Name)
+    print("ClassName:", gingerbread.ClassName)
+    
+    -- 1. List ALL children recursively
+    local function printTree(obj, depth)
+        local prefix = string.rep("  ", depth)
+        print(prefix .. obj.Name .. " (" .. obj.ClassName .. ")")
+        
+        -- Print important properties
+        if obj:IsA("BasePart") then
+            print(prefix .. "  Position: " .. math.floor(obj.Position.X) .. ", " .. 
+                  math.floor(obj.Position.Y) .. ", " .. math.floor(obj.Position.Z))
+            
+            -- Check MeshId if MeshPart
+            if obj:IsA("MeshPart") then
+                print(prefix .. "  MeshId:", obj.MeshId)
+                print(prefix .. "  TextureID:", obj.TextureID)
+            end
+        end
+        
+        -- Check ALL attributes
+        local attributes = obj:GetAttributes()
+        if next(attributes) then
+            print(prefix .. "  Attributes:")
+            for attrName, attrValue in pairs(attributes) do
+                print(prefix .. "    " .. attrName .. " = " .. tostring(attrValue))
+            end
+        end
+        
+        -- Recursively print children
+        for _, child in pairs(obj:GetChildren()) do
+            printTree(child, depth + 1)
+        end
+    end
+    
+    printTree(gingerbread, 0)
+    
+    -- 2. Look for ANY UUID pattern in the entire object
+    print("\n=== SEARCHING FOR UUID PATTERNS ===")
+    
+    local function searchForUUID(obj, path)
+        local found = false
+        
+        -- Check string properties
+        local stringProperties = {"Name", "MeshId", "TextureID"}
+        for _, prop in ipairs(stringProperties) do
+            if obj[prop] and type(obj[prop]) == "string" then
+                local uuidPattern = "{(........%-....%-....%-....%-............)}"
+                local uuid = obj[prop]:match(uuidPattern)
                 if uuid then
-                    uuid = "{" .. uuid .. "}"
-                    
-                    -- Test if it works
-                    local args = {{
-                        interior_name = "MainMap!Christmas",
-                        gingerbread_id = uuid
-                    }}
-                    
-                    local success = pcall(function()
-                        collectionRemote:FireServer(unpack(args))
-                        return true
-                    end)
-                    
-                    if success then
-                        print(string.format("    [%d] = \"%s\",  -- WORKS", index, uuid))
-                        table.insert(allUUIDs, {index = index, uuid = uuid, works = true})
-                    else
-                        print(string.format("    -- [%d] = \"%s\",  -- FAILS", index, uuid))
-                        table.insert(allUUIDs, {index = index, uuid = uuid, works = false})
-                    end
-                else
-                    print(string.format("    -- [%d] = nil,  -- NO UUID FOUND", index))
+                    print("✓ FOUND UUID in " .. path .. "." .. prop .. ": {" .. uuid .. "}")
+                    found = true
                 end
             end
         end
         
-        -- Yield to prevent crashing
-        if index % 10 == 0 then
-            task.wait(0.05)
-            print("Progress: " .. index .. "/188")
+        -- Check attributes
+        local attributes = obj:GetAttributes()
+        for attrName, attrValue in pairs(attributes) do
+            if type(attrValue) == "string" then
+                local uuidPattern = "{(........%-....%-....%-....%-............)}"
+                local uuid = attrValue:match(uuidPattern)
+                if uuid then
+                    print("✓ FOUND UUID in " .. path .. " attribute '" .. attrName .. "': {" .. uuid .. "}")
+                    found = true
+                end
+            end
         end
+        
+        -- Recursive search
+        for _, child in pairs(obj:GetChildren()) do
+            if searchForUUID(child, path .. "." .. child.Name) then
+                found = true
+            end
+        end
+        
+        return found
     end
     
-    -- Create output for script
-    print("\n=== COPY THIS TO YOUR SCRIPT ===")
-    print("local GingerbreadUUIDs = {")
-    
-    local workingCount = 0
-    for _, data in pairs(allUUIDs) do
-        if data.works then
-            print(string.format("    [%d] = \"%s\",", data.index, data.uuid))
-            workingCount = workingCount + 1
-        end
+    if not searchForUUID(gingerbread, "GingerbreadRig") then
+        print("✗ No UUID pattern found in entire object!")
     end
     
-    print("}")
-    print("\n=== SUMMARY ===")
-    print("Working UUIDs found:", workingCount)
-    print("Total gingerbreads checked: 157")
-    
-    return allUUIDs
+    print("=== DEBUG COMPLETE ===\n")
 end
 
--- Run it
-findAllUUIDs()
+-- Test with your working index 82
+deepDebugGingerbread(82)
