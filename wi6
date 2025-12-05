@@ -114,6 +114,7 @@ local CurrentTargetIndex = nil
 -- Function to find gingerbread positions
 local function findGingerbreadPositions()
     GingerbreadPositions = {}
+    local foundCount = 0
     
     pcall(function()
         local interior = workspace:FindFirstChild("Interiors")
@@ -122,48 +123,90 @@ local function findGingerbreadPositions()
             if christmas then
                 local children = christmas:GetChildren()
                 
-                -- Sort children by name or position for consistent order
-                table.sort(children, function(a, b)
-                    return a.Name < b.Name
+                -- Sort children by name for consistent order
+                local sortedChildren = {}
+                for _, child in ipairs(children) do
+                    table.insert(sortedChildren, child)
+                end
+                
+                table.sort(sortedChildren, function(a, b)
+                    -- Handle string comparison safely
+                    local aName = tostring(a.Name)
+                    local bName = tostring(b.Name)
+                    return aName < bName
                 end)
                 
-                for i, model in ipairs(children) do
+                for i, model in ipairs(sortedChildren) do
                     local gingerbread = model:FindFirstChild("GingerbreadMan") or 
                                        model:FindFirstChild("Gingerbread") or
                                        model:FindFirstChildWhichIsA("BasePart")
                     
                     if gingerbread then
                         -- Get the actual position where the gingerbread is
-                        local pos = gingerbread.Position
-                        if gingerbread:IsA("Model") then
+                        local pos
+                        if gingerbread:IsA("BasePart") then
+                            pos = gingerbread.Position
+                        elseif gingerbread:IsA("Model") then
                             local primaryPart = gingerbread.PrimaryPart
                             if primaryPart then
                                 pos = primaryPart.Position
+                            else
+                                local modelPos = gingerbread:GetModelCFrame()
+                                if modelPos then
+                                    pos = modelPos.Position
+                                else
+                                    pos = Vector3.new(0, 0, 0)
+                                end
                             end
+                        else
+                            pos = Vector3.new(0, 0, 0)
                         end
                         
                         table.insert(GingerbreadPositions, {
                             Index = i,
                             Position = pos,
                             Model = gingerbread,
-                            Collectable = gingerbread
+                            ModelName = model.Name
                         })
+                        foundCount = foundCount + 1
                     end
                 end
                 
-                if Settings.Notifications then
+                if Settings.Notifications and foundCount > 0 then
                     Rayfield:Notify({
                         Title = "Scan Complete",
-                        Content = string.format("Found %d gingerbreads", #GingerbreadPositions),
+                        Content = string.format("Found %d gingerbreads", foundCount),
+                        Duration = 3,
+                        Image = 4483362458
+                    })
+                elseif foundCount == 0 then
+                    Rayfield:Notify({
+                        Title = "Scan Failed",
+                        Content = "No gingerbreads found in this location",
                         Duration = 3,
                         Image = 4483362458
                     })
                 end
+            else
+                Rayfield:Notify({
+                    Title = "Scan Failed",
+                    Content = "Christmas map not found in Interiors",
+                    Duration = 3,
+                    Image = 4483362458
+                })
             end
+        else
+            Rayfield:Notify({
+                Title = "Scan Failed",
+                Content = "Interiors workspace not found",
+                Duration = 3,
+                Image = 4483362458
+            })
         end
     end)
     
-    return #GingerbreadPositions > 0
+    -- Return the count as number (not boolean)
+    return foundCount
 end
 
 -- Function to walk to position like a real player
@@ -207,6 +250,7 @@ end
 
 -- Function to collect gingerbread at current position
 local function collectGingerbread()
+    local collected = false
     pcall(function()
         -- Try to collect using the remote
         local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
@@ -214,6 +258,7 @@ local function collectGingerbread()
             local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
             if iceRemote then
                 iceRemote:FireServer()
+                collected = true
                 if Settings.Notifications then
                     Rayfield:Notify({
                         Title = "Collected",
@@ -223,43 +268,62 @@ local function collectGingerbread()
                     })
                 end
                 task.wait(Settings.CollectDelay)
-                return true
+            else
+                -- Try alternative remote names
+                for _, child in ipairs(remote:GetChildren()) do
+                    if string.find(child.Name:lower(), "iceskating") or string.find(child.Name:lower(), "winter") then
+                        child:FireServer()
+                        collected = true
+                        task.wait(Settings.CollectDelay)
+                        break
+                    end
+                end
             end
         end
     end)
-    return false
+    return collected
 end
 
 -- Main farming function with realistic movement
 local function farmGingerbread()
+    -- Make sure we have positions
     if #GingerbreadPositions == 0 then
-        if not findGingerbreadPositions() then
+        local count = findGingerbreadPositions()
+        if count == 0 then
             Rayfield:Notify({
                 Title = "Error",
-                Content = "No gingerbreads found!",
+                Content = "No gingerbreads found to farm!",
                 Duration = 3,
                 Image = 4483362458
             })
+            Settings.Farming = false
             return
         end
     end
     
-    -- First teleport to start position
-    if Settings.StartIndex >= 1 and Settings.StartIndex <= #GingerbreadPositions then
-        local startPos = GingerbreadPositions[Settings.StartIndex].Position
-        HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
-        
-        if Settings.Notifications then
-            Rayfield:Notify({
-                Title = "Teleported",
-                Content = string.format("Teleported to gingerbread #%d", Settings.StartIndex),
-                Duration = 3,
-                Image = 4483362458
-            })
-        end
-        
-        task.wait(2) -- Wait a moment after teleport
+    -- Validate indices
+    Settings.StartIndex = math.max(1, math.min(Settings.StartIndex, #GingerbreadPositions))
+    Settings.EndIndex = math.max(1, math.min(Settings.EndIndex, #GingerbreadPositions))
+    
+    if Settings.StartIndex > Settings.EndIndex then
+        -- Swap if start is greater than end
+        Settings.StartIndex, Settings.EndIndex = Settings.EndIndex, Settings.StartIndex
     end
+    
+    -- First teleport to start position
+    local startPos = GingerbreadPositions[Settings.StartIndex].Position
+    HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+    
+    if Settings.Notifications then
+        Rayfield:Notify({
+            Title = "Teleported",
+            Content = string.format("Teleported to gingerbread #%d", Settings.StartIndex),
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+    
+    task.wait(2) -- Wait a moment after teleport
     
     CurrentTargetIndex = Settings.StartIndex
     
@@ -267,7 +331,7 @@ local function farmGingerbread()
         local gingerbreadData = GingerbreadPositions[CurrentTargetIndex]
         
         if not gingerbreadData then
-            CurrentTargetIndex += 1
+            CurrentTargetIndex = CurrentTargetIndex + 1
             continue
         end
         
@@ -300,7 +364,7 @@ local function farmGingerbread()
         collectGingerbread()
         
         -- Move to next gingerbread
-        CurrentTargetIndex += 1
+        CurrentTargetIndex = CurrentTargetIndex + 1
         
         -- Small pause between gingerbreads
         if Settings.Farming then
@@ -319,16 +383,14 @@ local function farmGingerbread()
             end
             
             -- Teleport back to start
-            if Settings.StartIndex >= 1 and Settings.StartIndex <= #GingerbreadPositions then
-                local startPos = GingerbreadPositions[Settings.StartIndex].Position
-                HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
-                task.wait(2)
-                CurrentTargetIndex = Settings.StartIndex
-            else
-                break
-            end
+            local startPos = GingerbreadPositions[Settings.StartIndex].Position
+            HumanoidRootPart.CFrame = CFrame.new(startPos + Vector3.new(0, 3, 0))
+            task.wait(2)
+            CurrentTargetIndex = Settings.StartIndex
         end
     end
+    
+    Settings.Farming = false
 end
 
 -- Anti-AFK
@@ -344,7 +406,7 @@ end
 -- Main Tab
 MainTab:CreateSection("Farming Controls")
 
-MainTab:CreateToggle({
+local farmingToggle = MainTab:CreateToggle({
     Name = "Start Farming",
     CurrentValue = Settings.Farming,
     Flag = "FarmingToggle",
@@ -384,13 +446,6 @@ MainTab:CreateButton({
                 Duration = 3,
                 Image = 4483362458
             })
-        else
-            Rayfield:Notify({
-                Title = "Scan Failed",
-                Content = "Could not find any gingerbreads",
-                Duration = 3,
-                Image = 4483362458
-            })
         end
     end
 })
@@ -399,7 +454,8 @@ MainTab:CreateButton({
     Name = "Test Walk to Next",
     Callback = function()
         if #GingerbreadPositions == 0 then
-            findGingerbreadPositions()
+            local count = findGingerbreadPositions()
+            if count == 0 then return end
         end
         
         if #GingerbreadPositions > 0 then
@@ -415,6 +471,33 @@ MainTab:CreateButton({
             
             walkToPosition(targetPos)
         end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "View Gingerbread List",
+    Callback = function()
+        if #GingerbreadPositions == 0 then
+            local count = findGingerbreadPositions()
+            if count == 0 then return end
+        end
+        
+        local message = string.format("Found %d gingerbreads:\n", #GingerbreadPositions)
+        for i = 1, math.min(10, #GingerbreadPositions) do
+            local data = GingerbreadPositions[i]
+            message = message .. string.format("%d: %s\n", i, data.ModelName or "Unknown")
+        end
+        
+        if #GingerbreadPositions > 10 then
+            message = message .. string.format("... and %d more", #GingerbreadPositions - 10)
+        end
+        
+        Rayfield:Notify({
+            Title = "Gingerbread List",
+            Content = message,
+            Duration = 5,
+            Image = 4483362458
+        })
     end
 })
 
@@ -454,7 +537,7 @@ SettingsTab:CreateInput({
     Callback = function(Value)
         local num = tonumber(Value)
         if num and num >= 1 then
-            Settings.StartIndex = num
+            Settings.StartIndex = math.floor(num)
         end
     end
 })
@@ -468,7 +551,7 @@ SettingsTab:CreateInput({
     Callback = function(Value)
         local num = tonumber(Value)
         if num and num >= 1 then
-            Settings.EndIndex = num
+            Settings.EndIndex = math.floor(num)
         end
     end
 })
@@ -523,6 +606,7 @@ SettingsTab:CreateButton({
 -- Character handling
 Player.CharacterAdded:Connect(function(newChar)
     Character = newChar
+    task.wait(1)
     HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
     Humanoid = newChar:WaitForChild("Humanoid")
 end)
