@@ -62,6 +62,9 @@ local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local Humanoid = Character:WaitForChild("Humanoid")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
 
 -- Create the window with proper settings
 local Window = Rayfield:CreateWindow({
@@ -104,12 +107,23 @@ local Settings = {
     AntiAFK = true,
     Notifications = true,
     CollectDelay = 0.5,
-    UseHumanoid = true
+    UseHumanoid = true,
+    UsePathfinding = true,
+    RealisticTurning = true,
+    SpeedVariation = true,
+    NaturalPauses = true
 }
 
 -- Store gingerbread positions
 local GingerbreadPositions = {}
 local CurrentTargetIndex = nil
+local CurrentPath = nil
+local PathPoints = {}
+local CurrentPathIndex = 0
+local LastLookAt = tick()
+local IsTurning = false
+local LastSpeedChange = tick()
+local CurrentSpeedModifier = 1.0
 
 -- Function to find gingerbread positions
 local function findGingerbreadPositions()
@@ -209,7 +223,71 @@ local function findGingerbreadPositions()
     return foundCount
 end
 
--- Function to walk to position like a real player
+-- Function to create a path to the target position
+local function createPath(targetPosition)
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        WaypointSpacing = 4
+    })
+    
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(HumanoidRootPart.Position, targetPosition)
+    end)
+    
+    if success and path.Status == Enum.PathStatus.Success then
+        return path:GetWaypoints()
+    else
+        return nil
+    end
+end
+
+-- Function to smoothly turn the character towards a direction
+local function smoothLookAt(targetPosition, turnSpeed)
+    if not Settings.RealisticTurning then return end
+    
+    local lookVector = (targetPosition - HumanoidRootPart.Position).Unit
+    local currentLookVector = HumanoidRootPart.CFrame.LookVector
+    
+    -- Calculate the angle between current and target direction
+    local crossProduct = currentLookVector:Cross(lookVector)
+    local dotProduct = currentLookVector:Dot(lookVector)
+    local angle = math.atan2(crossProduct.Magnitude, dotProduct)
+    
+    -- Determine rotation direction
+    local rotationDirection = 1
+    if crossProduct.Y < 0 then
+        rotationDirection = -1
+    end
+    
+    -- Apply smooth rotation
+    local rotationAmount = math.min(angle, turnSpeed) * rotationDirection
+    local newCFrame = HumanoidRootPart.CFrame * CFrame.Angles(0, rotationAmount, 0)
+    HumanoidRootPart.CFrame = newCFrame
+    
+    -- Return true if we're still turning
+    return math.abs(angle) > 0.1
+end
+
+-- Function to apply natural speed variations
+local function updateSpeedVariation()
+    if not Settings.SpeedVariation then return 1.0 end
+    
+    -- Only change speed occasionally
+    if tick() - LastSpeedChange < 2 then return CurrentSpeedModifier end
+    
+    -- Randomly decide if we should change speed
+    if math.random() < 0.3 then
+        -- Create a small random variation (0.9 to 1.1)
+        CurrentSpeedModifier = 0.9 + (math.random() * 0.2)
+        LastSpeedChange = tick()
+    end
+    
+    return CurrentSpeedModifier
+end
+
+-- Enhanced function to walk to position like a real player
 local function walkToPosition(targetPosition)
     if not Character or not HumanoidRootPart or not Humanoid then
         return false
@@ -217,9 +295,23 @@ local function walkToPosition(targetPosition)
     
     local startTime = tick()
     local timeout = 30 -- 30 second timeout
+    local lastPathUpdate = 0
+    local stuckCounter = 0
+    local lastPosition = HumanoidRootPart.Position
     
     -- Enable humanoid movement
     Humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
+    
+    -- Create initial path if using pathfinding
+    if Settings.UsePathfinding then
+        PathPoints = createPath(targetPosition)
+        if not PathPoints then
+            -- Fall back to direct movement if pathfinding fails
+            Settings.UsePathfinding = false
+        else
+            CurrentPathIndex = 2 -- Start at the second waypoint (first is current position)
+        end
+    end
     
     while tick() - startTime < timeout do
         if not Settings.Farming then break end
@@ -228,17 +320,77 @@ local function walkToPosition(targetPosition)
         local direction = (targetPosition - currentPos)
         local distance = direction.Magnitude
         
+        -- Check if we're stuck
+        if (currentPos - lastPosition).Magnitude < 0.5 then
+            stuckCounter = stuckCounter + 1
+            if stuckCounter > 5 then
+                -- We're stuck, try to jump or recreate path
+                Humanoid.Jump = true
+                if Settings.UsePathfinding and tick() - lastPathUpdate > 3 then
+                    PathPoints = createPath(targetPosition)
+                    if PathPoints then
+                        CurrentPathIndex = 2
+                        lastPathUpdate = tick()
+                    end
+                end
+                stuckCounter = 0
+            end
+        else
+            stuckCounter = 0
+        end
+        
+        lastPosition = currentPos
+        
         -- If we're close enough, stop
         if distance < 3 then
             Humanoid:Move(Vector3.new(0, 0, 0))
             return true
         end
         
-        -- Normalize direction and apply movement
-        direction = direction.Unit
+        -- Get our movement direction
+        local moveDirection
+        
+        if Settings.UsePathfinding and PathPoints and CurrentPathIndex <= #PathPoints then
+            -- Use pathfinding
+            local currentWaypoint = PathPoints[CurrentPathIndex]
+            local waypointPos = currentWaypoint.Position
+            local waypointDistance = (waypointPos - currentPos).Magnitude
+            
+            -- If we've reached the current waypoint, move to the next
+            if waypointDistance < 4 then
+                CurrentPathIndex = CurrentPathIndex + 1
+                if CurrentPathIndex > #PathPoints then
+                    -- We've reached the end of the path
+                    Humanoid:Move(Vector3.new(0, 0, 0))
+                    return true
+                end
+            else
+                -- Move towards the current waypoint
+                moveDirection = (waypointPos - currentPos).Unit
+            end
+        else
+            -- Direct movement
+            moveDirection = direction.Unit
+        end
+        
+        -- Apply speed variation
+        local speedModifier = updateSpeedVariation()
+        local adjustedSpeed = Settings.WalkSpeed * speedModifier
+        
+        -- Smoothly turn towards our movement direction
+        if Settings.RealisticTurning then
+            local targetLookAt = currentPos + moveDirection * 10
+            IsTurning = smoothLookAt(targetLookAt, 0.1)
+        end
         
         -- Move towards target
-        Humanoid:Move(direction * Settings.WalkSpeed)
+        Humanoid:Move(moveDirection * adjustedSpeed)
+        
+        -- Add natural pauses occasionally
+        if Settings.NaturalPauses and math.random() < 0.01 then
+            Humanoid:Move(Vector3.new(0, 0, 0))
+            task.wait(0.2 + (math.random() * 0.3))
+        end
         
         -- Wait a bit
         task.wait(0.1)
@@ -358,6 +510,11 @@ local function farmGingerbread()
             -- For first gingerbread or if walking is disabled
             HumanoidRootPart.CFrame = CFrame.new(gingerbreadData.Position + Vector3.new(0, 3, 0))
             task.wait(1)
+        end
+        
+        -- Add a natural pause before collecting
+        if Settings.NaturalPauses then
+            task.wait(0.3 + (math.random() * 0.5))
         end
         
         -- Try to collect
@@ -565,6 +722,66 @@ SettingsTab:CreateToggle({
         Rayfield:Notify({
             Title = "Movement Mode",
             Content = Value and "Will walk like real player" or "Will teleport to each",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Use Pathfinding",
+    CurrentValue = Settings.UsePathfinding,
+    Flag = "UsePathfinding",
+    Callback = function(Value)
+        Settings.UsePathfinding = Value
+        Rayfield:Notify({
+            Title = "Pathfinding",
+            Content = Value and "Will use smart pathfinding" or "Will use direct movement",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Realistic Turning",
+    CurrentValue = Settings.RealisticTurning,
+    Flag = "RealisticTurning",
+    Callback = function(Value)
+        Settings.RealisticTurning = Value
+        Rayfield:Notify({
+            Title = "Turning",
+            Content = Value and "Will turn smoothly" or "Will turn instantly",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Speed Variation",
+    CurrentValue = Settings.SpeedVariation,
+    Flag = "SpeedVariation",
+    Callback = function(Value)
+        Settings.SpeedVariation = Value
+        Rayfield:Notify({
+            Title = "Speed Variation",
+            Content = Value and "Will vary walking speed" or "Will use constant speed",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Natural Pauses",
+    CurrentValue = Settings.NaturalPauses,
+    Flag = "NaturalPauses",
+    Callback = function(Value)
+        Settings.NaturalPauses = Value
+        Rayfield:Notify({
+            Title = "Natural Pauses",
+            Content = Value and "Will pause occasionally" or "Will move continuously",
             Duration = 3,
             Image = 4483362458
         })
