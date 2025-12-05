@@ -1,52 +1,233 @@
---[[
-    Simple API Finder
-    -----------------
-    This script searches ReplicatedStorage for folders ending in "API"
-    and lists their contents (RemoteFunctions and RemoteEvents).
+-- Simple UI Roblox Script using Rayfield Library for Gingerbread Farm
+-- Load Rayfield UI Library
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
-    HOW TO USE:
-    1. Open the Developer Console (View -> Output).
-    2. Paste this script into the Command Bar and press Enter, OR
-    3. Put it in a LocalScript and run the game.
-]]
+-- Create the main window
+local Window = Rayfield:CreateWindow({
+   Name = "Gingerbread Farm UI",
+   LoadingTitle = "Gingerbread Farm",
+   LoadingSubtitle = "Powered by xAI",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = nil,
+      FileName = "GingerbreadConfig"
+   },
+   Discord = {
+      Enabled = false,
+      Invite = "",
+      RememberJoins = true
+   },
+   KeySystem = false,
+   KeySettings = {
+      Title = "Key",
+      Subtitle = "Enter Key",
+      Note = "No key required",
+      FileName = "Key",
+      SaveKey = true,
+      GrabKeyFromSite = false,
+      Key = {"12345"}
+   }
+})
 
--- Get the service where APIs are usually stored
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- Get player and character
+local Player = game:GetService("Players").LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Function to find and print APIs
-local function findAPIs()
-    print("🔍 Searching for API folders in ReplicatedStorage...")
-    print("=====================================================")
+-- Create tabs
+local MainTab = Window:CreateTab("Main Farming", nil)
+local TeleportTab = Window:CreateTab("Teleport Settings", nil)
 
-    -- A counter to see how many APIs we found
-    local apiCount = 0
+-- Settings table
+local Settings = {
+   StartFarming = false,
+   TeleportDelay = 1,
+   StartIndex = 32,
+   EndIndex = 188
+}
 
-    -- Loop through every item in ReplicatedStorage
-    for _, item in ipairs(ReplicatedStorage:GetChildren()) do
-        -- Check if the item is a Folder and its name ends with "API"
-        if item:IsA("Folder") and string.match(item.Name, "API$") then
-            apiCount = apiCount + 1
-            print("✅ Found API: " .. item.Name)
-            print("  -> Functions/Events:")
-
-            -- Now loop through the children of this API folder
-            for _, apiFunction in ipairs(item:GetChildren()) do
-                -- We are looking for RemoteFunctions and RemoteEvents
-                if apiFunction:IsA("RemoteFunction") or apiFunction:IsA("RemoteEvent") then
-                    print("    - " .. apiFunction.Name .. " (" .. apiFunction.ClassName .. ")")
-                end
+-- Function to teleport and collect gingerbread
+local function teleportAndCollect(index)
+    pcall(function()
+        local interior = workspace.Interiors["MainMap!Christmas"]
+        local children = interior:GetChildren()
+        
+        if index <= #children then
+            local targetModel = children[index]
+            if targetModel and targetModel:FindFirstChild("GingerbreadMan") then
+                local gingerbreadPart = targetModel.GingerbreadMan
+                
+                -- Teleport to gingerbread
+                HumanoidRootPart.CFrame = gingerbreadPart.CFrame + Vector3.new(0, 3, 0)
+                
+                -- Small wait for teleport
+                task.wait(0.2)
+                
+                -- Collect gingerbread
+                game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16"):FireServer()
+                
+                return true
             end
-            print("") -- Add a blank line for readability
         end
-    end
+        return false
+    end)
+end
 
-    print("=====================================================")
-    if apiCount > 0 then
-        print("✅ Search complete. Found " .. apiCount .. " API folders.")
-    else
-        print("❌ Search complete. No API folders found ending with 'API'.")
+-- Main farming function
+local function startGingerbreadFarm()
+    while Settings.StartFarming do
+        for index = Settings.StartIndex, Settings.EndIndex do
+            if not Settings.StartFarming then break end
+            
+            local success = teleportAndCollect(index)
+            
+            if success then
+                Rayfield:Notify({
+                    Title = "Collecting",
+                    Content = "Collected gingerbread at index: " .. index,
+                    Duration = 1,
+                    Image = nil
+                })
+            end
+            
+            -- Delay between teleports
+            task.wait(Settings.TeleportDelay)
+        end
+        
+        -- Small delay before restarting loop
+        if Settings.StartFarming then
+            task.wait(1)
+        end
     end
 end
 
--- Run the search
-findAPIs()
+-- Create section for farming toggle
+MainTab:CreateSection("Gingerbread Farming")
+
+-- Create the main toggle
+local FarmToggle = MainTab:CreateToggle({
+   Name = "Start Gingerbread Farm",
+   CurrentValue = Settings.StartFarming,
+   Flag = "GingerBreadFarmToggle",
+   Callback = function(State)
+      Settings.StartFarming = State
+      if State then
+          -- Start farming in a separate coroutine
+          coroutine.wrap(startGingerbreadFarm)()
+          Rayfield:Notify({
+             Title = "Started",
+             Content = "Gingerbread farming started!",
+             Duration = 3,
+             Image = nil
+          })
+      else
+          Rayfield:Notify({
+             Title = "Stopped",
+             Content = "Gingerbread farming stopped.",
+             Duration = 3,
+             Image = nil
+          })
+      end
+   end
+})
+
+-- Create section for teleport settings
+TeleportTab:CreateSection("Teleport Configuration")
+
+-- Create slider for teleport delay
+local DelaySlider = TeleportTab:CreateSlider({
+   Name = "Teleport Delay (seconds)",
+   Range = {0.5, 5},
+   Increment = 0.5,
+   Suffix = "s",
+   CurrentValue = Settings.TeleportDelay,
+   Flag = "TeleportDelay",
+   Callback = function(Value)
+      Settings.TeleportDelay = Value
+   end
+})
+
+-- Create input for start index
+local StartIndexInput = TeleportTab:CreateInput({
+   Name = "Start Index",
+   PlaceholderText = "32",
+   RemoveTextAfterFocusLost = false,
+   CurrentValue = tostring(Settings.StartIndex),
+   Flag = "StartIndex",
+   Callback = function(Value)
+      local num = tonumber(Value)
+      if num and num > 0 then
+          Settings.StartIndex = num
+      end
+   end
+})
+
+-- Create input for end index
+local EndIndexInput = TeleportTab:CreateInput({
+   Name = "End Index",
+   PlaceholderText = "188",
+   RemoveTextAfterFocusLost = false,
+   CurrentValue = tostring(Settings.EndIndex),
+   Flag = "EndIndex",
+   Callback = function(Value)
+      local num = tonumber(Value)
+      if num and num > 0 then
+          Settings.EndIndex = num
+      end
+   end
+})
+
+-- Create button to test specific index
+TeleportTab:CreateButton({
+   Name = "Test Teleport to Index",
+   Callback = function()
+       local testIndex = Settings.StartIndex
+       teleportAndCollect(testIndex)
+       Rayfield:Notify({
+           Title = "Test Teleport",
+           Content = "Teleported to index: " .. testIndex,
+           Duration = 3,
+           Image = nil
+       })
+   end
+})
+
+-- Create section for manual collection
+TeleportTab:CreateSection("Manual Collection")
+
+-- Create button for the specific gingerbread locations you mentioned
+local specificIndices = {31, 32, 33, 34, 35, 188}
+
+for i, index in ipairs(specificIndices) do
+    TeleportTab:CreateButton({
+        Name = "Teleport to Index " .. index,
+        Callback = function()
+            teleportAndCollect(index)
+            Rayfield:Notify({
+                Title = "Teleported",
+                Content = "Teleported to gingerbread at index: " .. index,
+                Duration = 3,
+                Image = nil
+            })
+        end
+    })
+end
+
+-- Create label for instructions
+MainTab:CreateLabel("Toggle to start auto-farming gingerbread.")
+MainTab:CreateLabel("Configure teleport settings in the Teleport Settings tab.")
+
+-- Notify user that the UI is loaded
+Rayfield:Notify({
+   Title = "UI Loaded",
+   Content = "Gingerbread Farm UI is ready!",
+   Duration = 5,
+   Image = nil
+})
+
+-- Character respawn handler
+Player.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    repeat task.wait() until Character:FindFirstChild("HumanoidRootPart")
+    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+end)
