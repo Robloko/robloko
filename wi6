@@ -1,5 +1,4 @@
--- Gingerbread Farm Script with Complete Visit First, Then Collect
--- Try multiple Rayfield sources
+-- Gingerbread Farm Script with Continuous Visit & Collect
 local Rayfield = nil
 local success, err = pcall(function()
     Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
@@ -11,7 +10,6 @@ if not success then
 end
 
 if not success then
-    -- Fallback to simple UI if Rayfield fails
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "Gingerbread Farm",
         Text = "Failed to load Rayfield. Creating simple UI...",
@@ -19,152 +17,112 @@ if not success then
     })
     
     local Settings = {
-        StartFarming = false,
+        Farming = false,
         TeleportDelay = 0.5,
         StartIndex = 32,
         EndIndex = 188,
-        CollectAfterVisit = false,
-        VisitedIndices = {}
+        AntiAFK = true,
+        CurrentIndex = 32
     }
     
     print("=== Gingerbread Farm Commands ===")
     print("Type in chat or execute:")
-    print("!visitall - Visit all gingerbreads first")
-    print("!collect - Collect all visited gingerbreads")
-    print("!autofarm - Visit all then auto-collect")
+    print("!start - Start continuous farming")
     print("!stop - Stop farming")
     print("!status - Check status")
+    print("!setdelay [number] - Set teleport delay")
     print("================================")
     
-    local function visitAllGingerbreads()
-        Settings.VisitedIndices = {}
-        for i = Settings.StartIndex, Settings.EndIndex do
-            if not Settings.StartFarming then break end
-            
-            pcall(function()
-                local interior = workspace:FindFirstChild("Interiors")
-                if interior then
-                    local christmas = interior:FindFirstChild("MainMap!Christmas")
-                    if christmas then
-                        local children = christmas:GetChildren()
-                        if i <= #children then
-                            local model = children[i]
-                            local gingerbread = model:FindFirstChild("GingerbreadMan") or 
-                                               model:FindFirstChild("Gingerbread") or
-                                               model:FindFirstChildWhichIsA("BasePart")
-                            
-                            if gingerbread then
-                                local hrp = game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                                if hrp then
-                                    hrp.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
-                                    table.insert(Settings.VisitedIndices, i)
-                                    print("Visited gingerbread at index: " .. i)
-                                    task.wait(Settings.TeleportDelay)
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
+    local function getGingerbreadPosition(index)
+        local interior = workspace:FindFirstChild("Interiors")
+        if not interior then return nil end
+        
+        local christmas = interior:FindFirstChild("MainMap!Christmas")
+        if not christmas then return nil end
+        
+        local children = christmas:GetChildren()
+        if index < 1 or index > #children then return nil end
+        
+        local model = children[index]
+        if not model then return nil end
+        
+        local gingerbread = model:FindFirstChild("GingerbreadMan") or 
+                           model:FindFirstChild("Gingerbread") or
+                           model:FindFirstChildWhichIsA("BasePart")
+        
+        if gingerbread then
+            return gingerbread.CFrame
         end
-        print("Finished visiting all gingerbreads! Total visited: " .. #Settings.VisitedIndices)
-        return #Settings.VisitedIndices > 0
+        
+        return nil
     end
     
-    local function collectAllGingerbreads()
-        print("Attempting to collect all visited gingerbreads...")
-        local collected = 0
-        
-        -- Try different remote events for collection
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local remotes = {
-            replicatedStorage:FindFirstChild("adoptme_new_net"),
-            replicatedStorage:FindFirstChild("adoptme_net"),
-            replicatedStorage:FindFirstChild("MainRemote"),
-            game:GetService("ReplicatedStorage"):FindFirstChild("IceSkatingNet")
-        }
-        
-        -- Try multiple collection methods
-        for _, remote in pairs(remotes) do
-            if remote then
-                pcall(function()
-                    -- Try various event names
-                    local events = {
-                        "adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16",
-                        "IceSkating:CollectGingerbread",
-                        "CollectGingerbread",
-                        "CollectGingerbreadMan",
-                        "WinterEvent:Collect"
-                    }
-                    
-                    for _, eventName in pairs(events) do
-                        local event = remote:FindFirstChild(eventName)
-                        if event then
-                            for _ = 1, #Settings.VisitedIndices do
-                                event:FireServer()
-                                collected = collected + 1
-                                task.wait(0.1)
-                            end
-                            print("Collected " .. collected .. " gingerbreads using event: " .. eventName)
-                            break
-                        end
-                    end
-                end)
+    local function tryCollect()
+        -- Try to collect gingerbread
+        local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+        if remote then
+            local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+            if iceRemote then
+                iceRemote:FireServer()
             end
         end
-        
-        -- If no remote found, try clicking the gingerbreads
-        if collected == 0 then
-            print("No remote found, attempting manual collection...")
-            -- This would require actual clicking logic
-        end
-        
-        return collected
     end
     
     game:GetService("Players").LocalPlayer.Chatted:Connect(function(msg)
         msg = msg:lower()
-        if msg == "!visitall" then
-            Settings.StartFarming = true
+        if msg == "!start" then
+            Settings.Farming = true
+            print("[Gingerbread Farm] Started continuous farming!")
+            
             spawn(function()
-                local visited = visitAllGingerbreads()
-                if visited then
-                    print("Ready to collect! Type !collect")
+                while Settings.Farming do
+                    for i = Settings.StartIndex, Settings.EndIndex do
+                        if not Settings.Farming then break end
+                        
+                        Settings.CurrentIndex = i
+                        local cframe = getGingerbreadPosition(i)
+                        if cframe then
+                            local hrp = game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                -- Teleport to gingerbread
+                                hrp.CFrame = cframe + Vector3.new(0, 3, 0)
+                                task.wait(0.3)
+                                
+                                -- Try to collect
+                                tryCollect()
+                                
+                                print("[Gingerbread Farm] Visited & collected gingerbread " .. i)
+                            end
+                        end
+                        
+                        task.wait(Settings.TeleportDelay)
+                    end
+                    
+                    if Settings.Farming then
+                        print("[Gingerbread Farm] Loop completed, restarting...")
+                        task.wait(1)
+                    end
                 end
-                Settings.StartFarming = false
             end)
-        elseif msg == "!collect" then
-            if #Settings.VisitedIndices > 0 then
-                local collected = collectAllGingerbreads()
-                print("Successfully collected " .. collected .. " gingerbreads!")
-            else
-                print("Visit gingerbreads first with !visitall")
-            end
-        elseif msg == "!autofarm" then
-            Settings.StartFarming = true
-            spawn(function()
-                print("Starting auto-farm: Visit all then collect...")
-                local visited = visitAllGingerbreads()
-                if visited then
-                    print("Visiting complete. Now collecting...")
-                    task.wait(1)
-                    local collected = collectAllGingerbreads()
-                    print("Auto-farm complete! Collected " .. collected .. " gingerbreads!")
-                end
-                Settings.StartFarming = false
-            end)
+            
         elseif msg == "!stop" then
-            Settings.StartFarming = false
-            print("[Gingerbread Farm] Stopped!")
+            Settings.Farming = false
+            print("[Gingerbread Farm] Stopped farming!")
         elseif msg == "!status" then
-            print(string.format("[Gingerbread Farm] Status: %s, Visited: %d", 
-                Settings.StartFarming and "Running" or "Stopped", #Settings.VisitedIndices))
+            print(string.format("[Gingerbread Farm] Status: %s | Current Index: %d", 
+                Settings.Farming and "Running" or "Stopped", Settings.CurrentIndex))
+        elseif msg:sub(1, 9) == "!setdelay" then
+            local delay = tonumber(msg:sub(11))
+            if delay then
+                Settings.TeleportDelay = delay
+                print(string.format("[Gingerbread Farm] Delay set to: %s seconds", delay))
+            end
         end
     end)
     return
 end
 
--- If we get here, Rayfield loaded successfully
+-- Rayfield loaded successfully
 local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
@@ -173,7 +131,7 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local Window = Rayfield:CreateWindow({
     Name = "🍪 Gingerbread Farm",
     LoadingTitle = "Loading Gingerbread Farm...",
-    LoadingSubtitle = "Visit all gingerbreads then collect",
+    LoadingSubtitle = "Continuous Visit & Collect",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "GingerbreadFarmConfig",
@@ -198,20 +156,18 @@ end
 
 -- Create tabs
 local MainTab = Window:CreateTab("Main", 4483362458)
-local TeleportTab = Window:CreateTab("Teleport", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 -- Settings
 local Settings = {
     Farming = false,
-    Delay = 0.5, -- Faster teleport since we're just visiting
+    Delay = 0.5,
     StartIndex = 32,
     EndIndex = 188,
     AntiAFK = true,
     Notifications = true,
     CurrentIndex = 32,
-    CollectAfterVisit = false,
-    VisitedIndices = {}
+    CollectEnabled = true
 }
 
 -- Character reference update
@@ -240,7 +196,6 @@ local function getGingerbreadPosition(index)
                        model:FindFirstChildWhichIsA("Model")
     
     if gingerbread then
-        -- Try to find a base part to teleport to
         local basePart = gingerbread:FindFirstChildWhichIsA("BasePart")
         if basePart then
             return basePart.CFrame
@@ -249,78 +204,18 @@ local function getGingerbreadPosition(index)
         end
     end
     
-    -- Fallback: teleport to model position
     local primaryPart = model.PrimaryPart
     if primaryPart then
         return primaryPart.CFrame
     end
     
-    -- Last resort: use model position
     return model:GetPivot()
 end
 
--- Function to visit all gingerbreads first
-local function visitAllGingerbreads()
-    Settings.VisitedIndices = {}
+-- Try to collect gingerbread
+local function tryCollect()
+    if not Settings.CollectEnabled then return end
     
-    for i = Settings.StartIndex, Settings.EndIndex do
-        if not Settings.Farming then break end
-        if not HumanoidRootPart then break end
-        
-        Settings.CurrentIndex = i
-        
-        local cframe = getGingerbreadPosition(i)
-        if cframe then
-            -- Smooth teleport to gingerbread
-            HumanoidRootPart.CFrame = cframe + Vector3.new(0, 3, 0)
-            table.insert(Settings.VisitedIndices, i)
-            
-            -- Brief wait to ensure visit registers
-            task.wait(0.2)
-            
-            if Settings.Notifications then
-                Rayfield:Notify({
-                    Title = "Visited " .. i,
-                    Content = "Marked gingerbread as visited",
-                    Duration = 0.3,
-                    Image = 4483362458
-                })
-            end
-        else
-            if Settings.Notifications then
-                Rayfield:Notify({
-                    Title = "Skipped",
-                    Content = "No gingerbread at index " .. i,
-                    Duration = 0.5,
-                    Image = 4483362458
-                })
-            end
-        end
-        
-        -- Wait between teleports
-        if Settings.Farming then
-            for waitTime = 0, Settings.Delay, 0.1 do
-                if not Settings.Farming then break end
-                task.wait(0.1)
-            end
-        end
-    end
-    
-    return #Settings.VisitedIndices
-end
-
--- Function to collect all visited gingerbreads
-local function collectAllGingerbreads()
-    local collected = 0
-    
-    Rayfield:Notify({
-        Title = "Collecting",
-        Content = "Attempting to collect " .. #Settings.VisitedIndices .. " gingerbreads",
-        Duration = 3,
-        Image = 4483362458
-    })
-    
-    -- Try different remote events for collection
     local replicatedStorage = game:GetService("ReplicatedStorage")
     
     -- Try multiple remote paths
@@ -328,8 +223,7 @@ local function collectAllGingerbreads()
         "adoptme_new_net",
         "adoptme_net",
         "MainRemote",
-        "IceSkatingNet",
-        "adoptme_legacy_shared.ContentPacks.Winter2025"
+        "IceSkatingNet"
     }
     
     -- Try multiple event names
@@ -338,167 +232,145 @@ local function collectAllGingerbreads()
         "IceSkating:CollectGingerbread",
         "CollectGingerbread",
         "CollectGingerbreadMan",
-        "WinterEvent:Collect",
-        "CollectAllGingerbread",
-        "ClaimGingerbread"
+        "WinterEvent:Collect"
     }
     
     for _, path in pairs(remotePaths) do
-        local remote = replicatedStorage:FindFirstChild(path, true) -- recursive search
+        local remote = replicatedStorage:FindFirstChild(path)
         if remote then
             for _, eventName in pairs(eventNames) do
                 local event = remote:FindFirstChild(eventName)
                 if event then
-                    -- Fire event for each visited gingerbread
-                    for _ = 1, #Settings.VisitedIndices do
-                        pcall(function()
-                            event:FireServer()
-                            collected = collected + 1
-                        end)
-                        task.wait(0.1) -- Small delay between collection attempts
-                    end
-                    
-                    if collected > 0 then
-                        Rayfield:Notify({
-                            Title = "Success!",
-                            Content = "Collected " .. collected .. " gingerbreads using " .. eventName,
-                            Duration = 5,
-                            Image = 4483362458
-                        })
-                        return collected
-                    end
+                    pcall(function()
+                        event:FireServer()
+                        if Settings.Notifications then
+                            Rayfield:Notify({
+                                Title = "Collected",
+                                Content = "Used event: " .. eventName,
+                                Duration = 0.5,
+                                Image = 4483362458
+                            })
+                        end
+                    end)
+                    return true
                 end
             end
         end
     end
     
-    -- Alternative: Try to find the correct remote by listening to network traffic
-    if collected == 0 then
-        Rayfield:Notify({
-            Title = "Collection Failed",
-            Content = "Could not find collection remote. Please collect manually.",
-            Duration = 5,
-            Image = 4483362458
-        })
+    return false
+end
+
+-- Main farming loop
+local function startFarming()
+    while Settings.Farming and HumanoidRootPart do
+        for i = Settings.StartIndex, Settings.EndIndex do
+            if not Settings.Farming then break end
+            if not HumanoidRootPart then break end
+            
+            Settings.CurrentIndex = i
+            
+            local cframe = getGingerbreadPosition(i)
+            if cframe then
+                -- Teleport to gingerbread
+                HumanoidRootPart.CFrame = cframe + Vector3.new(0, 3, 0)
+                
+                -- Brief wait to ensure positioning
+                task.wait(0.3)
+                
+                -- Try to collect
+                if Settings.CollectEnabled then
+                    tryCollect()
+                end
+                
+                if Settings.Notifications then
+                    Rayfield:Notify({
+                        Title = "Gingerbread " .. i,
+                        Content = "Visited & collected",
+                        Duration = 0.3,
+                        Image = 4483362458
+                    })
+                end
+            end
+            
+            -- Wait between teleports
+            if Settings.Farming then
+                for waitTime = 0, Settings.Delay, 0.1 do
+                    if not Settings.Farming then break end
+                    task.wait(0.1)
+                end
+            end
+        end
+        
+        -- Loop back to start if still farming
+        if Settings.Farming then
+            if Settings.Notifications then
+                Rayfield:Notify({
+                    Title = "Looping",
+                    Content = "Restarting from index " .. Settings.StartIndex,
+                    Duration = 1,
+                    Image = 4483362458
+                })
+            end
+            task.wait(1)
+        end
     end
-    
-    return collected
 end
 
 -- Anti-AFK
-if Settings.AntiAFK then
-    local VirtualUser = game:GetService("VirtualUser")
-    game:GetService("Players").LocalPlayer.Idled:Connect(function()
-        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-        task.wait(1)
-        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-    end)
+local function setupAntiAFK()
+    if Settings.AntiAFK then
+        local VirtualUser = game:GetService("VirtualUser")
+        game:GetService("Players").LocalPlayer.Idled:Connect(function()
+            VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+            task.wait(1)
+            VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        end)
+    end
 end
+
+setupAntiAFK()
 
 -- Main Tab
 MainTab:CreateSection("Farming Controls")
 
-local VisitButton = MainTab:CreateButton({
-    Name = "1. Visit All Gingerbreads",
-    Callback = function()
-        Settings.Farming = true
-        Rayfield:Notify({
-            Title = "Starting Visit",
-            Content = "Visiting gingerbreads " .. Settings.StartIndex .. " to " .. Settings.EndIndex,
-            Duration = 3,
-            Image = 4483362458
-        })
-        
-        task.spawn(function()
-            local visited = visitAllGingerbreads()
-            Settings.Farming = false
-            
+-- Farming toggle
+local farmingToggle = MainTab:CreateToggle({
+    Name = "Start/Stop Farming",
+    CurrentValue = Settings.Farming,
+    Flag = "FarmingToggle",
+    Callback = function(Value)
+        Settings.Farming = Value
+        if Value then
             Rayfield:Notify({
-                Title = "Visit Complete",
-                Content = "Visited " .. visited .. " gingerbreads. Ready to collect!",
-                Duration = 5,
-                Image = 4483362458
-            })
-        end)
-    end
-})
-
-local CollectButton = MainTab:CreateButton({
-    Name = "2. Collect All Visited",
-    Callback = function()
-        if #Settings.VisitedIndices == 0 then
-            Rayfield:Notify({
-                Title = "No Gingerbreads",
-                Content = "Visit gingerbreads first using Step 1",
+                Title = "Started",
+                Content = "Continuous farming started!",
                 Duration = 3,
                 Image = 4483362458
             })
-            return
+            task.spawn(startFarming)
+        else
+            Rayfield:Notify({
+                Title = "Stopped",
+                Content = "Farming stopped at index " .. Settings.CurrentIndex,
+                Duration = 3,
+                Image = 4483362458
+            })
         end
-        
-        task.spawn(function()
-            local collected = collectAllGingerbreads()
-            Settings.VisitedIndices = {} -- Reset after collection
-        end)
     end
 })
 
-local AutoFarmButton = MainTab:CreateButton({
-    Name = "Auto-Farm (Visit then Collect)",
-    Callback = function()
-        Settings.Farming = true
+-- Collection toggle
+local collectToggle = MainTab:CreateToggle({
+    Name = "Enable Collection",
+    CurrentValue = Settings.CollectEnabled,
+    Flag = "CollectToggle",
+    Callback = function(Value)
+        Settings.CollectEnabled = Value
         Rayfield:Notify({
-            Title = "Auto-Farm Started",
-            Content = "Will visit all then collect automatically",
-            Duration = 3,
-            Image = 4483362458
-        })
-        
-        task.spawn(function()
-            -- Step 1: Visit all
-            local visited = visitAllGingerbreads()
-            
-            if visited > 0 then
-                Rayfield:Notify({
-                    Title = "Visiting Complete",
-                    Content = "Now collecting " .. visited .. " gingerbreads...",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                
-                task.wait(2) -- Brief pause before collection
-                
-                -- Step 2: Collect all
-                local collected = collectAllGingerbreads()
-                
-                Rayfield:Notify({
-                    Title = "Auto-Farm Complete",
-                    Content = "Visited " .. visited .. " and collected " .. collected .. " gingerbreads",
-                    Duration = 5,
-                    Image = 4483362458
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Failed",
-                    Content = "No gingerbreads were visited",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
-            
-            Settings.Farming = false
-        end)
-    end
-})
-
-MainTab:CreateButton({
-    Name = "Stop All Operations",
-    Callback = function()
-        Settings.Farming = false
-        Rayfield:Notify({
-            Title = "Stopped",
-            Content = "All farming operations stopped",
-            Duration = 3,
+            Title = "Collection",
+            Content = Value and "Collection enabled" or "Collection disabled",
+            Duration = 2,
             Image = 4483362458
         })
     end
@@ -506,22 +378,23 @@ MainTab:CreateButton({
 
 -- Status display
 MainTab:CreateSection("Status")
-local statusLabel = MainTab:CreateLabel("Visited: 0 | Current Index: " .. Settings.CurrentIndex)
+local statusLabel = MainTab:CreateLabel("Status: Stopped | Current: " .. Settings.CurrentIndex)
 
--- Update status periodically
+-- Update status display
 task.spawn(function()
     while true do
-        statusLabel:Set("Visited: " .. #Settings.VisitedIndices .. " | Current Index: " .. Settings.CurrentIndex)
-        task.wait(1)
+        local status = Settings.Farming and "Running" or "Stopped"
+        statusLabel:Set("Status: " .. status .. " | Current: " .. Settings.CurrentIndex)
+        task.wait(0.5)
     end
 end)
 
--- Teleport Tab
-TeleportTab:CreateSection("Teleport Settings")
+-- Settings Tab
+SettingsTab:CreateSection("Teleport Settings")
 
-TeleportTab:CreateSlider({
+SettingsTab:CreateSlider({
     Name = "Teleport Delay",
-    Range = {0.1, 2},
+    Range = {0.1, 3},
     Increment = 0.1,
     Suffix = "seconds",
     CurrentValue = Settings.Delay,
@@ -531,7 +404,7 @@ TeleportTab:CreateSlider({
     end
 })
 
-TeleportTab:CreateInput({
+SettingsTab:CreateInput({
     Name = "Start Index",
     PlaceholderText = "32",
     RemoveTextAfterFocusLost = false,
@@ -546,7 +419,7 @@ TeleportTab:CreateInput({
     end
 })
 
-TeleportTab:CreateInput({
+SettingsTab:CreateInput({
     Name = "End Index",
     PlaceholderText = "188",
     RemoveTextAfterFocusLost = false,
@@ -560,7 +433,6 @@ TeleportTab:CreateInput({
     end
 })
 
--- Settings Tab
 SettingsTab:CreateSection("Preferences")
 
 SettingsTab:CreateToggle({
@@ -569,6 +441,9 @@ SettingsTab:CreateToggle({
     Flag = "AntiAFK",
     Callback = function(Value)
         Settings.AntiAFK = Value
+        if Value then
+            setupAntiAFK()
+        end
     end
 })
 
@@ -581,13 +456,32 @@ SettingsTab:CreateToggle({
     end
 })
 
+-- Test button
+MainTab:CreateButton({
+    Name = "Test Current Position",
+    Callback = function()
+        pcall(function()
+            local cframe = getGingerbreadPosition(Settings.CurrentIndex)
+            if cframe and HumanoidRootPart then
+                HumanoidRootPart.CFrame = cframe + Vector3.new(0, 3, 0)
+                Rayfield:Notify({
+                    Title = "Test Teleport",
+                    Content = "Teleported to index " .. Settings.CurrentIndex,
+                    Duration = 2,
+                    Image = 4483362458
+                })
+            end
+        end)
+    end
+})
+
 -- Initial notification
 Rayfield:Notify({
     Title = "Gingerbread Farm",
-    Content = "Step 1: Visit all gingerbreads. Step 2: Collect them all!",
+    Content = "Toggle ON to start continuous farming!",
     Duration = 5,
     Image = 4483362458
 })
 
 print("[Gingerbread Farm] UI Loaded Successfully!")
-print("[Gingerbread Farm] Two-step process: Visit then Collect")
+print("[Gingerbread Farm] Toggle ON to start farming continuously")
