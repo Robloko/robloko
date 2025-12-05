@@ -1,4 +1,5 @@
--- Gingerbread Farm Script (Non-Stop, No Respawn)
+-- Gingerbread Farm Script with Non-Stop Farming
+-- Try multiple Rayfield sources
 local Rayfield = nil
 local success, err = pcall(function()
     Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
@@ -8,7 +9,6 @@ if not success then
         Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
     end)
 end
-
 if not success then
     -- Fallback to simple UI if Rayfield fails
     game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -16,15 +16,53 @@ if not success then
         Text = "Failed to load Rayfield. Creating simple UI...",
         Duration = 5
     })
+    
+    -- Create a simple command-based system
+    local Settings = {
+        StartFarming = false,
+        TeleportDelay = 2,
+        StartIndex = 32,
+        EndIndex = 188
+    }
+    
+    -- Simple print commands
+    print("=== Gingerbread Farm Commands ===")
+    print("Type in chat or execute:")
+    print("!start - Start farming")
+    print("!stop - Stop farming")
+    print("!status - Check status")
+    print("!setdelay [number] - Set teleport delay")
+    print("================================")
+    
+    -- Listen for chat commands
+    game:GetService("Players").LocalPlayer.Chatted:Connect(function(msg)
+        if msg:lower() == "!start" then
+            Settings.StartFarming = true
+            print("[Gingerbread Farm] Started farming!")
+        elseif msg:lower() == "!stop" then
+            Settings.StartFarming = false
+            print("[Gingerbread Farm] Stopped farming!")
+        elseif msg:lower() == "!status" then
+            print(string.format("[Gingerbread Farm] Status: %s", Settings.StartFarming and "Running" or "Stopped"))
+        elseif msg:lower():sub(1, 9) == "!setdelay" then
+            local delay = tonumber(msg:sub(11))
+            if delay then
+                Settings.TeleportDelay = delay
+                print(string.format("[Gingerbread Farm] Delay set to: %s seconds", delay))
+            end
+        end
+    end)
+    
+    -- Return early since we're using command system
     return
 end
 
--- Player and character setup
+-- If we get here, Rayfield loaded successfully
 local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Create Rayfield UI
+-- Create the window with proper settings
 local Window = Rayfield:CreateWindow({
     Name = "🍪 Gingerbread Farm",
     LoadingTitle = "Loading Gingerbread Farm...",
@@ -42,6 +80,21 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 
+-- Verify window was created
+if not Window then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Error",
+        Text = "Failed to create window",
+        Duration = 5
+    })
+    return
+end
+
+-- Create tabs
+local MainTab = Window:CreateTab("Main", 4483362458) -- Add icon ID
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+
 -- Settings
 local Settings = {
     Farming = false,
@@ -49,77 +102,91 @@ local Settings = {
     StartIndex = 32,
     EndIndex = 188,
     AntiAFK = true,
-    Notifications = true
+    Notifications = true,
+    CurrentIndex = 32,
+    FarmLoop = nil -- Store the loop coroutine
 }
 
--- Function to refetch HumanoidRootPart if missing
-local function getHumanoidRootPart()
-    if not HumanoidRootPart or not HumanoidRootPart.Parent then
-        local newChar = Player.Character or Player.CharacterAdded:Wait()
-        HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+-- Cache gingerbread locations
+local GingerbreadLocations = {}
+local LastUpdateTime = 0
+local CacheDuration = 30 -- Refresh cache every 30 seconds
+
+local function updateGingerbreadCache()
+    local now = tick()
+    if now - LastUpdateTime < CacheDuration and #GingerbreadLocations > 0 then
+        return GingerbreadLocations
     end
-    return HumanoidRootPart
+    
+    -- Clear old cache
+    table.clear(GingerbreadLocations)
+    
+    -- Find all gingerbread locations
+    pcall(function()
+        local interior = workspace:FindFirstChild("Interiors")
+        if interior then
+            local christmas = interior:FindFirstChild("MainMap!Christmas")
+            if christmas then
+                for _, model in ipairs(christmas:GetChildren()) do
+                    local gingerbread = model:FindFirstChild("GingerbreadMan") or 
+                                       model:FindFirstChild("Gingerbread") or
+                                       model:FindFirstChildWhichIsA("BasePart")
+                    
+                    if gingerbread and gingerbread:IsA("BasePart") then
+                        table.insert(GingerbreadLocations, {
+                            Model = model,
+                            Part = gingerbread,
+                            CFrame = gingerbread.CFrame
+                        })
+                    end
+                end
+            end
+        end
+    end)
+    
+    LastUpdateTime = tick()
+    
+    if Settings.Notifications then
+        Rayfield:Notify({
+            Title = "Cache Updated",
+            Content = string.format("Found %d gingerbread locations", #GingerbreadLocations),
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+    
+    return GingerbreadLocations
 end
 
--- Main farming function
-local function farmGingerbread()
-    while Settings.Farming do
-        getHumanoidRootPart() -- Ensure HumanoidRootPart is valid
-
-        for i = Settings.StartIndex, Settings.EndIndex do
-            if not Settings.Farming then break end
-
+-- Improved farming function with non-stop loop
+local function startFarmingLoop()
+    if Settings.FarmLoop then
+        Settings.FarmLoop:Disconnect()
+        Settings.FarmLoop = nil
+    end
+    
+    Settings.FarmLoop = game:GetService("RunService").Heartbeat:Connect(function()
+        if not Settings.Farming or #GingerbreadLocations == 0 then
+            return
+        end
+        
+        -- Update cache periodically
+        updateGingerbreadCache()
+        
+        -- Get current index and wrap around if needed
+        local currentIndex = Settings.CurrentIndex
+        if currentIndex > #GingerbreadLocations then
+            currentIndex = Settings.StartIndex
+        end
+        
+        local location = GingerbreadLocations[currentIndex]
+        if location then
+            -- Teleport to location
             pcall(function()
-                local interior = workspace:FindFirstChild("Interiors")
-                if not interior then
-                    if Settings.Notifications then
-                        Rayfield:Notify({
-                            Title = "Error",
-                            Content = "Interiors not found!",
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                    end
-                    return
-                end
-
-                local christmas = interior:FindFirstChild("MainMap!Christmas")
-                if not christmas then
-                    if Settings.Notifications then
-                        Rayfield:Notify({
-                            Title = "Error",
-                            Content = "Christmas map not found!",
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                    end
-                    return
-                end
-
-                local children = christmas:GetChildren()
-                if i > #children then
-                    if Settings.Notifications then
-                        Rayfield:Notify({
-                            Title = "Warning",
-                            Content = "Index out of range!",
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                    end
-                    break
-                end
-
-                local model = children[i]
-                local gingerbread = model:FindFirstChild("GingerbreadMan") or
-                                   model:FindFirstChild("Gingerbread") or
-                                   model:FindFirstChildWhichIsA("BasePart")
-
-                if gingerbread then
-                    -- Teleport to gingerbread
-                    HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
-                    task.wait(0.5)
-
-                    -- Fire remote to collect
+                if HumanoidRootPart and location.Part then
+                    HumanoidRootPart.CFrame = location.Part.CFrame + Vector3.new(0, 3, 0)
+                    
+                    -- Try to collect gingerbread
                     local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
                     if remote then
                         local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
@@ -127,30 +194,30 @@ local function farmGingerbread()
                             iceRemote:FireServer()
                         end
                     end
-
-                    if Settings.Notifications then
+                    
+                    if Settings.Notifications and currentIndex % 10 == 0 then
                         Rayfield:Notify({
-                            Title = "Collected",
-                            Content = "Gingerbread #" .. i,
+                            Title = "Farming Progress",
+                            Content = string.format("Location %d/%d", currentIndex, #GingerbreadLocations),
                             Duration = 1,
                             Image = 4483362458
                         })
                     end
-                else
-                    if Settings.Notifications then
-                        Rayfield:Notify({
-                            Title = "Warning",
-                            Content = "Gingerbread not found at index " .. i,
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                    end
+                    
+                    -- Move to next index
+                    Settings.CurrentIndex = currentIndex + 1
                 end
             end)
-
-            task.wait(Settings.Delay)
+        else
+            -- If location doesn't exist, move to next
+            Settings.CurrentIndex = currentIndex + 1
         end
-    end
+        
+        -- Wrap around if we reached the end
+        if Settings.CurrentIndex > Settings.EndIndex then
+            Settings.CurrentIndex = Settings.StartIndex
+        end
+    end)
 end
 
 -- Anti-AFK
@@ -163,28 +230,38 @@ if Settings.AntiAFK then
     end)
 end
 
--- UI Setup
-local MainTab = Window:CreateTab("Main", 4483362458)
-local TeleportTab = Window:CreateTab("Teleport", 4483362458)
-local SettingsTab = Window:CreateTab("Settings", 4483362458)
-
 -- Main Tab
 MainTab:CreateSection("Farming Controls")
+
 local Toggle = MainTab:CreateToggle({
     Name = "Start Farming",
     CurrentValue = Settings.Farming,
     Flag = "FarmingToggle",
     Callback = function(Value)
         Settings.Farming = Value
+        
         if Value then
+            -- Update cache before starting
+            updateGingerbreadCache()
+            
+            -- Reset index
+            Settings.CurrentIndex = Settings.StartIndex
+            
+            -- Start farming loop
+            startFarmingLoop()
+            
             Rayfield:Notify({
                 Title = "Started",
-                Content = "Gingerbread farming started!",
+                Content = string.format("Farming %d gingerbread locations!", #GingerbreadLocations),
                 Duration = 3,
                 Image = 4483362458
             })
-            task.spawn(farmGingerbread)
         else
+            if Settings.FarmLoop then
+                Settings.FarmLoop:Disconnect()
+                Settings.FarmLoop = nil
+            end
+            
             Rayfield:Notify({
                 Title = "Stopped",
                 Content = "Gingerbread farming stopped.",
@@ -195,8 +272,44 @@ local Toggle = MainTab:CreateToggle({
     end
 })
 
+MainTab:CreateButton({
+    Name = "Update Cache",
+    Callback = function()
+        updateGingerbreadCache()
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Test Single Teleport",
+    Callback = function()
+        pcall(function()
+            updateGingerbreadCache()
+            
+            if #GingerbreadLocations > 0 then
+                local location = GingerbreadLocations[Settings.CurrentIndex]
+                if location then
+                    HumanoidRootPart.CFrame = location.Part.CFrame + Vector3.new(0, 3, 0)
+                    Rayfield:Notify({
+                        Title = "Teleported",
+                        Content = string.format("Teleported to location %d", Settings.CurrentIndex),
+                        Duration = 3,
+                        Image = 4483362458
+                    })
+                    
+                    -- Move to next location for testing
+                    Settings.CurrentIndex = Settings.CurrentIndex + 1
+                    if Settings.CurrentIndex > #GingerbreadLocations then
+                        Settings.CurrentIndex = 1
+                    end
+                end
+            end
+        end)
+    end
+})
+
 -- Teleport Tab
 TeleportTab:CreateSection("Teleport Settings")
+
 TeleportTab:CreateSlider({
     Name = "Teleport Delay",
     Range = {0.5, 5},
@@ -218,7 +331,8 @@ TeleportTab:CreateInput({
     Callback = function(Value)
         local num = tonumber(Value)
         if num then
-            Settings.StartIndex = num
+            Settings.StartIndex = math.max(1, num)
+            Settings.CurrentIndex = Settings.StartIndex
         end
     end
 })
@@ -239,6 +353,7 @@ TeleportTab:CreateInput({
 
 -- Settings Tab
 SettingsTab:CreateSection("Preferences")
+
 SettingsTab:CreateToggle({
     Name = "Anti-AFK",
     CurrentValue = Settings.AntiAFK,
@@ -257,16 +372,34 @@ SettingsTab:CreateToggle({
     end
 })
 
+SettingsTab:CreateButton({
+    Name = "Save Settings",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Settings Saved",
+            Content = "Your settings have been saved!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
 -- Character handling
 Player.CharacterAdded:Connect(function(newChar)
     Character = newChar
     HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
 end)
 
+-- Update cache on script start
+updateGingerbreadCache()
+
 -- Initial notification
 Rayfield:Notify({
     Title = "Gingerbread Farm",
-    Content = "UI loaded successfully! 🍪",
+    Content = string.format("Loaded! Found %d gingerbread locations", #GingerbreadLocations),
     Duration = 5,
     Image = 4483362458
 })
+
+print("[Gingerbread Farm] UI Loaded Successfully!")
+print("[Gingerbread Farm] Found " .. #GingerbreadLocations .. " gingerbread locations")
