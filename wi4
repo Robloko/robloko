@@ -1,4 +1,4 @@
--- Gingerbread Farm Script with Fixed UI and Key System
+-- Gingerbread Farm Script (Non-Stop, No Respawn)
 local Rayfield = nil
 local success, err = pcall(function()
     Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
@@ -10,48 +10,21 @@ if not success then
 end
 
 if not success then
+    -- Fallback to simple UI if Rayfield fails
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "Gingerbread Farm",
-        Text = "Failed to load Rayfield. Script stopped.",
+        Text = "Failed to load Rayfield. Creating simple UI...",
         Duration = 5
     })
     return
 end
 
--- Key System
-local validKeys = {
-    ["12345"] = true, -- Замените на ваш ключ
-    ["1234567890"] = true,
-}
-
-local function checkKey()
-    local key = Rayfield:Prompt({
-        Title = "Key System",
-        SubTitle = "Enter your key:",
-        Content = "Please enter a valid key to use the script.",
-    })
-
-    if validKeys[key] then
-        return true
-    else
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Invalid key! Script will close.",
-            Duration = 5,
-            Image = 4483362458
-        })
-        return false
-    end
-end
-
-if not checkKey() then return end
-
--- Player and Character
+-- Player and character setup
 local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Create the window
+-- Create Rayfield UI
 local Window = Rayfield:CreateWindow({
     Name = "🍪 Gingerbread Farm",
     LoadingTitle = "Loading Gingerbread Farm...",
@@ -69,15 +42,6 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 
-if not Window then
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Error",
-        Text = "Failed to create window",
-        Duration = 5
-    })
-    return
-end
-
 -- Settings
 local Settings = {
     Farming = false,
@@ -88,46 +52,98 @@ local Settings = {
     Notifications = true
 }
 
--- Farming function (fixed to non-stop)
+-- Function to refetch HumanoidRootPart if missing
+local function getHumanoidRootPart()
+    if not HumanoidRootPart or not HumanoidRootPart.Parent then
+        local newChar = Player.Character or Player.CharacterAdded:Wait()
+        HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+    end
+    return HumanoidRootPart
+end
+
+-- Main farming function
 local function farmGingerbread()
     while Settings.Farming do
+        getHumanoidRootPart() -- Ensure HumanoidRootPart is valid
+
         for i = Settings.StartIndex, Settings.EndIndex do
             if not Settings.Farming then break end
 
             pcall(function()
                 local interior = workspace:FindFirstChild("Interiors")
-                if interior then
-                    local christmas = interior:FindFirstChild("MainMap!Christmas")
-                    if christmas then
-                        local children = christmas:GetChildren()
-                        if i <= #children then
-                            local model = children[i]
-                            local gingerbread = model:FindFirstChild("GingerbreadMan") or
-                                               model:FindFirstChild("Gingerbread") or
-                                               model:FindFirstChildWhichIsA("BasePart")
+                if not interior then
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Error",
+                            Content = "Interiors not found!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                    end
+                    return
+                end
 
-                            if gingerbread then
-                                HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
-                                task.wait(0.5)
+                local christmas = interior:FindFirstChild("MainMap!Christmas")
+                if not christmas then
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Error",
+                            Content = "Christmas map not found!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                    end
+                    return
+                end
 
-                                local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
-                                if remote then
-                                    local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
-                                    if iceRemote then
-                                        iceRemote:FireServer()
-                                    end
-                                end
+                local children = christmas:GetChildren()
+                if i > #children then
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Warning",
+                            Content = "Index out of range!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                    end
+                    break
+                end
 
-                                if Settings.Notifications then
-                                    Rayfield:Notify({
-                                        Title = "Collected",
-                                        Content = "Gingerbread #" .. i,
-                                        Duration = 1,
-                                        Image = 4483362458
-                                    })
-                                end
-                            end
+                local model = children[i]
+                local gingerbread = model:FindFirstChild("GingerbreadMan") or
+                                   model:FindFirstChild("Gingerbread") or
+                                   model:FindFirstChildWhichIsA("BasePart")
+
+                if gingerbread then
+                    -- Teleport to gingerbread
+                    HumanoidRootPart.CFrame = gingerbread.CFrame + Vector3.new(0, 3, 0)
+                    task.wait(0.5)
+
+                    -- Fire remote to collect
+                    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("adoptme_new_net")
+                    if remote then
+                        local iceRemote = remote:FindFirstChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
+                        if iceRemote then
+                            iceRemote:FireServer()
                         end
+                    end
+
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Collected",
+                            Content = "Gingerbread #" .. i,
+                            Duration = 1,
+                            Image = 4483362458
+                        })
+                    end
+                else
+                    if Settings.Notifications then
+                        Rayfield:Notify({
+                            Title = "Warning",
+                            Content = "Gingerbread not found at index " .. i,
+                            Duration = 3,
+                            Image = 4483362458
+                        })
                     end
                 end
             end)
@@ -147,10 +163,13 @@ if Settings.AntiAFK then
     end)
 end
 
--- Main Tab
+-- UI Setup
 local MainTab = Window:CreateTab("Main", 4483362458)
-MainTab:CreateSection("Farming Controls")
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
+-- Main Tab
+MainTab:CreateSection("Farming Controls")
 local Toggle = MainTab:CreateToggle({
     Name = "Start Farming",
     CurrentValue = Settings.Farming,
@@ -177,9 +196,7 @@ local Toggle = MainTab:CreateToggle({
 })
 
 -- Teleport Tab
-local TeleportTab = Window:CreateTab("Teleport", 4483362458)
 TeleportTab:CreateSection("Teleport Settings")
-
 TeleportTab:CreateSlider({
     Name = "Teleport Delay",
     Range = {0.5, 5},
@@ -221,9 +238,7 @@ TeleportTab:CreateInput({
 })
 
 -- Settings Tab
-local SettingsTab = Window:CreateTab("Settings", 4483362458)
 SettingsTab:CreateSection("Preferences")
-
 SettingsTab:CreateToggle({
     Name = "Anti-AFK",
     CurrentValue = Settings.AntiAFK,
@@ -255,5 +270,3 @@ Rayfield:Notify({
     Duration = 5,
     Image = 4483362458
 })
-
-print("[Gingerbread Farm] UI Loaded Successfully!")
