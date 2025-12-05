@@ -1,100 +1,163 @@
--- Advanced Gingerbread Debugger
-local function deepDebugGingerbread(index)
-    print("\n=== DEEP DEBUG Gingerbread " .. index .. " ===")
+-- Smart Gingerbread Farm with Discovery
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "🍪 Smart Gingerbread Farm",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "With active discovery system"
+})
+
+local MainTab = Window:CreateTab("Main", 4483362458)
+
+-- Settings
+local Settings = {
+    Farming = false,
+    ScanRange = 50, -- How far to scan for gingerbreads
+    TeleportDelay = 2,
+    UseTeleport = true,
+    AutoDiscover = true
+}
+
+-- Collection Remote
+local CollectionRemote = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
+
+-- Store discovered gingerbreads
+local DiscoveredGingerbreads = {}
+
+-- Find ALL available gingerbreads (not just by index)
+local function findAvailableGingerbreads()
+    print("=== FINDING AVAILABLE GINGERBREADS ===")
     
     local christmasMap = workspace.Interiors["MainMap!Christmas"]
-    local gingerbread = christmasMap:GetChildren()[index]
+    if not christmasMap then return {} end
     
-    if not gingerbread then
-        print("No gingerbread at index", index)
-        return
-    end
+    local available = {}
     
-    print("Name:", gingerbread.Name)
-    print("ClassName:", gingerbread.ClassName)
-    
-    -- 1. List ALL children recursively
-    local function printTree(obj, depth)
-        local prefix = string.rep("  ", depth)
-        print(prefix .. obj.Name .. " (" .. obj.ClassName .. ")")
-        
-        -- Print important properties
-        if obj:IsA("BasePart") then
-            print(prefix .. "  Position: " .. math.floor(obj.Position.X) .. ", " .. 
-                  math.floor(obj.Position.Y) .. ", " .. math.floor(obj.Position.Z))
-            
-            -- Check MeshId if MeshPart
-            if obj:IsA("MeshPart") then
-                print(prefix .. "  MeshId:", obj.MeshId)
-                print(prefix .. "  TextureID:", obj.TextureID)
-            end
-        end
-        
-        -- Check ALL attributes
-        local attributes = obj:GetAttributes()
-        if next(attributes) then
-            print(prefix .. "  Attributes:")
-            for attrName, attrValue in pairs(attributes) do
-                print(prefix .. "    " .. attrName .. " = " .. tostring(attrValue))
-            end
-        end
-        
-        -- Recursively print children
-        for _, child in pairs(obj:GetChildren()) do
-            printTree(child, depth + 1)
-        end
-    end
-    
-    printTree(gingerbread, 0)
-    
-    -- 2. Look for ANY UUID pattern in the entire object
-    print("\n=== SEARCHING FOR UUID PATTERNS ===")
-    
-    local function searchForUUID(obj, path)
-        local found = false
-        
-        -- Check string properties
-        local stringProperties = {"Name", "MeshId", "TextureID"}
-        for _, prop in ipairs(stringProperties) do
-            if obj[prop] and type(obj[prop]) == "string" then
-                local uuidPattern = "{(........%-....%-....%-....%-............)}"
-                local uuid = obj[prop]:match(uuidPattern)
+    for _, gingerbread in pairs(christmasMap:GetChildren()) do
+        if gingerbread.Name == "GingerbreadRig" then
+            local gingerMan = gingerbread:FindFirstChild("GingerbreadMan")
+            if gingerMan and gingerMan:IsA("MeshPart") then
+                -- Try to extract UUID from MeshId
+                local meshId = gingerMan.MeshId or ""
+                local uuid = meshId:match("{(........%-....%-....%-....%-............)}")
+                
                 if uuid then
-                    print("✓ FOUND UUID in " .. path .. "." .. prop .. ": {" .. uuid .. "}")
-                    found = true
+                    uuid = "{" .. uuid .. "}"
+                    
+                    table.insert(available, {
+                        Instance = gingerbread,
+                        UUID = uuid,
+                        Position = gingerbread:GetPivot().Position
+                    })
+                    
+                    print("Found: UUID = " .. uuid)
                 end
             end
         end
-        
-        -- Check attributes
-        local attributes = obj:GetAttributes()
-        for attrName, attrValue in pairs(attributes) do
-            if type(attrValue) == "string" then
-                local uuidPattern = "{(........%-....%-....%-....%-............)}"
-                local uuid = attrValue:match(uuidPattern)
-                if uuid then
-                    print("✓ FOUND UUID in " .. path .. " attribute '" .. attrName .. "': {" .. uuid .. "}")
-                    found = true
-                end
-            end
-        end
-        
-        -- Recursive search
-        for _, child in pairs(obj:GetChildren()) do
-            if searchForUUID(child, path .. "." .. child.Name) then
-                found = true
-            end
-        end
-        
-        return found
     end
     
-    if not searchForUUID(gingerbread, "GingerbreadRig") then
-        print("✗ No UUID pattern found in entire object!")
-    end
-    
-    print("=== DEBUG COMPLETE ===\n")
+    print("Total found: " .. #available)
+    return available
 end
 
--- Test with your working index 82
-deepDebugGingerbread(82)
+-- Teleport to gingerbread
+local function teleportTo(gingerbread)
+    if not Settings.UseTeleport then return end
+    
+    local player = game.Players.LocalPlayer
+    local character = player.Character
+    if not character then return end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    hrp.CFrame = CFrame.new(gingerbread.Position + Vector3.new(0, 5, 0))
+    task.wait(0.5)
+end
+
+-- Collect gingerbread
+local function collectGingerbread(gingerbreadData)
+    local args = {{
+        interior_name = "MainMap!Christmas",
+        gingerbread_id = gingerbreadData.UUID
+    }}
+    
+    local success, result = pcall(function()
+        CollectionRemote:FireServer(unpack(args))
+        return true
+    end)
+    
+    return success
+end
+
+-- Main farming loop
+local function startFarming()
+    while Settings.Farming do
+        -- Find available gingerbreads
+        local available = findAvailableGingerbreads()
+        
+        if #available == 0 then
+            Rayfield:Notify({
+                Title = "No Gingerbreads",
+                Content = "Waiting for respawn...",
+                Duration = 3
+            })
+            task.wait(5)
+            continue
+        end
+        
+        -- Collect each available gingerbread
+        for _, gingerbreadData in pairs(available) do
+            if not Settings.Farming then break end
+            
+            -- Teleport
+            teleportTo(gingerbreadData)
+            
+            -- Collect
+            if collectGingerbread(gingerbreadData) then
+                Rayfield:Notify({
+                    Title = "✓ Collected",
+                    Content = "UUID: " .. string.sub(gingerbreadData.UUID, 1, 10) .. "...",
+                    Duration = 0.5
+                })
+            end
+            
+            -- Delay
+            task.wait(Settings.TeleportDelay)
+        end
+        
+        -- Wait before rescanning
+        if Settings.Farming then
+            task.wait(3)
+        end
+    end
+end
+
+-- UI
+MainTab:CreateToggle({
+    Name = "Start/Stop Farming",
+    CurrentValue = Settings.Farming,
+    Callback = function(Value)
+        Settings.Farming = Value
+        if Value then
+            task.spawn(startFarming)
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Scan Now",
+    Callback = function()
+        local available = findAvailableGingerbreads()
+        Rayfield:Notify({
+            Title = "Scan Complete",
+            Content = #available .. " gingerbreads available",
+            Duration = 5
+        })
+    end
+})
+
+MainTab:CreateLabel("This script finds ACTUALLY available gingerbreads")
+MainTab:CreateLabel("instead of relying on fixed indices.")
+
+print("Ready! Click 'Scan Now' to see available gingerbreads.")
