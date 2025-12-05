@@ -1,43 +1,75 @@
-local function debugCollectionMethods()
-    print("=== DEBUG: Finding Collection Method ===")
+-- UUID Finder (Paste and run)
+local function findAllUUIDs()
+    print("=== FINDING ALL UUIDs ===")
     
-    -- Get a gingerbread for testing
-    local testGinger = workspace.Interiors["MainMap!Christmas"]:GetChildren()[82]
-    if not testGinger then return end
+    local collectionRemote = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
+    local christmasMap = workspace.Interiors["MainMap!Christmas"]
     
-    print("1. Checking RemoteStorage...")
-    local rs = game:GetService("ReplicatedStorage")
-    for _, child in pairs(rs:GetChildren()) do
-        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-            print("  Found:", child.Name, "Type:", child.ClassName)
-        end
-    end
+    -- UUID output array
+    local allUUIDs = {}
     
-    print("\n2. Checking network folders...")
-    local network = rs:FindFirstChild("adoptme_new_net") or rs:FindFirstChild("Network")
-    if network then
-        for _, remote in pairs(network:GetChildren()) do
-            if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
-                print("  Network Remote:", remote.Name)
+    for index = 32, 188 do
+        local gingerbread = christmasMap:GetChildren()[index]
+        if gingerbread and gingerbread.Name == "GingerbreadRig" then
+            local gingerMan = gingerbread:FindFirstChild("GingerbreadMan")
+            if gingerMan and gingerMan:IsA("MeshPart") then
+                -- Try to extract UUID from MeshId
+                local meshId = gingerMan.MeshId or ""
+                local uuid = meshId:match("{(........%-....%-....%-....%-............)}")
+                
+                if uuid then
+                    uuid = "{" .. uuid .. "}"
+                    
+                    -- Test if it works
+                    local args = {{
+                        interior_name = "MainMap!Christmas",
+                        gingerbread_id = uuid
+                    }}
+                    
+                    local success = pcall(function()
+                        collectionRemote:FireServer(unpack(args))
+                        return true
+                    end)
+                    
+                    if success then
+                        print(string.format("    [%d] = \"%s\",  -- WORKS", index, uuid))
+                        table.insert(allUUIDs, {index = index, uuid = uuid, works = true})
+                    else
+                        print(string.format("    -- [%d] = \"%s\",  -- FAILS", index, uuid))
+                        table.insert(allUUIDs, {index = index, uuid = uuid, works = false})
+                    end
+                else
+                    print(string.format("    -- [%d] = nil,  -- NO UUID FOUND", index))
+                end
             end
         end
-    end
-    
-    print("\n3. Checking gingerbread interaction...")
-    local interactives = {
-        ClickDetector = testGinger:FindFirstChildWhichIsA("ClickDetector"),
-        ProximityPrompt = testGinger:FindFirstChildWhichIsA("ProximityPrompt"),
-        TouchInterest = testGinger:FindFirstChildWhichIsA("TouchTransmitter")
-    }
-    
-    for typeName, obj in pairs(interactives) do
-        if obj then
-            print("  Has", typeName, ":", obj.Name)
+        
+        -- Yield to prevent crashing
+        if index % 10 == 0 then
+            task.wait(0.05)
+            print("Progress: " .. index .. "/188")
         end
     end
     
-    print("=== DEBUG END ===")
+    -- Create output for script
+    print("\n=== COPY THIS TO YOUR SCRIPT ===")
+    print("local GingerbreadUUIDs = {")
+    
+    local workingCount = 0
+    for _, data in pairs(allUUIDs) do
+        if data.works then
+            print(string.format("    [%d] = \"%s\",", data.index, data.uuid))
+            workingCount = workingCount + 1
+        end
+    end
+    
+    print("}")
+    print("\n=== SUMMARY ===")
+    print("Working UUIDs found:", workingCount)
+    print("Total gingerbreads checked: 157")
+    
+    return allUUIDs
 end
 
--- Run this first to understand the collection method
-debugCollectionMethods()
+-- Run it
+findAllUUIDs()
