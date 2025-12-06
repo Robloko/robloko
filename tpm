@@ -1,5 +1,5 @@
--- [ CUSTOM TELEPORT SCRIPT ] --
--- Made for specific coordinates from screenshot
+-- [ CUSTOM TELEPORT SCRIPT - STOP AT GOAL ] --
+-- Stops execution when reaching target position
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -7,6 +7,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
+
+-- Your goal position (from screenshot)
+local GOAL_POSITION = Vector3.new(-255.10, 30.89, -1831.46)
+local TOLERANCE = 15  -- How close you need to be
 
 -- Debug print
 local function debugPrint(msg)
@@ -18,14 +22,33 @@ local function getValidCharacter()
     return player.Character or player.CharacterAdded:Wait()
 end
 
+-- Check if already at goal position
+local function isAtGoal()
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then 
+        return false 
+    end
+    
+    local hrp = char.HumanoidRootPart
+    local distance = (hrp.Position - GOAL_POSITION).Magnitude
+    
+    debugPrint("Current: " .. tostring(hrp.Position))
+    debugPrint("Goal: " .. tostring(GOAL_POSITION))
+    debugPrint("Distance: " .. string.format("%.2f", distance))
+    
+    return distance < TOLERANCE
+end
+
 -- Exit house if inside
 local function exitHouse()
+    if isAtGoal() then return true end  -- Don't exit if already at goal
+    
     local success, err = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/UnsubscribeFromHouse")
             :InvokeServer(player, true)
     end)
     if success then
-        debugPrint("Exited house successfully")
+        debugPrint("Exited house")
         return true
     else
         debugPrint("Failed to exit house: " .. tostring(err))
@@ -33,194 +56,226 @@ local function exitHouse()
     end
 end
 
--- Teleport to position
+-- Teleport to position (skips if at goal)
 local function teleportTo(pos, name)
+    if isAtGoal() then
+        debugPrint("Already at goal, skipping teleport to " .. name)
+        return true
+    end
+    
     local char = getValidCharacter()
     if not char or not char:FindFirstChild("HumanoidRootPart") then
-        debugPrint("No HumanoidRootPart for teleport to " .. name)
+        debugPrint("No HumanoidRootPart")
         return false
     end
     char.HumanoidRootPart.CFrame = CFrame.new(pos)
     task.wait(0.5)
-    debugPrint("Teleported to " .. name .. ": " .. tostring(pos))
+    debugPrint("Teleported to " .. name)
     return true
 end
 
--- Set camera to look at a point
+-- Set camera (skips if at goal)
 local function setCamera(pos, lookAt)
+    if isAtGoal() then
+        debugPrint("Already at goal, skipping camera set")
+        return
+    end
+    
     local camera = Workspace.CurrentCamera
     if camera then
         camera.CameraType = Enum.CameraType.Scriptable
         camera.CFrame = CFrame.new(pos, lookAt)
-        debugPrint("Camera set to: " .. tostring(pos))
+        debugPrint("Camera set")
     end
 end
 
--- Reset camera to normal
+-- Reset camera (skips if at goal)
 local function resetCamera()
+    if isAtGoal() then
+        debugPrint("Already at goal, skipping camera reset")
+        return
+    end
+    
     local camera = Workspace.CurrentCamera
     if camera then
         camera.CameraType = Enum.CameraType.Custom
-        debugPrint("Camera reset to normal")
+        debugPrint("Camera reset")
     end
 end
 
--- Simulate W then S key press (with adjustable timings)
+-- Simulate key press (skips if at goal)
 local function simulateKeyPress(forwardTime, backwardTime)
-    -- Press W (forward)
+    if isAtGoal() then
+        debugPrint("Already at goal, skipping key simulation")
+        return
+    end
+    
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
     task.wait(forwardTime or 1.2)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
     
-    -- Press S (backward)
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
     task.wait(backwardTime or 2)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
     
-    debugPrint("Simulated W (" .. (forwardTime or 1.2) .. "s) then S (" .. (backwardTime or 2) .. "s)")
+    debugPrint("Simulated key press")
 end
 
--- Check if player is near a position
-local function isNearPosition(targetPos, tolerance)
-    tolerance = tolerance or 10
-    local char = getValidCharacter()
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
-    local hrp = char.HumanoidRootPart
-    local distance = (hrp.Position - targetPos).Magnitude
-    debugPrint("Distance to target: " .. string.format("%.2f", distance) .. " units")
-    return distance < tolerance
-end
-
--- Get current position
-local function getCurrentPosition()
-    local char = getValidCharacter()
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        return char.HumanoidRootPart.Position
+-- Main teleport function that STOPS when reaching goal
+local function teleportToGoal()
+    debugPrint("Starting teleport sequence...")
+    debugPrint("Goal position: " .. tostring(GOAL_POSITION))
+    
+    -- Check if already at goal BEFORE doing anything
+    if isAtGoal() then
+        debugPrint("ALREADY AT GOAL POSITION!")
+        debugPrint("Script will NOT execute any further actions.")
+        debugPrint("✓ SUCCESS - Position reached!")
+        return true
     end
-    return nil
-end
-
--- Main function to teleport to screenshot coordinates
-local function teleportToScreenshotLocation()
-    local maxAttempts = 3
+    
+    debugPrint("Not at goal yet, proceeding with teleport...")
+    
+    local maxAttempts = 5
     local attempt = 1
     
-    -- Coordinates from your screenshot
-    local characterPos = Vector3.new(-12025.122, 9529.577, -11970.038)
-    local cameraPos = Vector3.new(-12025.516, 9535.196, -11981.302)
-    
-    debugPrint("Starting teleport to screenshot location...")
-    debugPrint("Target Character Position: " .. tostring(characterPos))
-    debugPrint("Target Camera Position: " .. tostring(cameraPos))
-    
     while attempt <= maxAttempts do
-        debugPrint("Attempt #" .. attempt .. " of " .. maxAttempts)
-        
-        -- Step 1: Exit house if needed
-        exitHouse()
-        task.wait(2)
-        
-        -- Step 2: Teleport character to exact position
-        if not teleportTo(characterPos, "Screenshot Character Position") then
-            attempt += 1
-            task.wait(1)
-            continue
+        if isAtGoal() then
+            debugPrint("Reached goal during attempt #" .. attempt .. " - STOPPING")
+            return true
         end
         
-        -- Step 3: Set camera to exact position
-        -- Calculate look-at point (looking forward from camera)
-        local lookAtPoint = cameraPos + Vector3.new(0, 0, 10)
-        setCamera(cameraPos, lookAtPoint)
+        debugPrint("Attempt #" .. attempt)
         
-        -- Step 4: Verify we're at the right position
-        local currentPos = getCurrentPosition()
-        if currentPos then
-            local distance = (currentPos - characterPos).Magnitude
-            debugPrint("Current position: " .. tostring(currentPos))
-            debugPrint("Distance from target: " .. string.format("%.2f", distance))
+        -- Step 1: Exit house
+        if not isAtGoal() then
+            exitHouse()
+            task.wait(3)
+        end
+        
+        -- Step 2: Teleport to loading spot (from original script)
+        if not isAtGoal() then
+            local pos1 = Vector3.new(-3023.66, 6529.58, -8975.54)
+            local cam1Pos = Vector3.new(-3023.48, 6536.96, -8975.54)
+            local cam1Look = cam1Pos + Vector3.new(0, 0, 100)
             
-            if distance < 5 then
-                debugPrint("✓ Successfully teleported to target location!")
+            teleportTo(pos1, "Loading Spot 1")
+            setCamera(cam1Pos, cam1Look)
+            simulateKeyPress(1.2, 2)
+            task.wait(10)
+        end
+        
+        -- Step 3: Check if at goal position
+        if isAtGoal() then
+            debugPrint("✓ REACHED GOAL POSITION AFTER LOADING!")
+            debugPrint("Current: " .. tostring(getValidCharacter().HumanoidRootPart.Position))
+            debugPrint("Goal: " .. tostring(GOAL_POSITION))
+            debugPrint("✓ SCRIPT COMPLETE - STOPPING ALL ACTIONS")
+            
+            -- Reset camera before stopping
+            resetCamera()
+            return true
+        end
+        
+        debugPrint("Not at goal yet, checking distance...")
+        debugPrint("Current: " .. tostring(getValidCharacter().HumanoidRootPart.Position))
+        
+        -- Step 4: Check if loaded into correct area
+        if not isAtGoal() then
+            local checkPos1 = GOAL_POSITION  -- Using your goal position
+            local char = getValidCharacter()
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local distance = (char.HumanoidRootPart.Position - checkPos1).Magnitude
+                debugPrint("Distance to goal: " .. string.format("%.2f", distance))
                 
-                -- Step 5: Simulate movement to trigger any necessary loading
-                debugPrint("Simulating key presses...")
-                task.wait(1)
-                simulateKeyPress(0.5, 0.5) -- Short W then S
-                task.wait(1)
-                
-                -- Optionally, simulate longer movement
-                debugPrint("Additional movement simulation...")
-                simulateKeyPress(1.0, 1.0)
-                
-                -- Final check
-                if isNearPosition(characterPos, 5) then
-                    debugPrint("✓ FINAL CHECK: Still at target location!")
-                    debugPrint("✓ TELEPORT COMPLETE!")
-                    debugPrint("Character at: " .. tostring(characterPos))
-                    debugPrint("Camera at: " .. tostring(cameraPos))
-                    
-                    -- Keep camera fixed or reset based on preference
-                    -- resetCamera() -- Uncomment to reset camera to normal
-                    
+                if distance < TOLERANCE then
+                    debugPrint("✓ LOADED INTO GOAL AREA!")
+                    debugPrint("✓ SCRIPT COMPLETE - NO FURTHER ACTIONS")
+                    resetCamera()
                     return true
                 end
             end
         end
         
-        -- Retry logic
-        debugPrint("Attempt failed, retrying...")
+        -- Step 5: If not at goal, try final teleport
+        if not isAtGoal() then
+            debugPrint("Not at goal, trying final teleport...")
+            local pos2 = Vector3.new(-247.17, 31.50, -1481.08)
+            local cam2Pos = Vector3.new(-247.18, 39.65, -1491.06)
+            local cam2Look = cam2Pos + Vector3.new(0, 0, 100)
+            
+            teleportTo(pos2, "Nursery Entrance")
+            setCamera(cam2Pos, cam2Look)
+            simulateKeyPress(1.2, 2)
+            task.wait(10)
+        end
+        
+        -- Final goal check
+        if isAtGoal() then
+            debugPrint("✓ FINALLY REACHED GOAL POSITION!")
+            debugPrint("✓ SCRIPT COMPLETE - STOPPING")
+            resetCamera()
+            return true
+        end
+        
+        debugPrint("Attempt #" .. attempt .. " failed")
         resetCamera()
         task.wait(2)
         attempt += 1
     end
     
-    debugPrint("Failed to reach target after " .. maxAttempts .. " attempts")
+    debugPrint("Failed to reach goal after " .. maxAttempts .. " attempts")
     resetCamera()
     return false
 end
 
--- Alternative: Direct teleport without camera control
-local function quickTeleportToScreenshot()
-    local characterPos = Vector3.new(-12025.122, 9529.577, -11970.038)
+-- Simple checker function (just checks and stops if at goal)
+local function checkAndStopIfAtGoal()
+    debugPrint("Checking position...")
     
-    debugPrint("Quick teleport to: " .. tostring(characterPos))
-    
-    -- Simple teleport
-    local char = getValidCharacter()
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.CFrame = CFrame.new(characterPos)
-        debugPrint("Teleported! Simulating movement...")
-        
-        -- Add movement to potentially trigger loading
-        task.wait(0.5)
-        simulateKeyPress(0.3, 0.3)
-        
-        debugPrint("Quick teleport complete!")
+    if isAtGoal() then
+        debugPrint("========================================")
+        debugPrint("✓ ALREADY AT GOAL POSITION!")
+        debugPrint("Position: " .. tostring(GOAL_POSITION))
+        debugPrint("✓ SCRIPT WILL NOT EXECUTE ANY ACTIONS")
+        debugPrint("========================================")
         return true
-    end
-    return false
-end
-
--- RUN OPTIONS:
--- Option 1: Full teleport with camera positioning
-debugPrint("Starting full teleport sequence...")
-teleportToScreenshotLocation()
-
--- Option 2: Quick teleport (uncomment to use instead)
--- debugPrint("Starting quick teleport...")
--- quickTeleportToScreenshot()
-
--- Option 3: Create a command for repeated use
-local function createTeleportCommand()
-    -- This function can be called multiple times
-    return function()
-        teleportToScreenshotLocation()
+    else
+        debugPrint("Not at goal position yet")
+        debugPrint("Current distance: " .. string.format("%.2f", 
+            (getValidCharacter().HumanoidRootPart.Position - GOAL_POSITION).Magnitude))
+        return false
     end
 end
 
--- Example: Bind to a key (you'd need to implement your own keybind system)
--- game:GetService("UserInputService").InputBegan:Connect(function(input)
---     if input.KeyCode == Enum.KeyCode.P then
---         teleportToScreenshotLocation()
---     end
--- end)
+-- RUN THE SCRIPT
+debugPrint("========================================")
+debugPrint("GOAL POSITION CHECKER")
+debugPrint("Goal: " .. tostring(GOAL_POSITION))
+debugPrint("Tolerance: " .. TOLERANCE .. " units")
+debugPrint("========================================")
+
+-- First, check if already at goal
+if checkAndStopIfAtGoal() then
+    -- Do nothing - script stops here
+    return
+else
+    -- If not at goal, run the teleport sequence
+    debugPrint("Not at goal, starting teleport sequence...")
+    teleportToGoal()
+end
+
+-- You can also create a loop checker that stops everything if you reach goal
+local function safetyMonitor()
+    while true do
+        if isAtGoal() then
+            debugPrint("SAFETY MONITOR: Goal reached, stopping all actions!")
+            -- You could add emergency stops here if needed
+            break
+        end
+        task.wait(1)
+    end
+end
+
+-- Start safety monitor in background
+task.spawn(safetyMonitor)
