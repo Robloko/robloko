@@ -1,71 +1,207 @@
--- [ULTRA SIMPLE TELEPORT SCRIPT] --
--- NO retries, NO attempts, ONE-TIME check
+-- [ CUSTOM TELEPORT SCRIPT WITH POSITION CHECK ] --
+-- Made for specific coordinates from screenshot
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 
--- Your positions
-local GOAL_POSITION = Vector3.new(-255.10, 30.89, -1831.46)  -- Where you want to BE
-local TARGET_POSITION = Vector3.new(-12025.122, 9529.577, -11970.038)  -- Where to teleport FROM
-local GOAL_TOLERANCE = 5  -- Very strict: must be within 5 units
+-- Positions to check
+local EXCLUDED_POSITION = Vector3.new(-255.10, 30.89, -1831.46)  -- Position to skip teleport
+local EXCLUDED_TOLERANCE = 20  -- How close to be considered "at" the excluded position
 
--- Debug
+-- Target coordinates from first screenshot
+local TARGET_CHAR_POS = Vector3.new(-12025.122, 9529.577, -11970.038)
+local TARGET_CAM_POS = Vector3.new(-12025.516, 9535.196, -11981.302)
+
+-- Debug print
 local function debugPrint(msg)
-    print("[SimpleTP] " .. tostring(msg))
+    print("[CustomTP] " .. tostring(msg))
 end
 
--- Get position
+-- Get valid character
+local function getValidCharacter()
+    return player.Character or player.CharacterAdded:Wait()
+end
+
+-- Check if player is near a position
+local function isNearPosition(targetPos, tolerance)
+    tolerance = tolerance or 10
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp = char.HumanoidRootPart
+    local distance = (hrp.Position - targetPos).Magnitude
+    return distance < tolerance
+end
+
+-- Check if player is at the excluded position
+local function isAtExcludedPosition()
+    return isNearPosition(EXCLUDED_POSITION, EXCLUDED_TOLERANCE)
+end
+
+-- Get current position
 local function getCurrentPosition()
-    local char = player.Character
+    local char = getValidCharacter()
     if char and char:FindFirstChild("HumanoidRootPart") then
         return char.HumanoidRootPart.Position
     end
     return nil
 end
 
--- Check if at goal
-local function isAtGoal()
-    local currentPos = getCurrentPosition()
-    if not currentPos then return false end
-    
-    local distance = (currentPos - GOAL_POSITION).Magnitude
-    debugPrint("Current: " .. tostring(currentPos))
-    debugPrint("Distance to goal: " .. string.format("%.2f", distance))
-    
-    return distance <= GOAL_TOLERANCE
+-- Exit house if inside
+local function exitHouse()
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/UnsubscribeFromHouse")
+            :InvokeServer(player, true)
+    end)
+    if success then
+        debugPrint("Exited house successfully")
+        return true
+    else
+        debugPrint("Failed to exit house: " .. tostring(err))
+        return false
+    end
 end
 
--- Simple teleport (no camera, no keys, no house exit)
+-- Teleport to position
+local function teleportTo(pos, name)
+    -- Check if we're at excluded position first
+    if isAtExcludedPosition() then
+        debugPrint("Skipping teleport - already at excluded position")
+        return false
+    end
+    
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        debugPrint("No HumanoidRootPart for teleport to " .. name)
+        return false
+    end
+    char.HumanoidRootPart.CFrame = CFrame.new(pos)
+    task.wait(0.5)
+    debugPrint("Teleported to " .. name .. ": " .. tostring(pos))
+    return true
+end
+
+-- Set camera to look at a point
+local function setCamera(pos, lookAt)
+    -- Check if we're at excluded position
+    if isAtExcludedPosition() then
+        debugPrint("Skipping camera set - at excluded position")
+        return
+    end
+    
+    local camera = Workspace.CurrentCamera
+    if camera then
+        camera.CameraType = Enum.CameraType.Scriptable
+        camera.CFrame = CFrame.new(pos, lookAt)
+        debugPrint("Camera set to: " .. tostring(pos))
+    end
+end
+
+-- Reset camera to normal
+local function resetCamera()
+    local camera = Workspace.CurrentCamera
+    if camera then
+        camera.CameraType = Enum.CameraType.Custom
+        debugPrint("Camera reset to normal")
+    end
+end
+
+-- Simulate W then S key press (with adjustable timings)
+local function simulateKeyPress(forwardTime, backwardTime)
+    -- Check if we're at excluded position
+    if isAtExcludedPosition() then
+        debugPrint("Skipping key press - at excluded position")
+        return
+    end
+    
+    -- Press W (forward)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+    task.wait(forwardTime or 1.2)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+    
+    -- Press S (backward)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+    task.wait(backwardTime or 2)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+    
+    debugPrint("Simulated W (" .. (forwardTime or 1.2) .. "s) then S (" .. backwardTime or 2 .. "s)")
+end
+
+-- Simple one-time teleport function
 local function simpleTeleport()
-    local char = player.Character
+    -- Check current position
+    local currentPos = getCurrentPosition()
+    if currentPos then
+        debugPrint("Current position: " .. tostring(currentPos))
+        
+        -- Check if we're at the excluded position
+        if isAtExcludedPosition() then
+            debugPrint("Already at excluded position (-255, 31, -1831). Doing nothing.")
+            return true
+        end
+    end
+    
+    debugPrint("Not at excluded position. Proceeding with teleport...")
+    debugPrint("Target: " .. tostring(TARGET_CHAR_POS))
+    
+    -- Step 1: Exit house if needed
+    exitHouse()
+    task.wait(1)
+    
+    -- Step 2: Teleport to target
+    local teleported = teleportTo(TARGET_CHAR_POS, "Target Position")
+    
+    if teleported then
+        -- Step 3: Set camera
+        local lookAtPoint = TARGET_CAM_POS + Vector3.new(0, 0, 10)
+        setCamera(TARGET_CAM_POS, lookAtPoint)
+        
+        -- Step 4: Simulate movement
+        task.wait(0.5)
+        simulateKeyPress(0.5, 0.5)
+        
+        -- Step 5: Final verification
+        local finalPos = getCurrentPosition()
+        if finalPos then
+            local distance = (finalPos - TARGET_CHAR_POS).Magnitude
+            debugPrint("Final position: " .. tostring(finalPos))
+            debugPrint("Distance from target: " .. string.format("%.2f", distance))
+            
+            if distance < 10 then
+                debugPrint("✓ Teleport successful!")
+            else
+                debugPrint("⚠ Teleport may have drifted")
+            end
+        end
+        
+        return true
+    else
+        debugPrint("✗ Teleport failed")
+        return false
+    end
+end
+
+-- Alternative: Quick teleport without all the extras
+local function quickTeleport()
+    -- Check if we're at excluded position
+    if isAtExcludedPosition() then
+        debugPrint("Already at excluded position. Skipping.")
+        return true
+    end
+    
+    local char = getValidCharacter()
     if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.CFrame = CFrame.new(TARGET_POSITION)
-        debugPrint("Teleported to target position")
+        char.HumanoidRootPart.CFrame = CFrame.new(TARGET_CHAR_POS)
+        debugPrint("Quick teleport to: " .. tostring(TARGET_CHAR_POS))
         return true
     end
     return false
 end
 
--- MAIN LOGIC
-debugPrint("=== POSITION CHECK ===")
-
--- FIRST AND ONLY CHECK
-if isAtGoal() then
-    debugPrint("======================================")
-    debugPrint("ALREADY AT GOAL POSITION!")
-    debugPrint("DOING ABSOLUTELY NOTHING.")
-    debugPrint("Script will not touch anything.")
-    debugPrint("======================================")
-else
-    debugPrint("NOT at goal position.")
-    debugPrint("Performing ONE-TIME teleport...")
-    
-    -- ONE teleport, NO retries, NO attempts
-    simpleTeleport()
-    
-    debugPrint("Teleport complete. Script finished.")
-end
-
-debugPrint("=== SCRIPT END ===")
+-- RUN THE SCRIPT
+debugPrint("=== Starting Teleport Script ===")
+simpleTeleport()
+debugPrint("=== Script Complete ===")
