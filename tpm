@@ -1,4 +1,4 @@
--- [ CUSTOM TELEPORT SCRIPT WITH POSITION CHECK ] --
+-- [ CUSTOM TELEPORT SCRIPT ] --
 -- Made for specific coordinates from screenshot
 
 local Players = game:GetService("Players")
@@ -8,10 +8,6 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 
--- Positions to check
-local EXCLUDED_POSITION = Vector3.new(-255.10, 30.89, -1831.46)  -- Position to skip teleport
-local EXCLUDED_TOLERANCE = 20  -- How close to be considered "at" the excluded position
-
 -- Debug print
 local function debugPrint(msg)
     print("[CustomTP] " .. tostring(msg))
@@ -20,30 +16,6 @@ end
 -- Get valid character
 local function getValidCharacter()
     return player.Character or player.CharacterAdded:Wait()
-end
-
--- Check if player is near a position
-local function isNearPosition(targetPos, tolerance)
-    tolerance = tolerance or 10
-    local char = getValidCharacter()
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
-    local hrp = char.HumanoidRootPart
-    local distance = (hrp.Position - targetPos).Magnitude
-    return distance < tolerance
-end
-
--- Check if player is at the excluded position
-local function isAtExcludedPosition()
-    return isNearPosition(EXCLUDED_POSITION, EXCLUDED_TOLERANCE)
-end
-
--- Get current position
-local function getCurrentPosition()
-    local char = getValidCharacter()
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        return char.HumanoidRootPart.Position
-    end
-    return nil
 end
 
 -- Exit house if inside
@@ -63,12 +35,6 @@ end
 
 -- Teleport to position
 local function teleportTo(pos, name)
-    -- Check if we're at excluded position first
-    if isAtExcludedPosition() then
-        debugPrint("Skipping teleport - already at excluded position")
-        return false
-    end
-    
     local char = getValidCharacter()
     if not char or not char:FindFirstChild("HumanoidRootPart") then
         debugPrint("No HumanoidRootPart for teleport to " .. name)
@@ -82,12 +48,6 @@ end
 
 -- Set camera to look at a point
 local function setCamera(pos, lookAt)
-    -- Check if we're at excluded position
-    if isAtExcludedPosition() then
-        debugPrint("Skipping camera set - at excluded position")
-        return
-    end
-    
     local camera = Workspace.CurrentCamera
     if camera then
         camera.CameraType = Enum.CameraType.Scriptable
@@ -107,12 +67,6 @@ end
 
 -- Simulate W then S key press (with adjustable timings)
 local function simulateKeyPress(forwardTime, backwardTime)
-    -- Check if we're at excluded position
-    if isAtExcludedPosition() then
-        debugPrint("Skipping key press - at excluded position")
-        return
-    end
-    
     -- Press W (forward)
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
     task.wait(forwardTime or 1.2)
@@ -126,16 +80,28 @@ local function simulateKeyPress(forwardTime, backwardTime)
     debugPrint("Simulated W (" .. (forwardTime or 1.2) .. "s) then S (" .. (backwardTime or 2) .. "s)")
 end
 
+-- Check if player is near a position
+local function isNearPosition(targetPos, tolerance)
+    tolerance = tolerance or 10
+    local char = getValidCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp = char.HumanoidRootPart
+    local distance = (hrp.Position - targetPos).Magnitude
+    debugPrint("Distance to target: " .. string.format("%.2f", distance) .. " units")
+    return distance < tolerance
+end
+
+-- Get current position
+local function getCurrentPosition()
+    local char = getValidCharacter()
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        return char.HumanoidRootPart.Position
+    end
+    return nil
+end
+
 -- Main function to teleport to screenshot coordinates
 local function teleportToScreenshotLocation()
-    -- Check if we're already at the excluded position
-    if isAtExcludedPosition() then
-        local currentPos = getCurrentPosition()
-        debugPrint("Already at excluded position: " .. tostring(currentPos))
-        debugPrint("Skipping teleport sequence - nothing to do")
-        return true  -- Return true since we're already where we want to be (or don't want to leave)
-    end
-    
     local maxAttempts = 3
     local attempt = 1
     
@@ -149,12 +115,6 @@ local function teleportToScreenshotLocation()
     
     while attempt <= maxAttempts do
         debugPrint("Attempt #" .. attempt .. " of " .. maxAttempts)
-        
-        -- Check if we somehow ended up at excluded position during attempts
-        if isAtExcludedPosition() then
-            debugPrint("Reached excluded position during attempt. Stopping.")
-            break
-        end
         
         -- Step 1: Exit house if needed
         exitHouse()
@@ -199,6 +159,9 @@ local function teleportToScreenshotLocation()
                     debugPrint("Character at: " .. tostring(characterPos))
                     debugPrint("Camera at: " .. tostring(cameraPos))
                     
+                    -- Keep camera fixed or reset based on preference
+                    -- resetCamera() -- Uncomment to reset camera to normal
+                    
                     return true
                 end
             end
@@ -211,19 +174,13 @@ local function teleportToScreenshotLocation()
         attempt += 1
     end
     
-    debugPrint("Teleport sequence completed")
+    debugPrint("Failed to reach target after " .. maxAttempts .. " attempts")
     resetCamera()
-    return true
+    return false
 end
 
 -- Alternative: Direct teleport without camera control
 local function quickTeleportToScreenshot()
-    -- Check if we're already at the excluded position
-    if isAtExcludedPosition() then
-        debugPrint("Already at excluded position. Skipping quick teleport.")
-        return true
-    end
-    
     local characterPos = Vector3.new(-12025.122, 9529.577, -11970.038)
     
     debugPrint("Quick teleport to: " .. tostring(characterPos))
@@ -245,25 +202,25 @@ local function quickTeleportToScreenshot()
 end
 
 -- RUN OPTIONS:
--- First check current position
-local currentPos = getCurrentPosition()
-if currentPos then
-    debugPrint("Current position: " .. tostring(currentPos))
-    
-    -- Check if we're at the excluded position
-    if isAtExcludedPosition() then
-        debugPrint("Already at excluded position (-255, 31, -1831). Doing nothing.")
-        debugPrint("Script execution complete.")
-    else
-        debugPrint("Not at excluded position. Starting teleport sequence...")
-        
-        -- Option 1: Full teleport with camera positioning
+-- Option 1: Full teleport with camera positioning
+debugPrint("Starting full teleport sequence...")
+teleportToScreenshotLocation()
+
+-- Option 2: Quick teleport (uncomment to use instead)
+-- debugPrint("Starting quick teleport...")
+-- quickTeleportToScreenshot()
+
+-- Option 3: Create a command for repeated use
+local function createTeleportCommand()
+    -- This function can be called multiple times
+    return function()
         teleportToScreenshotLocation()
-        
-        -- Option 2: Quick teleport (uncomment to use instead)
-        -- quickTeleportToScreenshot()
     end
-else
-    debugPrint("Could not get current position. Starting teleport sequence anyway...")
-    teleportToScreenshotLocation()
 end
+
+-- Example: Bind to a key (you'd need to implement your own keybind system)
+-- game:GetService("UserInputService").InputBegan:Connect(function(input)
+--     if input.KeyCode == Enum.KeyCode.P then
+--         teleportToScreenshotLocation()
+--     end
+-- end)
