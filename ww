@@ -44,92 +44,11 @@ local autoAcceptCoroutine = nil
 -- Auto Potion variables
 local AutoPotionMode = false
 local autoPotionCoroutine = nil
--- ==================================================================
--- NEW: FURNITURE CONFIGURATION FROM w33.txt
--- ==================================================================
-local FURNITURE_CONFIG = {
-    ["Piano"] = {
-        kind = "piano",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "Seat1"
-    },
-    ["BasicCrib"] = {
-        kind = "basiccrib",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    },
-    ["AilmentsRefresh2024LitterBox"] = {
-        kind = "ailments_refresh_2024_litter_box",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    },
-    ["Lures2023NormalLure"] = {
-        kind = "lures_2023_normal_lure",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    },
-    ["CheapPetBathtub"] = {
-        kind = "cheap_pet_bathtub",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    },
-    ["AilmentsRefresh2024CheapWaterBowl"] = {
-        kind = "ailments_refresh_2024_cheap_water_bowl",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    },
-    ["AilmentsRefresh2024CheapFoodBowl"] = {
-        kind = "ailments_refresh_2024_cheap_food_bowl",
-        cframe = CFrame.new(-74.39990234375, -1, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-        partName = "UseBlock"
-    }
-}
-
--- NEW: Furniture activation data from w33.txt
-local FURNITURE_ACTIVATION_DATA = {
-    ["hungry"] = {
-        furnitureName = "AilmentsRefresh2024CheapFoodBowl",
-        folderId = "f-242",
-        partName = "UseBlock",
-        cframe = CFrame.new(-6040.9755859375, 3999.458251953125, 2.893585205078125, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-    },
-    ["thirsty"] = {
-        furnitureName = "AilmentsRefresh2024CheapWaterBowl",
-        folderId = "f-241",
-        partName = "UseBlock",
-        cframe = CFrame.new(-6036.0107421875, 3999.543212890625, 2.998077392578125, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-    },
-    ["dirty"] = {
-        furnitureName = "CheapPetBathtub",
-        folderId = "f-238",
-        partName = "UseBlock",
-        cframe = CFrame.new(-6054.45654296875, 3999.70263671875, 0.4346466064453125, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-    },
-    ["sleepy"] = {
-        furnitureName = "BasicCrib",
-        folderId = "f-236",
-        partName = "UseBlock",
-        cframe = CFrame.new(-6071.97216796875, 3999.9453125, -18.466270446777344, -1, 0, 0, 0, 1, 0, 0, 0, -1)
-    },
-    ["toilet"] = {
-        furnitureName = "AilmentsRefresh2024LitterBox",
-        folderId = "f-235",
-        partName = "UseBlock",
-        cframe = CFrame.new(-6076.9931640625, 3999.786376953125, -13.088409423828125, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-    },
-    ["bored"] = {
-        furnitureName = "Piano",
-        folderId = "f-237",
-        partName = "Seat1",
-        cframe = CFrame.new(-6058.291015625, 4001.533447265625, -15.049659729003906, -1, 0, 0, 0, 1, 0, 0, 0, -1)
-    }
-}
-
--- Updated Ailment to Furniture Mapping with new furniture names
+-- Ailment to Furniture Mapping
 local AILMENT_TASKS = {
-    sleepy = "BasicCrib",
-    hungry = "AilmentsRefresh2024CheapFoodBowl",
-    thirsty = "AilmentsRefresh2024CheapWaterBowl",
+    sleepy = "BasicBed",
+    hungry = "PetFoodBowl",
+    thirsty = "PetWaterBowl",
     dirty = "CheapPetBathtub",
     bored = "Piano",
     toilet = "AilmentsRefresh2024LitterBox",
@@ -168,155 +87,6 @@ local function debugPrint(message)
     local timestamp = string.format("[%s:%s:%s]", hours, minutes, seconds)
     print(timestamp .. " " .. message)
 end
-
--- ==================================================================
--- NEW: FURNITURE MANAGEMENT FUNCTIONS FROM w33.txt
--- ==================================================================
-
--- Function to buy furniture if not found
-local function buyFurnitureIfMissing(furnitureName)
-    local config = FURNITURE_CONFIG[furnitureName]
-    if not config then
-        debugPrint("No configuration found for furniture: " .. furnitureName)
-        return false
-    end
-    
-    debugPrint("Attempting to buy furniture: " .. furnitureName)
-    
-    local args = {
-        {
-            {
-                kind = config.kind,
-                properties = {
-                    cframe = config.cframe
-                }
-            }
-        }
-    }
-    
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/BuyFurnitures"):InvokeServer(unpack(args))
-    end)
-    
-    if success then
-        debugPrint("Successfully purchased: " .. furnitureName)
-        task.wait(3) -- Wait for furniture to appear
-        return true
-    else
-        debugPrint("Failed to buy furniture " .. furnitureName .. ": " .. tostring(result))
-        return false
-    end
-end
-
--- Function to find furniture by name (updated with folder pattern matching)
-local function findFurnitureByName(furnitureName)
-    debugPrint("Searching for furniture: " .. furnitureName)
-    
-    -- Check if we have activation data for this furniture
-    local activationData = nil
-    for ailment, data in pairs(FURNITURE_ACTIVATION_DATA) do
-        if data.furnitureName == furnitureName then
-            activationData = data
-            break
-        end
-    end
-    
-    -- Search in HouseInteriors
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if hi then
-        for _, folder in ipairs(hi:GetChildren()) do
-            if string.find(folder.Name, player.Name) then
-                local model = folder:FindFirstChild(furnitureName)
-                if model and model:IsA("Model") then
-                    debugPrint("Found " .. furnitureName .. " in " .. folder.Name)
-                    
-                    -- Try to extract folder ID from folder name
-                    local folderId = string.match(folder.Name, "f%-%d+")
-                    if not folderId then
-                        folderId = folder.Name
-                    end
-                    
-                    -- Use activation data if available, otherwise extract from model
-                    if activationData and activationData.folderId == folderId then
-                        return {
-                            folderId = folderId,
-                            partName = activationData.partName,
-                            position = activationData.cframe.Position,
-                            cframe = activationData.cframe,
-                            model = model
-                        }
-                    else
-                        return extractFurnitureData(model, folderId)
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Search in entire workspace as fallback
-    local model = Workspace:FindFirstChild(furnitureName, true)
-    if model and model:IsA("Model") then
-        debugPrint("Found " .. furnitureName .. " in workspace (fallback)")
-        local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
-        return extractFurnitureData(model, folderId)
-    end
-    
-    debugPrint("Furniture not found: " .. furnitureName)
-    return nil
-end
-
--- Function to ensure furniture exists (buy if missing)
-local function ensureFurnitureExists(furnitureName)
-    local furnitureData = findFurnitureByName(furnitureName)
-    
-    if not furnitureData then
-        debugPrint(furnitureName .. " not found, attempting to buy...")
-        local bought = buyFurnitureIfMissing(furnitureName)
-        if bought then
-            -- Wait and try to find it again
-            task.wait(3)
-            furnitureData = findFurnitureByName(furnitureName)
-        end
-    end
-    
-    return furnitureData
-end
-
--- Updated function to activate furniture with pet
-local function activateFurnitureWithPet(furnitureName, pet)
-    local furnitureData = ensureFurnitureExists(furnitureName)
-    
-    if not furnitureData then
-        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found and could not buy")
-        return false
-    end
-    
-    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
-    
-    local args = {
-        player,
-        furnitureData.folderId,
-        furnitureData.partName,
-        {
-            cframe = furnitureData.cframe
-        },
-        pet
-    }
-    
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
-    end)
-    
-    if success then
-        debugPrint("Successfully activated: " .. furnitureName)
-        task.wait(20) -- Wait for interaction to complete
-        return true
-    else
-        debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
-        return false
-    end
-end
-
 -- ==================================================================
 -- AUTO ACCEPT FUNCTIONS
 -- ==================================================================
@@ -342,7 +112,6 @@ local function acceptAndConfirmTrade(targetPlayer)
     end
     return false
 end
-
 -- Function to scan all players and accept trades
 local function scanAndAcceptAllTrades()
     local players = Players:GetPlayers()
@@ -354,7 +123,6 @@ local function scanAndAcceptAllTrades()
         end
     end
 end
-
 -- Function to continuously scan and accept trades
 local function startAutoAcceptTrades()
     while AutoAcceptMode do
@@ -362,7 +130,6 @@ local function startAutoAcceptTrades()
         task.wait(0.1) -- Check every 9 seconds
     end
 end
-
 -- Function to toggle Auto Accept mode
 local function toggleAutoAcceptMode()
     AutoAcceptMode = not AutoAcceptMode
@@ -374,7 +141,6 @@ local function toggleAutoAcceptMode()
         autoAcceptCoroutine = nil
     end
 end
-
 -- ==================================================================
 -- TRADING FUNCTIONS
 -- ==================================================================
@@ -402,7 +168,6 @@ local function sendTradeRequest(targetPlayerName)
         debugPrint("Failed to send trade request: " .. tostring(err))
     end
 end
-
 -- Function to get all pet IDs from inventory, sorted by priority
 local function getAllPetIDsFromInventory()
     local neonAged6 = {} -- Neon pets aged 6 (highest priority)
@@ -447,7 +212,6 @@ local function getAllPetIDsFromInventory()
   
     return allPets
 end
-
 -- Function to add all pets to trade (prioritizing Neon pets aged 6, then Neon pets, then others)
 local function addAllPetsToTrade()
     debugPrint("Adding all pets to trade...")
@@ -477,7 +241,6 @@ local function addAllPetsToTrade()
   
     debugPrint("Finished adding pets to trade")
 end
-
 -- Function to complete the entire trade process
 local function completeTradeProcess(targetPlayer)
     local args = { targetPlayer, true }
@@ -515,7 +278,6 @@ local function completeTradeProcess(targetPlayer)
     debugPrint("Trade failed with " .. targetPlayer.Name)
     return false
 end
-
 -- Function to scan all players and complete trades
 local function scanAndCompleteAllTrades()
     local players = Players:GetPlayers()
@@ -529,7 +291,6 @@ local function scanAndCompleteAllTrades()
         end
     end
 end
-
 -- Function to continuously scan and complete trades
 local function startContinuousAcceptConfirm()
     while ContinuousMode do
@@ -537,7 +298,6 @@ local function startContinuousAcceptConfirm()
         task.wait(9)
     end
 end
-
 -- Toggle function for continuous mode
 local function toggleContinuousMode()
     ContinuousMode = not ContinuousMode
@@ -549,7 +309,6 @@ local function toggleContinuousMode()
         continuousCoroutine = nil
     end
 end
-
 -- ==================================================================
 -- AUTO POTION FUNCTIONS
 -- ==================================================================
@@ -576,7 +335,6 @@ local function findPetAgePotion()
   
     return potionID
 end
-
 -- Safely unequip food
 local function safelyUnequipFood(foodID)
     if foodID then
@@ -593,7 +351,6 @@ local function safelyUnequipFood(foodID)
         task.wait(1)
     end
 end
-
 -- Function to use pet_age_potion on selected pet
 local function usePetAgePotion()
     if not PetID then
@@ -703,7 +460,6 @@ local function usePetAgePotion()
     debugPrint("Successfully used pet_age_potion on pet")
     return true
 end
-
 -- Function to start auto potion feeding
 local function startAutoPotionFeeding()
     while AutoPotionMode do
@@ -748,7 +504,6 @@ local function startAutoPotionFeeding()
         task.wait(5)
     end
 end
-
 -- Function to toggle auto potion mode
 local function toggleAutoPotionMode()
     AutoPotionMode = not AutoPotionMode
@@ -760,7 +515,6 @@ local function toggleAutoPotionMode()
         autoPotionCoroutine = nil
     end
 end
-
 -- ==================================================================
 -- COMPLETE PLAY AILMENT LOGIC - ALL FUNCTIONS DEFINED
 -- ==================================================================
@@ -791,7 +545,6 @@ local function getSqueakyBoneID()
     debugPrint("squeaky_bone_default NOT FOUND in inventory!")
     return nil
 end
-
 -- 2. Safely unequip toy
 local function safelyUnequipToy()
     if currentToyID then
@@ -813,7 +566,6 @@ local function safelyUnequipToy()
         debugPrint("No toy equipped to unequip - skipping")
     end
 end
-
 -- 3. Single throw function
 local function performThrowToy()
     local toyID = getSqueakyBoneID()
@@ -884,7 +636,6 @@ local function performThrowToy()
     debugPrint("squeaky_bone_default throw SUCCESS")
     return true
 end
-
 -- 4. Complete throw sequence (3 throws)
 local function performThrowToySequence()
     debugPrint("Starting squeaky_bone_default throw sequence (3x)...")
@@ -931,7 +682,6 @@ local function performThrowToySequence()
     debugPrint("Throw sequence finished: " .. successfulThrows .. "/3 → Play ailment " .. (cured and "CURED" or "NOT CURED"))
     return cured
 end
-
 -- 5. Main play ailment handler (THIS ONE CALLS THE OTHERS)
 local function handlePlayAilment()
     debugPrint("PLAY AILMENT DETECTED! → Using squeaky_bone_default sequence")
@@ -953,7 +703,6 @@ local function handlePlayAilment()
         return false
     end
 end
-
 -- Function to get current money and potions
 local function getCurrentMoneyAndPotions()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
@@ -973,7 +722,6 @@ local function getCurrentMoneyAndPotions()
     end
     return money, potions
 end
-
 -- Function to get recycling points and crystal eggs
 local function getRecyclingAndEggData()
     local recyclingPoints = 0
@@ -1001,7 +749,6 @@ local function getRecyclingAndEggData()
  
     return recyclingPoints, crystalEggs
 end
-
 -- Debug function to inspect the data structure
 local function debugInspectRecyclerData()
     local success, data = pcall(function()
@@ -1040,7 +787,6 @@ local function debugInspectRecyclerData()
         debugPrint("=== END DEBUG ===")
     end
 end
-
 -- Function to update session earnings
 local function updateSessionEarnings()
     local currentMoney, currentPotions = getCurrentMoneyAndPotions()
@@ -1051,7 +797,6 @@ local function updateSessionEarnings()
     sessionPotionsEarned = currentPotions - lastPotionAmount
     return currentMoney, currentPotions
 end
-
 -- Function to get player data
 local function getPlayerData()
     local success, data = pcall(function()
@@ -1063,7 +808,6 @@ local function getPlayerData()
     end
     return data
 end
-
 -- NEW: Function to check if pet is equipped via equip_manager (more reliable than workspace check)
 local function isPetEquipped(petUniqueID)
     local data = getPlayerData()
@@ -1080,7 +824,6 @@ local function isPetEquipped(petUniqueID)
     debugPrint("Pet " .. petUniqueID .. " is NOT equipped (via equip_manager)")
     return false
 end
-
 -- Function to find the pet model
 local function findPetModel(petUniqueID)
     debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
@@ -1117,7 +860,6 @@ local function findPetModel(petUniqueID)
     debugPrint("No pet found with unique ID: " .. tostring(petUniqueID))
     return nil
 end
-
 -- Function to focus on the pet using the correct API
 local function focusPet(petModel)
     if not petModel then
@@ -1152,7 +894,6 @@ local function focusPet(petModel)
         return false
     end
 end
-
 -- Function to unfocus the pet
 local function unfocusPet(petModel)
     if not petModel then
@@ -1172,7 +913,6 @@ local function unfocusPet(petModel)
         return false
     end
 end
-
 -- Function to set pet in sitting state (like "Pet Me" interaction)
 local function setPetSitting(petModel)
     if not petModel then
@@ -1205,7 +945,6 @@ local function setPetSitting(petModel)
         return false
     end
 end
-
 -- Function to progress the "Pet Me" ailment using the correct API
 local function progressPetMeAilment(petUniqueID, petModel)
     if not petUniqueID or not petModel then
@@ -1265,7 +1004,6 @@ local function progressPetMeAilment(petUniqueID, petModel)
     debugPrint("Could not find working endpoint for ailment progression")
     return false
 end
-
 -- Main function to handle 'Pet Me' ailment
 local function handlePetMeAilment(petUniqueID)
     debugPrint("=== STARTING PET ME AILMENT HANDLING ===")
@@ -1298,7 +1036,6 @@ local function handlePetMeAilment(petUniqueID)
     debugPrint("=== PET ME AILMENT HANDLING COMPLETED ===")
     return success
 end
-
 -- Character validation
 local function getValidCharacter()
     local currentChar = player.Character
@@ -1318,7 +1055,6 @@ local function getValidCharacter()
     debugPrint("Failed to load valid character after waiting")
     return nil
 end
-
 -- Ensure character is spawned and valid
 local function ensureCharacterSpawned()
     local char = getValidCharacter()
@@ -1330,7 +1066,6 @@ local function ensureCharacterSpawned()
     end
     return char
 end
-
 -- Check if player is at home
 local function isPlayerAtHome()
     local hi = Workspace:FindFirstChild("HouseInteriors")
@@ -1344,7 +1079,6 @@ local function isPlayerAtHome()
     end
     return false
 end
-
 -- Find player's pet in workspace
 local function findPlayerPetInWorkspace()
     local char = getValidCharacter()
@@ -1390,7 +1124,6 @@ local function findPlayerPetInWorkspace()
     debugPrint("No pet found in workspace using all search methods")
     return nil
 end
-
 -- UPDATED: Ensure pet is equipped (now uses equip_manager check + workspace fallback)
 local function ensurePetEquipped(petUniqueID, timeout)
     timeout = timeout or 15
@@ -1430,7 +1163,6 @@ local function ensurePetEquipped(petUniqueID, timeout)
     debugPrint("Pet did not fully equip within timeout")
     return false
 end
-
 -- Find strollers in inventory
 local function findStrollers()
     local strollers = {}
@@ -1454,7 +1186,6 @@ local function findStrollers()
     end
     return strollers
 end
-
 -- Get first available stroller
 local function getStrollerID()
     local strollers = findStrollers()
@@ -1465,7 +1196,6 @@ local function getStrollerID()
     debugPrint("No strollers found in inventory")
     return nil
 end
-
 -- Buy healing apple
 local function buyHealingApple()
     debugPrint("Buying healing apple from shop...")
@@ -1487,7 +1217,6 @@ local function buyHealingApple()
         return false
     end
 end
-
 -- Find healing apple in inventory
 local function findHealingApple()
     debugPrint("Scanning inventory for healing apple...")
@@ -1510,7 +1239,6 @@ local function findHealingApple()
     end
     return healingAppleID
 end
-
 -- Use healing apple on pet
 local function useHealingApple(foodID, petUniqueID)
     if not foodID or not petUniqueID then
@@ -1574,7 +1302,6 @@ local function useHealingApple(foodID, petUniqueID)
     debugPrint("Successfully used healing apple on pet")
     return true
 end
-
 -- Handle sick ailment
 local function handleSickAilment()
     debugPrint("SICK AILMENT DETECTED! Starting healing process...")
@@ -1607,7 +1334,6 @@ local function handleSickAilment()
         return false
     end
 end
-
 -- Safely unequip stroller
 local function safelyUnequipStroller()
     if currentStrollerID then
@@ -1627,7 +1353,6 @@ local function safelyUnequipStroller()
         debugPrint("No stroller equipped to unequip - skipping")
     end
 end
-
 -- Handle walk ailment
 local function handleWalkAilment()
     debugPrint("WALK AILMENT DETECTED! Starting walk sequence...")
@@ -1690,7 +1415,6 @@ local function handleWalkAilment()
         return false
     end
 end
-
 -- Handle ride ailment
 local function handleRideAilment()
     debugPrint("RIDE AILMENT DETECTED! Starting ride sequence with stroller...")
@@ -1779,8 +1503,7 @@ local function handleRideAilment()
         return false
     end
 end
-
--- Extract furniture data (from original w3.txt)
+-- Extract furniture data
 local function extractFurnitureData(model, folderName)
     local activationParts = {"UseBlock", "Seat1"}
     local folderId = string.match(folderName, "f%-%d+") or folderName
@@ -1825,28 +1548,58 @@ local function extractFurnitureData(model, folderName)
     end
     return nil
 end
-
--- NEW: Check and buy missing furniture using new config
-local function checkAndBuyMissingFurniture()
-    debugPrint("Checking for missing furniture using new configuration...")
-    local missingFurniture = {}
-    
-    -- Check all furniture in our configuration
-    for furnitureName, config in pairs(FURNITURE_CONFIG) do
-        local furnitureData = findFurnitureByName(furnitureName)
-        if not furnitureData then
-            debugPrint(furnitureName .. " not found, adding to buy list")
-            table.insert(missingFurniture, {
-                kind = config.kind,
-                properties = {
-                    cframe = config.cframe
-                }
-            })
-        else
-            debugPrint(furnitureName .. " found in house")
+-- Find furniture by name
+local function findFurnitureByName(name)
+    debugPrint("Searching for furniture: " .. name)
+    local hi = Workspace:FindFirstChild("HouseInteriors")
+    if hi then
+        for _, folder in ipairs(hi:GetChildren()) do
+            if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
+                local model = folder:FindFirstChild(name)
+                if model and model:IsA("Model") then
+                    debugPrint("Found " .. name .. " in " .. folder.Name)
+                    return extractFurnitureData(model, folder.Name)
+                end
+            end
         end
     end
-    
+    local model = Workspace:FindFirstChild(name, true)
+    if model and model:IsA("Model") then
+        debugPrint("Found " .. name .. " in workspace (fallback)")
+        local folderId = model.Parent and string.match(model.Parent.Name, "f%-%d+") or "unknown"
+        return extractFurnitureData(model, folderId)
+    end
+    debugPrint("Furniture not found: " .. name)
+    return nil
+end
+-- Check and buy missing furniture
+local function checkAndBuyMissingFurniture()
+    debugPrint("Checking for missing furniture...")
+    local missingFurniture = {}
+    local pianoFound = findFurnitureByName("Piano")
+    if not pianoFound then
+        debugPrint("Piano not found, adding to buy list")
+        table.insert(missingFurniture, {
+            kind = "piano",
+            properties = {
+                cframe = CFrame.new(14, 0, -16.399999618530273, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+            }
+        })
+    else
+        debugPrint("Piano found in house")
+    end
+    local litterBoxFound = findFurnitureByName("AilmentsRefresh2024LitterBox")
+    if not litterBoxFound then
+        debugPrint("AilmentsRefresh2024LitterBox not found, adding to buy list")
+        table.insert(missingFurniture, {
+            kind = "ailments_refresh_2024_litter_box",
+            properties = {
+                cframe = CFrame.new(9.099609375, 0, -15.100000381469727, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+            }
+        })
+    else
+        debugPrint("AilmentsRefresh2024LitterBox found in house")
+    end
     if #missingFurniture > 0 then
         debugPrint("Buying " .. #missingFurniture .. " missing furniture items...")
         local args = {missingFurniture}
@@ -1863,43 +1616,34 @@ local function checkAndBuyMissingFurniture()
         debugPrint("All furniture found, no purchases needed")
     end
 end
-
--- NEW: Updated function to use furniture with pet (uses new activation system)
-local function useFurnitureWithPet(furnitureName)
-    local char = ensureCharacterSpawned()
-    if not char then
-        debugPrint("Cannot use furniture: No valid character")
+-- Activate furniture
+local function activateFurniture(furnitureName, pet)
+    local furnitureData = findFurnitureByName(furnitureName)
+    if not furnitureData then
+        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
         return false
     end
-    task.wait(2)
-    local petObject = nil
-    for attempt = 1, 5 do
-        petObject = findPlayerPetInWorkspace()
-        if petObject then
-            break
-        end
-        debugPrint("Pet not found in workspace, attempt " .. attempt .. "/5")
-        task.wait(2)
-    end
-    if petObject then
-        debugPrint("Found pet for activation: " .. petObject.Name)
-        local success = activateFurnitureWithPet(furnitureName, petObject)
-        return success
+    local args = {
+        player,
+        furnitureData.folderId,
+        furnitureData.partName,
+        {
+            cframe = furnitureData.cframe
+        },
+        pet
+    }
+    debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
+    end)
+    if success then
+        debugPrint("Successfully activated: " .. furnitureName)
+        return true
     else
-        debugPrint("No pet found in workspace for activation after multiple attempts")
-        if petFarmPetID then
-            debugPrint("Re-equipping pet...")
-            equipPet(petFarmPetID)
-            task.wait(5)
-            petObject = findPlayerPetInWorkspace()
-            if petObject then
-                return useFurnitureWithPet(furnitureName)
-            end
-        end
+        debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
         return false
     end
 end
-
 -- Equip pet
 local function equipPet(petID)
     local success, result = pcall(function()
@@ -1920,7 +1664,6 @@ local function equipPet(petID)
         return false
     end
 end
-
 -- Ensure pet is equipped before starting PetFarm
 local function ensurePetEquippedBeforeStart(petUniqueID, timeout)
     timeout = timeout or 15
@@ -1944,7 +1687,47 @@ local function ensurePetEquippedBeforeStart(petUniqueID, timeout)
     debugPrint("Pet did not appear in equip_manager/workspace within timeout")
     return false
 end
-
+-- Use furniture with pet
+local function useFurnitureWithPet(furnitureName)
+    local char = ensureCharacterSpawned()
+    if not char then
+        debugPrint("Cannot use furniture: No valid character")
+        return false
+    end
+    task.wait(2)
+    local petObject = nil
+    for attempt = 1, 5 do
+        petObject = findPlayerPetInWorkspace()
+        if petObject then
+            break
+        end
+        debugPrint("Pet not found in workspace, attempt " .. attempt .. "/5")
+        task.wait(2)
+    end
+    if petObject then
+        debugPrint("Found pet for activation: " .. petObject.Name)
+        local success = activateFurniture(furnitureName, petObject)
+        if success then
+            task.wait(20)
+            return true
+        else
+            debugPrint("Failed to activate furniture with pet")
+            return false
+        end
+    else
+        debugPrint("No pet found in workspace for activation after multiple attempts")
+        if petFarmPetID then
+            debugPrint("Re-equipping pet...")
+            equipPet(petFarmPetID)
+            task.wait(5)
+            petObject = findPlayerPetInWorkspace()
+            if petObject then
+                return useFurnitureWithPet(furnitureName)
+            end
+        end
+        return false
+    end
+end
 -- Detect mystery ailment
 local function detectMysteryAilment()
     local data = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
@@ -1956,7 +1739,6 @@ local function detectMysteryAilment()
     end
     return nil
 end
-
 -- Resolve mystery ailment
 local function resolveMysteryAilment(ailmentId)
     -- Prioritized list of tasks
@@ -1992,7 +1774,6 @@ local function resolveMysteryAilment(ailmentId)
     debugPrint("Finished attempting all tasks for mystery ailment")
     return true
 end
-
 -- =============================================================================
 -- SMART PET SELECTION SYSTEM - AUTO SELECT STARTER_EGG OR 6YO DOG/CAT
 -- =============================================================================
@@ -2060,7 +1841,6 @@ local function findBestStarterPet()
   
     return bestPet.unique_id
 end
-
 -- =============================================================================
 -- SMART NEON FUSION SYSTEM - FUSES WHEN 4 PETS OF SAME TYPE REACH AGE 6
 -- =============================================================================
@@ -2126,7 +1906,6 @@ local function performNeonFusion()
     end)
     return fusionsPerformed
 end
-
 -- =============================================================================
 -- UPDATED AUTO PETPEN SYSTEM WITH SMART NEON FUSION
 -- =============================================================================
@@ -2163,7 +1942,6 @@ local function purgeNonPriorityGarbage()
     task.wait(2)
     return removed
 end
-
 -- SINGLE SOURCE OF TRUTH: Get PetPen state ONCE per cycle
 local function getPetPenSnapshot()
     local data = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
@@ -2188,7 +1966,6 @@ local function getPetPenSnapshot()
     end
     return snapshot
 end
-
 -- Get available pets (excludes PetPen + age 6+)
 local function getAvailablePets(snapshot)
     local data = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
@@ -2209,7 +1986,6 @@ local function getAvailablePets(snapshot)
     end
     return available
 end
-
 -- Add pets with PERFECT priority
 local function addPriorityPets(snapshot)
     local available = getAvailablePets(snapshot)
@@ -2267,7 +2043,6 @@ local function addPriorityPets(snapshot)
     debugPrint("Added " .. added .. " pets this cycle")
     return added
 end
-
 -- MAIN FIXED LOOP WITH SMART NEON FUSION
 local function startAutoPetPen()
     while AutoPetPenMode do
@@ -2312,7 +2087,6 @@ local function startAutoPetPen()
         task.wait(60)
     end
 end
-
 -- Toggle Auto PetPen
 local function toggleAutoPetPenMode()
     AutoPetPenMode = not AutoPetPenMode
@@ -2325,23 +2099,20 @@ local function toggleAutoPetPenMode()
         debugPrint("Auto PetPen: DISABLED")
     end
 end
-
 -- =============================================================================
--- MAIN PETFARM FUNCTIONALITY WITH NEW FURNITURE LOGIC
+-- MAIN PETFARM FUNCTIONALITY
 -- =============================================================================
--- UPDATED: Monitor and handle ailments with new furniture system
+-- UPDATED: Monitor and handle ailments (now with ALWAYS KEEP EQUIPPED via equip_manager)
 local function monitorAndHandleAilments()
-    debugPrint("Starting ailment monitoring with new furniture system...")
+    debugPrint("Starting ailment-only monitoring system with ALWAYS KEEP EQUIPPED...")
     local lastAilmentScanTime = 0
     local SCAN_INTERVAL = 10 -- seconds between scans
     local lastEquipCheckTime = 0
     local EQUIP_CHECK_INTERVAL = 5 -- More frequent checks (every 5s) for always-equipped
     local lastPetCheckTime = 0
     local PET_CHECK_INTERVAL = 10 -- seconds between pet checks
-    
     while PetFarmMode do
         local currentTime = os.time()
-        
         -- ALWAYS KEEP EQUIPPED: Check equip_manager every EQUIP_CHECK_INTERVAL seconds
         if currentTime - lastEquipCheckTime >= EQUIP_CHECK_INTERVAL then
             local currentPetID = petFarmPetID or PetID
@@ -2369,7 +2140,6 @@ local function monitorAndHandleAilments()
             end
             lastEquipCheckTime = currentTime
         end
-        
         -- Legacy pet check (every 10s, now secondary)
         if currentTime - lastPetCheckTime >= PET_CHECK_INTERVAL then
             local currentPetID = petFarmPetID or PetID
@@ -2384,15 +2154,12 @@ local function monitorAndHandleAilments()
             end
             lastPetCheckTime = currentTime
         end
-        
         local success, data = pcall(function()
             return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
         end)
-        
         if success and data and data.ailments_manager and data.ailments_manager.ailments then
             local foundActionableAilments = false
             local currentPetID = petFarmPetID or PetID
-            
             -- Get the unique ID of the selected pet
             local selectedPetUniqueID = nil
             if currentPetID then
@@ -2401,13 +2168,11 @@ local function monitorAndHandleAilments()
                     selectedPetUniqueID = playerData.inventory.pets[currentPetID].unique
                 end
             end
-            
             if not selectedPetUniqueID then
                 debugPrint("No selected pet or pet not found in inventory")
                 task.wait(SCAN_INTERVAL)
                 continue
             end
-            
             -- Only handle ailments for the selected pet
             for ailmentId, ailmentData in pairs(data.ailments_manager.ailments) do
                 if ailmentId == selectedPetUniqueID then
@@ -2421,8 +2186,6 @@ local function monitorAndHandleAilments()
                                     debugPrint("Ailment detected but pet not equipped - re-equipping before handling...")
                                     ensurePetEquipped(selectedPetUniqueID, 10)
                                 end
-                                
-                                -- Handle special ailments
                                 if ailmentType == "play" then
                                     debugPrint("PLAY AILMENT DETECTED! Using squeaky_bone_default")
                                     local success = handlePlayAilment()
@@ -2448,7 +2211,6 @@ local function monitorAndHandleAilments()
                                     local success = handlePetMeAilment(currentPetID)
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 else
-                                    -- Handle furniture-based ailments with new system
                                     debugPrint(string.upper(ailmentType) .. " AILMENT DETECTED! Using " .. furnitureName)
                                     local success = useFurnitureWithPet(furnitureName)
                                     if success then lastTaskTime[ailmentType] = currentTime end
@@ -2462,7 +2224,6 @@ local function monitorAndHandleAilments()
                     if foundActionableAilments then break end
                 end
             end
-            
             -- Only show "no ailments" message once every minute
             if not foundActionableAilments and currentTime - lastAilmentScanTime >= 60 then
                 debugPrint("No actionable ailments detected for selected pet")
@@ -2477,12 +2238,10 @@ local function monitorAndHandleAilments()
         task.wait(SCAN_INTERVAL)
     end
 end
-
--- Start ailment-only PetFarm with new furniture logic
+-- Start ailment-only PetFarm (UPDATED FUNCTION)
 local function startAilmentOnlyPetFarm()
-    debugPrint("Starting AILMENT-ONLY PetFarm system with NEW FURNITURE LOGIC...")
-    debugPrint("Features: Ailment Monitoring + New Furniture System + Auto-Buy Missing Furniture")
-    
+    debugPrint("Starting AILMENT-ONLY PetFarm system with ALWAYS KEEP EQUIPPED...")
+    debugPrint("Features: Ailment Monitoring + Throw Toys for Play Ailment + Walk Handler + Ride Handler + Sick Handler + Mystery Handler + Auto Pet Re-equip (via equip_manager)")
     -- Ensure pet is equipped and present
     local currentCyclePetID = PetID or lastValidPetID or petFarmPetID
     if not currentCyclePetID then
@@ -2490,81 +2249,65 @@ local function startAilmentOnlyPetFarm()
         PetFarmMode = false
         return
     end
-    
     local char = ensureCharacterSpawned()
     if not char then
         debugPrint("Cannot start PetFarm: No valid character")
         PetFarmMode = false
         return
     end
-    
-    -- Ensure pet is equipped with verification
-    debugPrint("Ensuring pet is equipped and present...")
+    -- Ensure pet is equipped with verification (using new equip_manager check)
+    debugPrint("Ensuring pet is equipped and present (via equip_manager)...")
     local ensured = ensurePetEquipped(currentCyclePetID, 18)
     if not ensured then
         debugPrint("Failed to ensure pet is equipped/present")
         PetFarmMode = false
         return
     end
-    
     petFarmPetID = currentCyclePetID
     lastValidPetID = currentCyclePetID
-    
-    -- Check and buy missing furniture using new system
+    -- Check and buy missing furniture once at start
     checkAndBuyMissingFurniture()
     task.wait(3)
-    
     -- Lock door for safety
     local args = {true}
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/SetDoorLocked"):InvokeServer(unpack(args))
     end)
-    
-    debugPrint("Door locked, starting ailment monitoring with new furniture system...")
-    
+    debugPrint("Door locked, starting ailment monitoring with always-equipped...")
     -- Start the ailment monitoring loop
     monitorAndHandleAilments()
-    
     -- Cleanup when stopped
     safelyUnequipToy()
     safelyUnequipStroller()
     safelyUnequipFood(currentFoodID)
-    
     if petFarmPetID then
         pcall(function()
             ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(petFarmPetID)
         end)
         petFarmPetID = nil
     end
-    
     debugPrint("Ailment-only PetFarm stopped")
 end
-
--- Toggle PetFarm mode with new furniture logic
+-- Toggle PetFarm mode (UPDATED FUNCTION)
 local function togglePetFarmMode()
     if PetFarmMode and petFarmCoroutine then
         debugPrint("PetFarm is already running, stopping first...")
         PetFarmMode = false
         task.wait(2)
     end
-    
     PetFarmMode = not PetFarmMode
-    
     if PetFarmMode then
         if not PetID and lastValidPetID then
             PetID = lastValidPetID
             debugPrint("Restored PetID from lastValidPetID: " .. tostring(PetID))
         end
-        
         if not PetID then
             debugPrint("Please select a pet first!")
             PetFarmMode = false
             return
         end
-        
-        debugPrint("AILMENT-ONLY PetFarm: ENABLED with NEW FURNITURE SYSTEM")
+        debugPrint("AILMENT-ONLY PetFarm: ENABLED with selected pet (ALWAYS KEEP EQUIPPED)")
         lastValidPetID = PetID
-        
         if not isPlayerAtHome() then
             debugPrint("Player not at home when enabling PetFarm. Waiting 2 seconds and performing a single respawn.")
             task.wait(2)
@@ -2575,14 +2318,12 @@ local function togglePetFarmMode()
         else
             debugPrint("Player is at home, no respawn required.")
         end
-        
         local ensured = ensurePetEquipped(PetID, 18)
         if not ensured then
             debugPrint("Could not ensure selected pet is equipped/present. Starting PetFarm anyway may fail. Aborting start to be safe.")
             PetFarmMode = false
             return
         end
-        
         petFarmCoroutine = coroutine.wrap(startAilmentOnlyPetFarm)()
     else
         debugPrint("AILMENT-ONLY PetFarm: DISABLED")
@@ -2590,7 +2331,6 @@ local function togglePetFarmMode()
         safelyUnequipToy()
         safelyUnequipStroller()
         safelyUnequipFood(currentFoodID)
-        
         if petFarmPetID then
             pcall(function()
                 ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(petFarmPetID)
@@ -2599,7 +2339,6 @@ local function togglePetFarmMode()
         end
     end
 end
-
 -- ==================================================================
 -- UPDATED UI CREATION WITH AUTO ACCEPT FEATURE
 -- ==================================================================
@@ -2621,7 +2360,6 @@ local function createEnhancedCompactUI()
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = frame
-    
     -- Session Tracking Label
     local sessionLabel = Instance.new("TextLabel")
     sessionLabel.Size = UDim2.new(1, 0, 0, 20)
@@ -2634,7 +2372,6 @@ local function createEnhancedCompactUI()
     sessionLabel.TextXAlignment = Enum.TextXAlignment.Left
     sessionLabel.Parent = frame
     sessionLabel.RichText = true
-    
     -- Developer Console Button
     local devConsoleButton = Instance.new("TextButton")
     devConsoleButton.Size = UDim2.new(0, 20, 0, 20)
@@ -2648,7 +2385,6 @@ local function createEnhancedCompactUI()
     devConsoleButton.MouseButton1Click:Connect(function()
         game:GetService("StarterGui"):SetCore("DevConsoleVisible", true)
     end)
-    
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 20)
     title.Position = UDim2.new(0, 0, 0, 20)
@@ -2658,7 +2394,6 @@ local function createEnhancedCompactUI()
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 14
     title.Parent = frame
-    
     -- Player Name Input for Trading
     local playerNameBox = Instance.new("TextBox")
     playerNameBox.Size = UDim2.new(0, 160, 0, 20)
@@ -2674,7 +2409,6 @@ local function createEnhancedCompactUI()
     local boxCorner = Instance.new("UICorner")
     boxCorner.CornerRadius = UDim.new(0, 4)
     boxCorner.Parent = playerNameBox
-    
     -- Trade Buttons Row
     local tradeButton = Instance.new("TextButton")
     tradeButton.Size = UDim2.new(0, 78, 0, 20)
@@ -2689,7 +2423,6 @@ local function createEnhancedCompactUI()
     local tradeButtonCorner = Instance.new("UICorner")
     tradeButtonCorner.CornerRadius = UDim.new(0, 4)
     tradeButtonCorner.Parent = tradeButton
-    
     local addPetsButton = Instance.new("TextButton")
     addPetsButton.Size = UDim2.new(0, 78, 0, 20)
     addPetsButton.Position = UDim2.new(0, 92, 0, 70)
@@ -2703,7 +2436,6 @@ local function createEnhancedCompactUI()
     local addPetsCorner = Instance.new("UICorner")
     addPetsCorner.CornerRadius = UDim.new(0, 4)
     addPetsCorner.Parent = addPetsButton
-    
     -- Auto Features Row 1
     local autoTradeButton = Instance.new("TextButton")
     autoTradeButton.Size = UDim2.new(0, 78, 0, 20)
@@ -2718,7 +2450,6 @@ local function createEnhancedCompactUI()
     local autoTradeCorner = Instance.new("UICorner")
     autoTradeCorner.CornerRadius = UDim.new(0, 4)
     autoTradeCorner.Parent = autoTradeButton
-    
     local autoPotionButton = Instance.new("TextButton")
     autoPotionButton.Size = UDim2.new(0, 78, 0, 20)
     autoPotionButton.Position = UDim2.new(0, 92, 0, 95)
@@ -2732,7 +2463,6 @@ local function createEnhancedCompactUI()
     local autoPotionCorner = Instance.new("UICorner")
     autoPotionCorner.CornerRadius = UDim.new(0, 4)
     autoPotionCorner.Parent = autoPotionButton
-    
     -- Auto Features Row 2 (NEW ROW)
     local autoAcceptButton = Instance.new("TextButton")
     autoAcceptButton.Size = UDim2.new(0, 78, 0, 20)
@@ -2747,7 +2477,6 @@ local function createEnhancedCompactUI()
     local autoAcceptCorner = Instance.new("UICorner")
     autoAcceptCorner.CornerRadius = UDim.new(0, 4)
     autoAcceptCorner.Parent = autoAcceptButton
-    
     local autoPetPenButton = Instance.new("TextButton")
     autoPetPenButton.Size = UDim2.new(0, 78, 0, 20)
     autoPetPenButton.Position = UDim2.new(0, 92, 0, 120)
@@ -2761,7 +2490,6 @@ local function createEnhancedCompactUI()
     local autoPetPenCorner = Instance.new("UICorner")
     autoPetPenCorner.CornerRadius = UDim.new(0, 4)
     autoPetPenCorner.Parent = autoPetPenButton
-    
     -- PetFarm Button (moved to new row)
     local petFarmButton = Instance.new("TextButton")
     petFarmButton.Size = UDim2.new(0, 160, 0, 20)
@@ -2776,7 +2504,6 @@ local function createEnhancedCompactUI()
     local petFarmCorner = Instance.new("UICorner")
     petFarmCorner.CornerRadius = UDim.new(0, 4)
     petFarmCorner.Parent = petFarmButton
-    
     return {
         frame = frame,
         sessionLabel = sessionLabel,
@@ -2790,7 +2517,6 @@ local function createEnhancedCompactUI()
         petFarmButton = petFarmButton
     }
 end
-
 -- Updated updatePetsDropdown function with proper error handling
 local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFrame)
     local List = {}
@@ -2921,7 +2647,6 @@ local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFra
   
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 15)
 end
-
 -- Create pets dropdown
 local function createPetsDropdown(parentFrame, position)
     local dropdownFrame = Instance.new("Frame")
@@ -2931,11 +2656,9 @@ local function createPetsDropdown(parentFrame, position)
     dropdownFrame.BorderSizePixel = 0
     dropdownFrame.BackgroundTransparency = 0.1
     dropdownFrame.Parent = parentFrame
-    
     local dropdownCorner = Instance.new("UICorner")
     dropdownCorner.CornerRadius = UDim.new(0, 4)
     dropdownCorner.Parent = dropdownFrame
-    
     local dropdownTitle = Instance.new("TextLabel")
     dropdownTitle.Size = UDim2.new(1, 0, 0, 15)
     dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
@@ -2946,7 +2669,6 @@ local function createPetsDropdown(parentFrame, position)
     dropdownTitle.TextSize = 11
     dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
     dropdownTitle.Parent = dropdownFrame
-    
     local dropdownButton = Instance.new("TextButton")
     dropdownButton.Size = UDim2.new(1, 0, 0, 20)
     dropdownButton.Position = UDim2.new(0, 0, 0, 15)
@@ -2956,11 +2678,9 @@ local function createPetsDropdown(parentFrame, position)
     dropdownButton.Font = Enum.Font.SourceSans
     dropdownButton.TextSize = 10
     dropdownButton.Parent = dropdownFrame
-    
     local buttonCorner = Instance.new("UICorner")
     buttonCorner.CornerRadius = UDim.new(0, 4)
     buttonCorner.Parent = dropdownButton
-    
     local dropdownListFrame = Instance.new("ScrollingFrame")
     dropdownListFrame.Size = UDim2.new(1, 0, 0, 200)
     dropdownListFrame.Position = UDim2.new(0, 0, 1, 0)
@@ -2970,11 +2690,9 @@ local function createPetsDropdown(parentFrame, position)
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     dropdownListFrame.ScrollBarThickness = 3
     dropdownListFrame.Parent = dropdownFrame
-    
     local listCorner = Instance.new("UICorner")
     listCorner.CornerRadius = UDim.new(0, 4)
     listCorner.Parent = dropdownListFrame
-    
     local dropdownToggle = false
     dropdownButton.MouseButton1Click:Connect(function()
         dropdownToggle = not dropdownToggle
@@ -2983,10 +2701,8 @@ local function createPetsDropdown(parentFrame, position)
             updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFrame)
         end
     end)
-    
     return dropdownFrame, dropdownButton, dropdownListFrame
 end
-
 -- ==================================================================
 -- AUTO-START FUNCTIONALITY
 -- ==================================================================
@@ -3040,7 +2756,6 @@ local function autoStartEverything()
     debugPrint("PetFarm: RUNNING | Auto PetPen: RUNNING")
     debugPrint("Selected Pet: " .. tostring(PetID))
 end
-
 -- ==================================================================
 -- INITIALIZATION AND MAIN LOOP
 -- ==================================================================
@@ -3051,7 +2766,6 @@ local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsD
     ui.frame,
     UDim2.new(0, 10, 0, 170) -- Updated from 145 to 170
 )
-
 -- Function to update session display
 local function updateSessionDisplay()
     local currentMoney, currentPotions = updateSessionEarnings()
@@ -3064,57 +2778,48 @@ local function updateSessionDisplay()
         recyclingPoints, crystalEggs
     )
 end
-
 -- Connect Trade button
 ui.tradeButton.MouseButton1Click:Connect(function()
     sendTradeRequest(ui.playerNameBox.Text)
 end)
-
 -- Connect Enter key on textbox
 ui.playerNameBox.FocusLost:Connect(function(enterPressed)
     if enterPressed then
         sendTradeRequest(ui.playerNameBox.Text)
     end
 end)
-
 -- Connect Add All Pets button
 ui.addPetsButton.MouseButton1Click:Connect(addAllPetsToTrade)
-
 -- Connect Auto Trade button
 ui.autoTradeButton.MouseButton1Click:Connect(function()
     toggleContinuousMode()
     ui.autoTradeButton.Text = ContinuousMode and "Auto Trade [ON]" or "Auto Trade [OFF]"
     ui.autoTradeButton.BackgroundColor3 = ContinuousMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(215, 120, 0)
 end)
-
 -- Connect Auto Potion button
 ui.autoPotionButton.MouseButton1Click:Connect(function()
     toggleAutoPotionMode()
     ui.autoPotionButton.Text = AutoPotionMode and "Auto Potion [ON]" or "Auto Potion [OFF]"
     ui.autoPotionButton.BackgroundColor3 = AutoPotionMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(0, 170, 170)
 end)
-
 -- Connect Auto Accept button
 ui.autoAcceptButton.MouseButton1Click:Connect(function()
     toggleAutoAcceptMode()
     ui.autoAcceptButton.Text = AutoAcceptMode and "Auto Accept [ON]" or "Auto Accept [OFF]"
     ui.autoAcceptButton.BackgroundColor3 = AutoAcceptMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
 end)
-
 -- Connect PetFarm button
 ui.petFarmButton.MouseButton1Click:Connect(function()
     togglePetFarmMode()
     ui.petFarmButton.Text = PetFarmMode and "🛑 STOP PETFARM" or "🚀 START PETFARM"
     ui.petFarmButton.BackgroundColor3 = PetFarmMode and Color3.fromRGB(170, 0, 0) or Color3.fromRGB(0, 170, 0)
 end)
-
 -- Connect Auto PetPen button
 ui.autoPetPenButton.MouseButton1Click:Connect(function()
     toggleAutoPetPenMode()
     ui.autoPetPenButton.Text = AutoPetPenMode and "Auto PetPen [ON]" or "Auto PetPen [OFF]"
     ui.autoPetPenButton.BackgroundColor3 = AutoPetPenMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 170, 0)
 end)
-
 -- Update pets dropdown periodically
 coroutine.wrap(function()
     while true do
@@ -3124,7 +2829,6 @@ coroutine.wrap(function()
         task.wait(10)
     end
 end)()
-
 -- Main loop to update session display
 local function mainLoop()
     while true do
@@ -3132,26 +2836,19 @@ local function mainLoop()
         task.wait(1)
     end
 end
-
 -- Initialize session tracking
 lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
-
 -- Debug the recycler data structure on startup
 task.wait(2) -- Wait for data to load
 debugInspectRecyclerData()
-
 -- Start the main loop
 coroutine.wrap(mainLoop)()
-
 -- AUTO-START: Begin automation immediately
 task.wait(5) -- Wait a bit longer for everything to initialize
 autoStartEverything()
-
 debugPrint("ENHANCED PetFarm System Loaded Successfully!")
 debugPrint("Features: AUTO-START ENABLED - PetFarm and PetPen start automatically!")
 debugPrint("Smart Pet Selection: Automatically selects starter_egg > 6yo dog > 6yo cat")
-debugPrint("NEW: Furniture System Integrated from w33.txt - Auto-buy missing furniture!")
-debugPrint("Furniture Types: BasicCrib, AilmentsRefresh2024CheapFoodBowl, AilmentsRefresh2024CheapWaterBowl, CheapPetBathtub, Piano, AilmentsRefresh2024LitterBox")
 debugPrint("Ailment Monitoring + Throw Toys + Walk Handler + Ride Handler + Sick Handler + Mystery Handler + Pet Me Handler + Auto Pet Re-equip")
 debugPrint("NEW: Auto Trading System - Send trades, add all pets, auto accept")
 debugPrint("NEW: Auto Potion System - Uses pet_age_potion only on selected pet")
@@ -3159,4 +2856,3 @@ debugPrint("NEW: Auto Accept System - Automatically accepts and completes trades
 debugPrint("UPDATED: Smart Neon Fusion - Fuses when 4 pets of same type reach age 6")
 debugPrint("UPDATED: Auto PetPen Management with accurate slot tracking, age 6 removal, and priority-based pet addition")
 debugPrint("CRITICAL UPDATE: ALWAYS KEEP PET EQUIPPED - Uses equip_manager for reliable checks every 5s!")
-debugPrint("CRITICAL UPDATE: NEW FURNITURE LOGIC - Auto-buy missing furniture for ailment handling!")
