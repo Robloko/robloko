@@ -219,93 +219,28 @@ end
 
 -- Function to collect rewards
 local function collectGingerbreads()
-    local currentBefore = getCurrentGingerbread()
-    print("📥 Collecting gingerbreads...")
     collectEvent:FireServer()
-    
-    -- Wait a moment for data to update
-    task.wait(2)
-    
-    local currentAfter = getCurrentGingerbread()
-    local earned = currentAfter - currentBefore
-    
-    if earned > 0 then
-        print("✅ Collected " .. earned .. " gingerbread!")
-        print("💰 Total: " .. currentAfter .. " gingerbreads")
-    else
-        print("ℹ️ Collection complete")
-    end
-    
-    return currentAfter
+    return true
 end
 
 -- Main function to run the cycle
 local function runCycle()
-    local startTime = os.time()
-    print("\n" .. string.rep("=", 40))
-    print("🔄 Starting new cycle")
-    print(string.rep("=", 40))
-    
-    -- Show initial gingerbread count
-    local startGingerbread = getCurrentGingerbread()
-    print("💰 Starting with: " .. startGingerbread .. " gingerbreads")
-    print("📞 Calling " .. #gingerbreadIds .. " gingerbread IDs...")
-    
     -- Call all gingerbread IDs with 0.1 second delay
-    local lastUpdate = os.time()
     for i, gingerbreadId in ipairs(gingerbreadIds) do
         callGingerbreadId(gingerbreadId)
-        
-        -- Show progress every 10 IDs instead of every ID
-        if i % 10 == 0 or i == #gingerbreadIds then
-            print("📞 [" .. i .. "/" .. #gingerbreadIds .. "] Gingerbread IDs called")
-        end
-        
-        -- Wait 0.1 seconds before next call
         task.wait(0.1)
     end
     
-    print("✅ All gingerbread IDs called!")
-    
-    -- Wait 10 minutes (600 seconds) for gingerbreads to spawn
-    print("⏰ Waiting 10 minutes for gingerbreads to spawn...")
-    
-    -- Countdown timer - only show minutes
-    local waitTime = 600  -- 10 minutes in seconds
-    for i = waitTime, 1, -1 do
-        if i % 60 == 0 then
-            local minutesLeft = math.floor(i/60)
-            local progressBar = "[" .. string.rep("█", 10 - minutesLeft) .. string.rep("░", minutesLeft) .. "]"
-            print(progressBar .. " " .. minutesLeft .. " minute(s) remaining...")
-        end
-        task.wait(1)
+    -- Immediately collect after calling all IDs
+    if collectGingerbreads() then
+        return true
     end
-    
-    -- Now collect
-    print("📥 Collecting...")
-    local newTotal = collectGingerbreads()
-    
-    -- Show cycle summary
-    local endTime = os.time()
-    local cycleDuration = endTime - startTime
-    local minutes = math.floor(cycleDuration / 60)
-    local seconds = cycleDuration % 60
-    
-    print(string.rep("=", 40))
-    print("✅ Cycle complete!")
-    print("⏱️  Cycle duration: " .. minutes .. "m " .. seconds .. "s")
-    print("💰 New total: " .. newTotal .. " gingerbreads")
-    print(string.rep("=", 40) .. "\n")
-    
-    return newTotal
+    return false
 end
 
--- Get initial gingerbread count for window title
-local initialGingerbread = getCurrentGingerbread()
-
--- Create the window with gingerbread count in title
+-- Create the window with COOCON title
 local Window = Rayfield:CreateWindow({
-   Name = "🍪 Gingerbread: " .. initialGingerbread,
+   Name = "COOCON",
    LoadingTitle = "Winter 2025 Gingerbread Farm",
    LoadingSubtitle = "Auto Farming Script",
    ConfigurationSaving = {
@@ -319,51 +254,81 @@ local MainTab = Window:CreateTab("Main", 4483362458)
 
 -- Variables for controls
 local isRunning = false
+local cyclesCompleted = 0
+local gingerbreadGained = 0
+local startCount = 0
 
--- Store current gingerbread count for display
-local currentDisplayGingerbread = initialGingerbread
+-- Gingerbread label on main tab
+local gingerbreadLabel
+local cyclesLabel
+local gainedLabel
 
--- Create UI elements
-local MainSection = MainTab:CreateSection("Auto Farm")
+-- Function to update gingerbread labels
+local function updateGingerbreadLabels()
+    local currentGingerbread = getCurrentGingerbread()
+    
+    if gingerbreadLabel then
+        gingerbreadLabel:Set("🍪 Current Gingerbread: " .. currentGingerbread)
+    end
+    
+    if cyclesLabel then
+        cyclesLabel:Set("🔄 Cycles Completed: " .. cyclesCompleted)
+    end
+    
+    if gainedLabel then
+        gainedLabel:Set("📈 Gingerbread Gained: " .. gingerbreadGained)
+    end
+end
+
+-- Create gingerbread status section at the TOP of the main tab
+local StatusSection = MainTab:CreateSection("Gingerbread Status")
+gingerbreadLabel = MainTab:CreateLabel("🍪 Current Gingerbread: " .. getCurrentGingerbread())
+cyclesLabel = MainTab:CreateLabel("🔄 Cycles Completed: 0")
+gainedLabel = MainTab:CreateLabel("📈 Gingerbread Gained: 0")
+
+-- Create farm controls section
+local ControlsSection = MainTab:CreateSection("Farm Controls")
 
 local Toggle = MainTab:CreateToggle({
-    Name = "🍪 Gingerbread Farm",
+    Name = "🍪 Auto Farm Gingerbread",
     CurrentValue = false,
     Flag = "FarmToggle",
     Callback = function(Value)
         if Value then
             isRunning = true
+            cyclesCompleted = 0
+            startCount = getCurrentGingerbread()
+            
+            -- Update labels immediately
+            updateGingerbreadLabels()
+            
             task.spawn(function()
-                print("\n🎮 Gingerbread Collector Script Started!")
-                print("📊 Total unique gingerbread IDs: " .. #gingerbreadIds)
-                
-                -- Run cycles continuously
-                local cycleCount = 0
                 while isRunning do
-                    cycleCount = cycleCount + 1
-                    print("\n🔄 Starting cycle #" .. cycleCount)
-                    
-                    local success, errorMsg = pcall(runCycle)
-                    
-                    if not success then
-                        print("❌ Error in cycle: " .. errorMsg)
-                    end
-                    
-                    -- Update display count
-                    currentDisplayGingerbread = getCurrentGingerbread()
-                    
-                    if not isRunning then break end
-                    
-                    -- Wait before next cycle with countdown
-                    local waitBetween = 5
-                    print("⏱️  Waiting " .. waitBetween .. " seconds before next cycle...")
-                    for i = waitBetween, 1, -1 do
-                        if not isRunning then break end
-                        task.wait(1)
+                    -- Run one cycle
+                    if runCycle() then
+                        cyclesCompleted = cyclesCompleted + 1
+                        
+                        -- Wait a moment for data to update
+                        task.wait(2)
+                        
+                        -- Update gingerbread gained
+                        local newCount = getCurrentGingerbread()
+                        gingerbreadGained = newCount - startCount
+                        
+                        -- Update labels
+                        updateGingerbreadLabels()
+                        
+                        -- Wait 10 minutes before next cycle (600 seconds)
+                        local waitTime = 600
+                        for i = waitTime, 1, -1 do
+                            if not isRunning then break end
+                            task.wait(1)
+                        end
+                    else
+                        -- If collection failed, wait 30 seconds and try again
+                        task.wait(30)
                     end
                 end
-                
-                print("\n⏹️  Farming stopped by user")
             end)
         else
             isRunning = false
@@ -371,45 +336,34 @@ local Toggle = MainTab:CreateToggle({
     end,
 })
 
--- Create a refresh button
-local Button = MainTab:CreateButton({
-    Name = "🔄 Refresh Gingerbread Count",
+-- Single cycle button
+MainTab:CreateButton({
+    Name = "🔄 Run Single Cycle",
     Callback = function()
-        currentDisplayGingerbread = getCurrentGingerbread()
-        print("📊 Current gingerbread count: " .. currentDisplayGingerbread)
+        if not isRunning then
+            local initial = getCurrentGingerbread()
+            if runCycle() then
+                task.wait(2)
+                local final = getCurrentGingerbread()
+                local gained = final - initial
+                
+                -- Update labels
+                cyclesCompleted = cyclesCompleted + 1
+                gingerbreadGained = gingerbreadGained + gained
+                updateGingerbreadLabels()
+            end
+        end
     end,
 })
 
--- Create label to display current gingerbread count
-local gingerbreadLabel = MainTab:CreateLabel("💰 Current Gingerbread: " .. currentDisplayGingerbread)
-
--- Function to update the label
-local function updateGingerbreadLabel()
-    currentDisplayGingerbread = getCurrentGingerbread()
-    gingerbreadLabel:Set("💰 Current Gingerbread: " .. currentDisplayGingerbread)
-end
-
--- Auto-update the label every 30 seconds
+-- Auto-update gingerbread labels every 10 seconds
 task.spawn(function()
     while true do
-        updateGingerbreadLabel()
-        task.wait(30)
+        updateGingerbreadLabels()
+        task.wait(10)
     end
 end)
 
--- Info section
-local InfoSection = MainTab:CreateSection("Information")
-
-local Label = MainTab:CreateLabel("💰 Each cycle: " .. #gingerbreadIds .. " gingerbreads")
-local Label2 = MainTab:CreateLabel("⏰ Each cycle: ~10 minutes 5 seconds")
-local Label3 = MainTab:CreateLabel("⚠️  Must be in ice skating area!")
-
--- Update label when button is pressed
-Button.Callback = function()
-    updateGingerbreadLabel()
-    print("📊 Current gingerbread count: " .. currentDisplayGingerbread)
-end
-
 -- Initialize
-print("🎮 Rayfield UI loaded successfully!")
-print("💰 Current gingerbread: " .. initialGingerbread)
+print("COOCON Gingerbread Farm Loaded!")
+print("Total unique gingerbread IDs: " .. #gingerbreadIds)
