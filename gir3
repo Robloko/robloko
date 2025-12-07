@@ -140,7 +140,7 @@ local gingerbreadIds = {
     "{381C38F4-4B07-4F2E-A12E-AF6328F96A54}",
     "{A2CBBB92-06FB-4CB3-A81F-6926203BD34E}",
     "{AB788250-8C62-45AF-BE63-6493F5363116}",
-    "{D0A52723-FF4A-40E5-A6B7-16FC57BF9B9E}",
+    "{D0A52723-FFA4-40E5-A6B7-16FC57BF9B9E}",
     "{DD2C92B9-881C-4128-B11D-A92E8873472E}",
     "{069AFA82-D910-45A2-AF24-7F33E0237182}",
     "{20619AAB-74D9-4F8D-AB89-62DB4130C6A9}",
@@ -340,7 +340,7 @@ local GingerbreadToggle = WinterTab:CreateToggle({
 -- AUTO-START: Turn on the toggle immediately after creating it
 GingerbreadToggle:Set(true)
 
--- Auto Xmas Train Toggle
+-- Auto Xmas Train Toggle (CORRECTED VERSION)
 local TrainToggle = WinterTab:CreateToggle({
     Name = "🚂 Auto Xmas Train",
     CurrentValue = false,
@@ -352,36 +352,67 @@ local TrainToggle = WinterTab:CreateToggle({
             task.spawn(function()
                 while isTrainRunning do
                     local currentMinute = getCurrentMinute()
+                    local currentSecond = os.date("*t").sec
                     
                     -- Board train at 06, 16, 26, 36, 46, 56 minutes past hour
-                    if currentMinute == 6 or currentMinute == 16 or currentMinute == 26 or 
-                       currentMinute == 36 or currentMinute == 46 or currentMinute == 56 then
+                    -- Wait for the exact time when train arrives (first 10 seconds)
+                    if (currentMinute == 6 or currentMinute == 16 or currentMinute == 26 or 
+                       currentMinute == 36 or currentMinute == 46 or currentMinute == 56) and currentSecond <= 10 then
                         
-                        -- Try to board the train
+                        -- Try to board the train immediately
                         pcall(boardTrain)
                         
-                        -- Wait 2 minutes to ensure we're on the train
+                        -- Stay on train for exactly 2 minutes (120 seconds) for gingerbread drops
+                        -- This puts us at 08, 18, 28, 38, 48, 58 minutes
                         task.wait(120)
                         
-                    -- Respawn at 08, 18, 28, 38, 48, 58 minutes past hour
-                    elseif currentMinute == 8 or currentMinute == 18 or currentMinute == 28 or 
-                           currentMinute == 38 or currentMinute == 48 or currentMinute == 58 then
-                        
-                        -- Respawn player
+                        -- Respawn to get off train
                         pcall(respawnPlayer)
                         
-                        -- Wait 2 minutes before checking again
-                        task.wait(120)
+                        -- Wait 5 seconds before next check
+                        task.wait(5)
                     else
-                        -- Wait 1 second and check again
-                        task.wait(1)
+                        -- Calculate time until next train arrival
+                        local minutesUntilNextTrain
+                        
+                        if currentMinute < 6 then
+                            minutesUntilNextTrain = 6 - currentMinute
+                        elseif currentMinute < 16 then
+                            minutesUntilNextTrain = 16 - currentMinute
+                        elseif currentMinute < 26 then
+                            minutesUntilNextTrain = 26 - currentMinute
+                        elseif currentMinute < 36 then
+                            minutesUntilNextTrain = 36 - currentMinute
+                        elseif currentMinute < 46 then
+                            minutesUntilNextTrain = 46 - currentMinute
+                        elseif currentMinute < 56 then
+                            minutesUntilNextTrain = 56 - currentMinute
+                        else
+                            minutesUntilNextTrain = (60 - currentMinute) + 6
+                        end
+                        
+                        -- Convert to seconds
+                        local waitSeconds = (minutesUntilNextTrain * 60) - currentSecond
+                        
+                        -- If we have more than 10 seconds to wait, wait until 5 seconds before train
+                        if waitSeconds > 10 then
+                            -- Wait until 5 seconds before train arrives
+                            waitSeconds = waitSeconds - 5
+                            for i = 1, math.floor(waitSeconds) do
+                                if not isTrainRunning then break end
+                                task.wait(1)
+                            end
+                        else
+                            -- Just wait 1 second and check again
+                            task.wait(1)
+                        end
                     end
                 end
             end)
             
             Rayfield:Notify({
                 Title = "Auto Train Started",
-                Content = "Train will board at 06,16,26,36,46,56 and respawn at 08,18,28,38,48,58",
+                Content = "Train will board at 06,16,26,36,46,56 and exit at 08,18,28,38,48,58",
                 Duration = 5,
                 Image = 4483362458
             })
