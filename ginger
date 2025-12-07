@@ -1,3 +1,63 @@
+-- Create UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "GingerbreadCollectorUI"
+ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+
+-- Create main frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 80, 0, 80)  -- Slightly larger for count display
+MainFrame.Position = UDim2.new(0.5, -40, 0, 10)  -- Top center
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BackgroundTransparency = 0.5
+MainFrame.BorderSizePixel = 0
+MainFrame.ClipsDescendants = true
+MainFrame.Parent = ScreenGui
+
+-- Create cookie button
+local CookieButton = Instance.new("TextButton")
+CookieButton.Name = "CookieButton"
+CookieButton.Size = UDim2.new(1, 0, 0.6, 0)  -- 60% height for button
+CookieButton.Position = UDim2.new(0, 0, 0, 0)
+CookieButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+CookieButton.BackgroundTransparency = 0.5
+CookieButton.Text = "🍪"
+CookieButton.TextScaled = true
+CookieButton.Font = Enum.Font.SourceSansBold
+CookieButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CookieButton.TextSize = 30
+CookieButton.BorderSizePixel = 0
+CookieButton.Parent = MainFrame
+
+-- Create gingerbread count display
+local CountText = Instance.new("TextLabel")
+CountText.Name = "CountText"
+CountText.Size = UDim2.new(1, 0, 0.4, 0)  -- 40% height for count
+CountText.Position = UDim2.new(0, 0, 0.6, 0)  -- Below button
+CountText.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CountText.BackgroundTransparency = 0.8
+CountText.Text = "Loading..."
+CountText.TextColor3 = Color3.fromRGB(255, 215, 0)  -- Gold color
+CountText.TextSize = 16
+CountText.Font = Enum.Font.SourceSansBold
+CountText.BorderSizePixel = 0
+CountText.Parent = MainFrame
+
+-- Create status text (hidden by default, appears on hover)
+local StatusText = Instance.new("TextLabel")
+StatusText.Name = "StatusText"
+StatusText.Size = UDim2.new(0, 200, 0, 30)
+StatusText.Position = UDim2.new(0.5, -100, 1, 5)  -- Below main frame
+StatusText.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+StatusText.BackgroundTransparency = 0.7
+StatusText.Text = "Ready"
+StatusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+StatusText.TextSize = 14
+StatusText.Font = Enum.Font.SourceSans
+StatusText.BorderSizePixel = 0
+StatusText.Visible = false  -- Hidden by default
+StatusText.Parent = MainFrame
+
 -- Get the remote event references
 local adoptmeNet = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net")
 local iceSkatingEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
@@ -166,7 +226,38 @@ local gingerbreadIds = {
     "{FD974ABC-023F-4238-BB26-EA963179D61F}"
 }
 
--- Function to call a single gingerbread ID
+-- Variables
+local isRunning = false
+local currentCycle = 0
+local gingerbreadCount = 0
+
+-- Function to update gingerbread count display
+local function updateGingerbreadCount()
+    -- Try to get the saved gingerbread count (simulating the data you showed)
+    -- In real implementation, you would get this from the game's data store
+    local success, result = pcall(function()
+        -- This is a placeholder - in reality you would get this from the game's data
+        return 1140  -- Default value from your data
+    end)
+    
+    if success then
+        gingerbreadCount = result
+    else
+        gingerbreadCount = 0
+    end
+    
+    CountText.Text = "🍪: " .. tostring(gingerbreadCount)
+end
+
+-- Function to update status text (minimal console spam)
+local function updateStatus(text, showInConsole)
+    StatusText.Text = text
+    if showInConsole then
+        print("[Gingerbread Collector] " .. text)
+    end
+end
+
+-- Function to call a single gingerbread ID (no console spam)
 local function callGingerbreadId(gingerbreadId)
     local args = {
         {
@@ -180,54 +271,114 @@ end
 
 -- Function to collect rewards
 local function collectGingerbreads()
-    print("Collecting gingerbreads...")
+    updateStatus("Collecting...", true)
     collectEvent:FireServer()
-    print("Collection complete!")
+    updateStatus("Collected!", true)
+    
+    -- Update count after collection
+    task.wait(1)  -- Wait a moment for the game to update
+    updateGingerbreadCount()
 end
 
 -- Main function to run the cycle
 local function runCycle()
-    print("=== Starting new cycle ===")
-    print("Calling " .. #gingerbreadIds .. " gingerbread IDs...")
+    if isRunning then return end
+    isRunning = true
+    currentCycle = currentCycle + 1
     
-    -- Call all gingerbread IDs with 0.1 second delay
+    CookieButton.Text = "⏳"
+    CookieButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    StatusText.Visible = true
+    
+    updateStatus("Cycle " .. currentCycle .. " started", true)
+    updateStatus("Calling IDs...", false)
+    
+    -- Call all gingerbread IDs with 0.1 second delay (no console spam)
+    local startTime = tick()
     for i, gingerbreadId in ipairs(gingerbreadIds) do
         callGingerbreadId(gingerbreadId)
-        print("[" .. i .. "/" .. #gingerbreadIds .. "] Called ID: " .. string.sub(gingerbreadId, 1, 8) .. "...")
         
-        -- Wait 0.1 seconds before next call
+        -- Only update progress every 20 IDs to reduce spam
+        if i % 20 == 0 then
+            updateStatus("Calling... (" .. i .. "/" .. #gingerbreadIds .. ")", false)
+        end
+        
         task.wait(0.1)
     end
     
-    print("All gingerbread IDs called!")
+    local callTime = tick() - startTime
+    updateStatus("All IDs called! (" .. string.format("%.1f", callTime) .. "s)", true)
     
     -- Wait 10 minutes (600 seconds) for gingerbreads to spawn
-    print("Waiting 10 minutes for gingerbreads to spawn...")
+    updateStatus("Waiting 10 minutes...", true)
     
-    -- Countdown timer
+    -- Countdown timer with minimal updates
     local waitTime = 600  -- 10 minutes in seconds
+    local lastUpdate = 0
+    
     for i = waitTime, 1, -1 do
-        if i % 60 == 0 then
-            print(math.floor(i/60) .. " minutes remaining...")
+        -- Only update every 30 seconds to reduce spam
+        if i % 30 == 0 or i <= 10 then
+            local minutes = math.floor(i/60)
+            local seconds = i % 60
+            local timeStr = string.format("%dm %02ds", minutes, seconds)
+            updateStatus("Waiting... " .. timeStr, false)
         end
+        
         task.wait(1)
     end
     
     -- Now collect
     collectGingerbreads()
     
-    print("=== Cycle complete! ===")
+    -- Reset button
+    CookieButton.Text = "🍪"
+    CookieButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    updateStatus("Cycle " .. currentCycle .. " complete!", true)
+    
+    isRunning = false
+    
+    -- Wait before showing "Ready" again
+    task.wait(2)
+    if not isRunning then
+        updateStatus("Ready", false)
+        StatusText.Visible = false
+    end
 end
 
--- Start the script
-print("Gingerbread Collector Script Started!")
-print("Total unique gingerbread IDs: " .. #gingerbreadIds)
+-- Button click event
+CookieButton.MouseButton1Click:Connect(function()
+    if not isRunning then
+        runCycle()
+    end
+end)
 
--- Run cycles continuously
+-- Hover effects (show status on hover)
+CookieButton.MouseEnter:Connect(function()
+    if not isRunning then
+        CookieButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        StatusText.Visible = true
+    end
+end)
+
+CookieButton.MouseLeave:Connect(function()
+    if not isRunning then
+        CookieButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        StatusText.Visible = false
+    end
+end)
+
+-- Initialize
+updateGingerbreadCount()
+updateStatus("Ready - Click 🍪 to start", true)
+print("Gingerbread Collector UI Loaded!")
+print("Total gingerbread IDs: " .. #gingerbreadIds)
+print("Current gingerbread count: " .. gingerbreadCount)
+
+-- Auto-update count every 30 seconds
 while true do
-    runCycle()
-    
-    -- Wait a short moment before starting next cycle
-    print("Waiting 5 seconds before next cycle...")
-    task.wait(5)
+    task.wait(30)
+    if not isRunning then
+        updateGingerbreadCount()
+    end
 end
