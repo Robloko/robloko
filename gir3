@@ -5,28 +5,8 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local adoptmeNet = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net")
 local iceSkatingEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
 local collectEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
-local winterTrainEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.Train.WinterTrainNet:7")
-
--- Simple print function
-local function simplePrint(msg)
-    print("[COCOON] " .. msg)
-end
-
--- Back home function
-local function backHome()
-    simplePrint("Returning home via respawn...")
-    local respawnSuccess, respawnResult = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-    end)
-    if respawnSuccess then
-        simplePrint("Successfully respawned to return home")
-        task.wait(5)
-        return true
-    else
-        simplePrint("Failed to respawn: " .. tostring(respawnResult))
-        return false
-    end
-end
+local trainEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.Train.WinterTrainNet:7")
+local spawnAPI = game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn")
 
 -- Store all gingerbread IDs
 local gingerbreadIds = {
@@ -245,30 +225,27 @@ local function collectGingerbreads()
     return true
 end
 
--- Function to ride the train
-local function rideTrain()
+-- Function to board the train
+local function boardTrain()
     local args = {
         {
             carriage = workspace:WaitForChild("WinterTrainSeats"):WaitForChild("Seat")
         }
     }
-    
-    -- Use pcall to handle errors
-    local success, result = pcall(function()
-        winterTrainEvent:FireServer(unpack(args))
-        return true
-    end)
-    
-    if success then
-        simplePrint("Train ride successful")
-        return true
-    else
-        simplePrint("Failed to ride train: " .. tostring(result))
-        return false
-    end
+    trainEvent:FireServer(unpack(args))
 end
 
--- Main function to run the gingerbread cycle
+-- Function to respawn player
+local function respawnPlayer()
+    spawnAPI:InvokeServer()
+end
+
+-- Function to get current minute
+local function getCurrentMinute()
+    return os.date("*t").min
+end
+
+-- Main function to run the cycle
 local function runCycle()
     -- Call all gingerbread IDs with 0.1 second delay
     for i, gingerbreadId in ipairs(gingerbreadIds) do
@@ -281,36 +258,6 @@ local function runCycle()
         return true
     end
     return false
-end
-
--- Function to check time and trigger train at specific minutes
-local function checkTrainTime()
-    local currentTime = os.date("*t")
-    local currentMinute = currentTime.min
-    
-    -- Minutes for train call: 06, 16, 26, 36, 46, 56
-    local callMinutes = {6, 16, 26, 36, 46, 56}
-    
-    -- Check if current minute is a call minute
-    for _, minute in ipairs(callMinutes) do
-        if currentMinute == minute then
-            simplePrint("Calling train at minute " .. currentMinute)
-            rideTrain()
-            return "called"
-        end
-    end
-    
-    -- Check if current minute is a back home minute (08, 18, 28, 38, 48, 58)
-    local backHomeMinutes = {8, 18, 28, 38, 48, 58}
-    for _, minute in ipairs(backHomeMinutes) do
-        if currentMinute == minute then
-            simplePrint("Returning home at minute " .. currentMinute)
-            backHome()
-            return "back_home"
-        end
-    end
-    
-    return "waiting"
 end
 
 -- Create the window with COCOON title
@@ -404,60 +351,42 @@ local TrainToggle = WinterTab:CreateToggle({
             
             task.spawn(function()
                 while isTrainRunning do
-                    -- Check current time
-                    local result = checkTrainTime()
+                    local currentMinute = getCurrentMinute()
                     
-                    if result == "called" then
-                        -- Train was called, wait until next minute
-                        task.wait(60) -- Wait for minute to pass
-                    elseif result == "back_home" then
-                        -- Back home function called, wait until next minute
-                        task.wait(60) -- Wait for minute to pass
+                    -- Board train at 06, 16, 26, 36, 46, 56 minutes past hour
+                    if currentMinute == 6 or currentMinute == 16 or currentMinute == 26 or 
+                       currentMinute == 36 or currentMinute == 46 or currentMinute == 56 then
+                        
+                        -- Try to board the train
+                        pcall(boardTrain)
+                        
+                        -- Wait 2 minutes to ensure we're on the train
+                        task.wait(120)
+                        
+                    -- Respawn at 08, 18, 28, 38, 48, 58 minutes past hour
+                    elseif currentMinute == 8 or currentMinute == 18 or currentMinute == 28 or 
+                           currentMinute == 38 or currentMinute == 48 or currentMinute == 58 then
+                        
+                        -- Respawn player
+                        pcall(respawnPlayer)
+                        
+                        -- Wait 2 minutes before checking again
+                        task.wait(120)
                     else
-                        -- Not a train minute, check again in 10 seconds
-                        task.wait(10)
+                        -- Wait 1 second and check again
+                        task.wait(1)
                     end
                 end
             end)
             
-            -- Also show next train time
-            task.spawn(function()
-                while isTrainRunning do
-                    local currentTime = os.date("*t")
-                    local currentMinute = currentTime.min
-                    local nextTrainMinute = nil
-                    
-                    -- Find next train minute
-                    local trainMinutes = {6, 16, 26, 36, 46, 56}
-                    for _, minute in ipairs(trainMinutes) do
-                        if minute > currentMinute then
-                            nextTrainMinute = minute
-                            break
-                        end
-                    end
-                    
-                    -- If no minute found in current hour, use first minute of next hour
-                    if not nextTrainMinute then
-                        nextTrainMinute = 6
-                    end
-                    
-                    local minutesUntilTrain = nextTrainMinute - currentMinute
-                    if minutesUntilTrain < 0 then
-                        minutesUntilTrain = 60 + minutesUntilTrain
-                    end
-                    
-                    if TrainToggle then
-                        TrainToggle:Set("🚂 Auto Xmas Train (Next: " .. minutesUntilTrain .. "m)")
-                    end
-                    
-                    task.wait(30) -- Update every 30 seconds
-                end
-            end)
+            Rayfield:Notify({
+                Title = "Auto Train Started",
+                Content = "Train will board at 06,16,26,36,46,56 and respawn at 08,18,28,38,48,58",
+                Duration = 5,
+                Image = 4483362458
+            })
         else
             isTrainRunning = false
-            if TrainToggle then
-                TrainToggle:Set("🚂 Auto Xmas Train")
-            end
         end
     end,
 })
@@ -474,15 +403,7 @@ local MailToggle = WinterTab:CreateToggle({
             task.spawn(function()
                 while isMailCollecting do
                     -- Collect mail
-                    local success = pcall(function()
-                        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/ClaimAllDeliveries"):FireServer()
-                    end)
-                    
-                    if success then
-                        simplePrint("Mail collected successfully")
-                    else
-                        simplePrint("Failed to collect mail")
-                    end
+                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/ClaimAllDeliveries"):FireServer()
                     
                     -- Wait 10 minutes (600 seconds) before next collection
                     local waitTime = 600
@@ -512,16 +433,7 @@ local BucksToggle = WinterTab:CreateToggle({
                     -- Call the exchange 3 times with small delays between each
                     for i = 1, 3 do
                         if not isBucksExchange then break end
-                        local success = pcall(function()
-                            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("WinterEventAPI/UseExchangeKiosk"):InvokeServer()
-                        end)
-                        
-                        if success then
-                            simplePrint("Bucks exchange #" .. i .. " successful")
-                        else
-                            simplePrint("Bucks exchange #" .. i .. " failed")
-                        end
-                        
+                        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("WinterEventAPI/UseExchangeKiosk"):InvokeServer()
                         task.wait(0.5) -- Small delay between calls
                     end
                     
@@ -575,26 +487,15 @@ BuyTab:CreateButton({
             }
             
             -- Call the purchase function
-            local success = pcall(function()
-                game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-            end)
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
             
             -- Show confirmation
-            if success then
-                Rayfield:Notify({
-                    Title = "Purchase Complete",
-                    Content = "Bought " .. buyCount .. " Humbug pet(s)",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Purchase Failed",
-                    Content = "Could not buy Humbug pet(s)",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
+            Rayfield:Notify({
+                Title = "Purchase Complete",
+                Content = "Bought " .. buyCount .. " Humbug pet(s)",
+                Duration = 3,
+                Image = 4483362458
+            })
         end
     end,
 })
@@ -617,4 +518,4 @@ Rayfield:Notify({
 })
 
 -- Initialize
-simplePrint("COCOON Gingerbread Farm Loaded!")
+print("COCOON Gingerbread Farm Loaded!")
