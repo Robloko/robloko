@@ -79,7 +79,7 @@ local gingerbreadIds = {
     "{1F104AAC-B4CF-4B9E-8ACA-C72F3B7601D7}",
     "{1E4A9A9E-F945-4A6A-A777-EA765AC9892D}",
     "{FCE711AB-1097-47DF-AFD5-E3D8BA0B4BA5}",
-    "{24236D56-6152-4783-B736-9CAA56F6F655}",
+    "{24236D55-6152-4783-B736-9CAA56F6F655}",
     "{1479F2D4-D712-4B53-8B24-546270239BE7}",
     "{058EE9BE-D9A9-4660-9729-60E2FF891783}",
     "{AFFECD3D-9FCD-4822-BDF8-1B7F589620DD}",
@@ -169,59 +169,32 @@ local gingerbreadIds = {
     "{FD974ABC-023F-4238-BB26-EA963179D61F}"
 }
 
--- Create the Gingerbread Display GUI
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-
--- Create ScreenGui
-local ScreenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-ScreenGui.Name = "GingerbreadGUI"
-
--- Create TextButton (🍪 button)
-local button = Instance.new("TextButton", ScreenGui)
-button.Text = "🍪"
-button.Size = UDim2.new(0, 50, 0, 50)
-button.Position = UDim2.new(0.5, -25, 0.9, -25)
-button.BackgroundColor3 = Color3.fromRGB(255, 102, 102)
-button.TextScaled = true
-
--- Create TextLabel (to show gingerbread count)
-local label = Instance.new("TextLabel", ScreenGui)
-label.Size = UDim2.new(0, 200, 0, 50)
-label.Position = UDim2.new(0.5, -100, 0.8, -25)
-label.BackgroundTransparency = 0.5
-label.Text = "Gingerbread: 0"
-label.TextScaled = true
-
 -- Function to get current gingerbread_2025 value
 local function getCurrentGingerbread()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer
+
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
-        print("❌ Failed to load ClientData")
         return 0
     end
 
     local success2, allData = pcall(clientData.get_data, clientData)
     if not success2 or not allData[player.Name] then
-        print("❌ Failed to get player data")
         return 0
     end
 
     local playerData = allData[player.Name]
     local gingerbread = 0
 
-    -- Option 1: Direct property
     if playerData.gingerbread_2025 then
         gingerbread = playerData.gingerbread_2025
-    -- Option 2: In inventory or special currency section
     elseif playerData.inventory and playerData.inventory.currency then
         gingerbread = playerData.inventory.currency.gingerbread_2025 or 0
-    -- Option 3: Scan all top-level properties
     else
         for key, value in pairs(playerData) do
             if type(key) == "string" and string.find(key:lower(), "gingerbread") then
-                print("📌 Found gingerbread property: " .. key .. " = " .. tostring(value))
                 if key == "gingerbread_2025" then
                     gingerbread = value
                 end
@@ -231,25 +204,6 @@ local function getCurrentGingerbread()
 
     return gingerbread
 end
-
--- Function to update the label
-local function updateGingerbreadDisplay()
-    local gingerbread = getCurrentGingerbread()
-    label.Text = string.format("Gingerbread: %d", gingerbread)
-end
-
--- Button click event
-button.MouseButton1Click:Connect(function()
-    updateGingerbreadDisplay()
-end)
-
--- Auto-update every second
-coroutine.wrap(function()
-    while true do
-        updateGingerbreadDisplay()
-        task.wait(1)
-    end
-end)()
 
 -- Function to call a single gingerbread ID
 local function callGingerbreadId(gingerbreadId)
@@ -304,9 +258,12 @@ local function runCycle()
     print("=== Cycle complete! ===")
 end
 
--- Create the Rayfield window
+-- Get initial gingerbread count for window title
+local initialGingerbread = getCurrentGingerbread()
+
+-- Create the window with gingerbread count in title
 local Window = Rayfield:CreateWindow({
-   Name = "Gingerbread Collector",
+   Name = "🍪 Gingerbread: " .. initialGingerbread,
    LoadingTitle = "Winter 2025 Gingerbread Farm",
    LoadingSubtitle = "Auto Farming Script",
    ConfigurationSaving = {
@@ -320,6 +277,20 @@ local MainTab = Window:CreateTab("Main", 4483362458)
 
 -- Variables for controls
 local isRunning = false
+
+-- Function to update window title with current gingerbread count
+local function updateWindowTitle()
+    local currentGingerbread = getCurrentGingerbread()
+    Rayfield:SetWindowName("🍪 Gingerbread: " .. currentGingerbread)
+end
+
+-- Auto-update gingerbread count every second
+task.spawn(function()
+    while true do
+        updateWindowTitle()
+        task.wait(1)
+    end
+end)
 
 -- Create UI elements
 local MainSection = MainTab:CreateSection("Auto Farm")
@@ -356,4 +327,4 @@ local Toggle = MainTab:CreateToggle({
 
 -- Initialize
 print("Rayfield UI loaded successfully!")
-print("Gingerbread display GUI created!")
+updateWindowTitle() -- Update title immediately
