@@ -219,38 +219,88 @@ end
 
 -- Function to collect rewards
 local function collectGingerbreads()
+    local currentBefore = getCurrentGingerbread()
+    print("📥 Collecting gingerbreads...")
     collectEvent:FireServer()
-    -- Wait a bit for server to update data
+    
+    -- Wait a moment for data to update
     task.wait(2)
+    
+    local currentAfter = getCurrentGingerbread()
+    local earned = currentAfter - currentBefore
+    
+    if earned > 0 then
+        print("✅ Collected " .. earned .. " gingerbread!")
+        print("💰 Total: " .. currentAfter .. " gingerbreads")
+    else
+        print("ℹ️ Collection complete")
+    end
+    
+    return currentAfter
 end
 
 -- Main function to run the cycle
 local function runCycle()
+    local startTime = os.time()
+    print("\n" .. string.rep("=", 40))
+    print("🔄 Starting new cycle")
+    print(string.rep("=", 40))
+    
+    -- Show initial gingerbread count
+    local startGingerbread = getCurrentGingerbread()
+    print("💰 Starting with: " .. startGingerbread .. " gingerbreads")
+    print("📞 Calling " .. #gingerbreadIds .. " gingerbread IDs...")
+    
     -- Call all gingerbread IDs with 0.1 second delay
+    local lastUpdate = os.time()
     for i, gingerbreadId in ipairs(gingerbreadIds) do
         callGingerbreadId(gingerbreadId)
+        
+        -- Show progress every 10 IDs instead of every ID
+        if i % 10 == 0 or i == #gingerbreadIds then
+            print("📞 [" .. i .. "/" .. #gingerbreadIds .. "] Gingerbread IDs called")
+        end
+        
+        -- Wait 0.1 seconds before next call
         task.wait(0.1)
     end
     
+    print("✅ All gingerbread IDs called!")
+    
     -- Wait 10 minutes (600 seconds) for gingerbreads to spawn
+    print("⏰ Waiting 10 minutes for gingerbreads to spawn...")
+    
+    -- Countdown timer - only show minutes
     local waitTime = 600  -- 10 minutes in seconds
     for i = waitTime, 1, -1 do
         if i % 60 == 0 then
-            Rayfield:Notify({
-                Title = "Gingerbread Farm",
-                Content = math.floor(i/60) .. " minutes remaining until collection",
-                Duration = 3,
-                Image = 4483362458
-            })
+            local minutesLeft = math.floor(i/60)
+            local progressBar = "[" .. string.rep("█", 10 - minutesLeft) .. string.rep("░", minutesLeft) .. "]"
+            print(progressBar .. " " .. minutesLeft .. " minute(s) remaining...")
+            
+            -- Update window title with current count
+            updateWindowTitle()
         end
         task.wait(1)
     end
     
     -- Now collect
-    collectGingerbreads()
+    print("📥 Collecting...")
+    local newTotal = collectGingerbreads()
     
-    -- Force update the window title after collection
-    updateWindowTitle()
+    -- Show cycle summary
+    local endTime = os.time()
+    local cycleDuration = endTime - startTime
+    local minutes = math.floor(cycleDuration / 60)
+    local seconds = cycleDuration % 60
+    
+    print(string.rep("=", 40))
+    print("✅ Cycle complete!")
+    print("⏱️  Cycle duration: " .. minutes .. "m " .. seconds .. "s")
+    print("💰 New total: " .. newTotal .. " gingerbreads")
+    print(string.rep("=", 40) .. "\n")
+    
+    return newTotal
 end
 
 -- Get initial gingerbread count for window title
@@ -279,14 +329,6 @@ local function updateWindowTitle()
     Rayfield:SetWindowName("🍪 Gingerbread: " .. currentGingerbread)
 end
 
--- Auto-update gingerbread count every 5 seconds (reduced from 1 second to reduce resource usage)
-task.spawn(function()
-    while true do
-        updateWindowTitle()
-        task.wait(5)
-    end
-end)
-
 -- Create UI elements
 local MainSection = MainTab:CreateSection("Auto Farm")
 
@@ -298,13 +340,33 @@ local Toggle = MainTab:CreateToggle({
         if Value then
             isRunning = true
             task.spawn(function()
+                print("\n🎮 Gingerbread Collector Script Started!")
+                print("📊 Total unique gingerbread IDs: " .. #gingerbreadIds)
+                
                 -- Run cycles continuously
+                local cycleCount = 0
                 while isRunning do
-                    runCycle()
+                    cycleCount = cycleCount + 1
+                    print("\n🔄 Starting cycle #" .. cycleCount)
                     
-                    -- Wait a short moment before starting next cycle
-                    task.wait(5)
+                    local success, errorMsg = pcall(runCycle)
+                    
+                    if not success then
+                        print("❌ Error in cycle: " .. errorMsg)
+                    end
+                    
+                    if not isRunning then break end
+                    
+                    -- Wait before next cycle with countdown
+                    local waitBetween = 5
+                    print("⏱️  Waiting " .. waitBetween .. " seconds before next cycle...")
+                    for i = waitBetween, 1, -1 do
+                        if not isRunning then break end
+                        task.wait(1)
+                    end
                 end
+                
+                print("\n⏹️  Farming stopped by user")
             end)
         else
             isRunning = false
@@ -312,19 +374,24 @@ local Toggle = MainTab:CreateToggle({
     end,
 })
 
--- Add a manual refresh button
-local RefreshButton = MainTab:CreateButton({
+-- Create a refresh button
+local Button = MainTab:CreateButton({
     Name = "🔄 Refresh Gingerbread Count",
     Callback = function()
+        local current = getCurrentGingerbread()
         updateWindowTitle()
-        Rayfield:Notify({
-            Title = "Gingerbread Farm",
-            Content = "Gingerbread count updated!",
-            Duration = 3,
-            Image = 4483362458
-        })
+        print("📊 Current gingerbread count: " .. current)
     end,
 })
 
+-- Info section
+local InfoSection = MainTab:CreateSection("Information")
+
+local Label = MainTab:CreateLabel("💰 Each cycle: " .. #gingerbreadIds .. " gingerbreads")
+local Label2 = MainTab:CreateLabel("⏰ Each cycle: ~10 minutes 5 seconds")
+local Label3 = MainTab:CreateLabel("⚠️  Must be in ice skating area!")
+
 -- Initialize
-updateWindowTitle() -- Update title immediately
+print("🎮 Rayfield UI loaded successfully!")
+print("💰 Current gingerbread: " .. initialGingerbread)
+updateWindowTitle()
