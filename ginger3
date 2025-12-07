@@ -219,92 +219,64 @@ end
 
 -- Function to collect rewards
 local function collectGingerbreads()
+    print("Collecting gingerbreads...")
     collectEvent:FireServer()
+    print("Collection complete!")
 end
 
 -- Main function to run the cycle
 local function runCycle()
+    print("=== Starting new cycle ===")
+    print("Calling " .. #gingerbreadIds .. " gingerbread IDs...")
+    
     -- Call all gingerbread IDs with 0.1 second delay
     for i, gingerbreadId in ipairs(gingerbreadIds) do
         callGingerbreadId(gingerbreadId)
+        print("[" .. i .. "/" .. #gingerbreadIds .. "] Called ID: " .. string.sub(gingerbreadId, 1, 8) .. "...")
+        
+        -- Wait 0.1 seconds before next call
         task.wait(0.1)
     end
     
+    print("All gingerbread IDs called!")
+    
     -- Wait 10 minutes (600 seconds) for gingerbreads to spawn
-    local waitTime = 600
+    print("Waiting 10 minutes for gingerbreads to spawn...")
+    
+    -- Countdown timer
+    local waitTime = 600  -- 10 minutes in seconds
     for i = waitTime, 1, -1 do
+        if i % 60 == 0 then
+            print(math.floor(i/60) .. " minutes remaining...")
+        end
         task.wait(1)
     end
     
     -- Now collect
     collectGingerbreads()
+    
+    print("=== Cycle complete! ===")
 end
 
 -- Get initial gingerbread count for window title
 local initialGingerbread = getCurrentGingerbread()
 
--- Create compact window
+-- Create the window with gingerbread count in title
 local Window = Rayfield:CreateWindow({
    Name = "🍪 Gingerbread: " .. initialGingerbread,
-   LoadingTitle = "Gingerbread Farm",
-   LoadingSubtitle = "Compact Mode",
-   ConfigurationSaving = { Enabled = false },
+   LoadingTitle = "Winter 2025 Gingerbread Farm",
+   LoadingSubtitle = "Auto Farming Script",
+   ConfigurationSaving = {
+      Enabled = false,
+   },
    KeySystem = false,
-   Theme = {
-       Accent = Color3.fromRGB(255, 102, 102)
-   }
 })
 
--- Create main tab with compact design
+-- Create main tab
 local MainTab = Window:CreateTab("Main", 4483362458)
 
--- Variables
+-- Variables for controls
 local isRunning = false
-local statusText = "Ready"
-local cycleCount = 0
-
--- Create a single compact section
-local MainSection = MainTab:CreateSection("Gingerbread Farm")
-
--- Status label
-local StatusLabel = MainTab:CreateLabel({
-    Name = "Status: " .. statusText
-})
-
--- Cycle count label
-local CycleLabel = MainTab:CreateLabel({
-    Name = "Cycles: " .. cycleCount
-})
-
--- Toggle button
-local Toggle = MainTab:CreateToggle({
-    Name = "🍪 Gingerbread Farm",
-    CurrentValue = false,
-    Flag = "FarmToggle",
-    Callback = function(Value)
-        if Value then
-            isRunning = true
-            statusText = "Farming..."
-            StatusLabel:Set("Status: " .. statusText)
-            
-            task.spawn(function()
-                while isRunning do
-                    cycleCount = cycleCount + 1
-                    CycleLabel:Set("Cycles: " .. cycleCount)
-                    
-                    runCycle()
-                    
-                    if not isRunning then break end
-                    task.wait(5) -- Wait 5 seconds between cycles
-                end
-            end)
-        else
-            isRunning = false
-            statusText = "Stopped"
-            StatusLabel:Set("Status: " .. statusText)
-        end
-    end,
-})
 
 -- Function to update window title with current gingerbread count
 local function updateWindowTitle()
@@ -312,13 +284,47 @@ local function updateWindowTitle()
     Rayfield:SetWindowName("🍪 Gingerbread: " .. currentGingerbread)
 end
 
--- Auto-update gingerbread count every 5 seconds (less frequent)
+-- Auto-update gingerbread count every second
 task.spawn(function()
     while true do
         updateWindowTitle()
-        task.wait(5) -- Update every 5 seconds instead of 1
+        task.wait(1)
     end
 end)
 
+-- Create UI elements
+local MainSection = MainTab:CreateSection("Auto Farm")
+
+local Toggle = MainTab:CreateToggle({
+    Name = "🍪 Gingerbread Farm",
+    CurrentValue = false,
+    Flag = "FarmToggle",
+    Callback = function(Value)
+        if Value then
+            isRunning = true
+            task.spawn(function()
+                print("Gingerbread Collector Script Started!")
+                print("Total unique gingerbread IDs: " .. #gingerbreadIds)
+                
+                -- Run cycles continuously
+                while isRunning do
+                    runCycle()
+                    
+                    -- Wait a short moment before starting next cycle
+                    print("Waiting 5 seconds before next cycle...")
+                    for i = 5, 1, -1 do
+                        if not isRunning then break end
+                        task.wait(1)
+                    end
+                end
+            end)
+        else
+            isRunning = false
+            print("Farming stopped by user")
+        end
+    end,
+})
+
 -- Initialize
-updateWindowTitle()
+print("Rayfield UI loaded successfully!")
+updateWindowTitle() -- Update title immediately
