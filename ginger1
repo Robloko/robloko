@@ -224,7 +224,7 @@ end
 
 -- Create the window
 local Window = Rayfield:CreateWindow({
-   Name = "Gingerbread Collector",
+   Name = "Gingerbread Farm",
    LoadingTitle = "Winter 2025 Gingerbread Farm",
    LoadingSubtitle = "Auto Farming Script",
    ConfigurationSaving = {
@@ -233,17 +233,12 @@ local Window = Rayfield:CreateWindow({
    KeySystem = false,
 })
 
--- Create main tab
-local MainTab = Window:CreateTab("Main", 4483362458)
-
 -- Variables for controls
 local isRunning = false
 
--- Create UI elements
-local MainSection = MainTab:CreateSection("Auto Farm")
-
-local Toggle = MainTab:CreateToggle({
-    Name = "Start/Stop Auto Farm",
+-- Create toggle with emoji
+local Toggle = Window:CreateToggle({
+    Name = "🍪 Gingerbread Farm",
     CurrentValue = false,
     Flag = "FarmToggle",
     Callback = function(Value)
@@ -272,5 +267,90 @@ local Toggle = MainTab:CreateToggle({
     end,
 })
 
+-- Create gingerbread counter GUI
+local Services = {
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    Players = game:GetService("Players")
+}
+local player = Services.Players.LocalPlayer
+
+-- Create ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "GingerbreadGUI"
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- Create TextButton (🍪 button)
+local button = Instance.new("TextButton")
+button.Text = "🍪"
+button.Size = UDim2.new(0, 50, 0, 50)
+button.Position = UDim2.new(0.5, -25, 0.9, -25)
+button.BackgroundColor3 = Color3.fromRGB(255, 102, 102)
+button.TextScaled = true
+button.Parent = ScreenGui
+
+-- Create TextLabel (to show gingerbread count)
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(0, 200, 0, 50)
+label.Position = UDim2.new(0.5, -100, 0.8, -25)
+label.BackgroundTransparency = 0.5
+label.Text = "Gingerbread: 0"
+label.TextScaled = true
+label.Parent = ScreenGui
+
+-- Function to get current gingerbread_2025 value
+local function getCurrentGingerbread()
+    local success, clientData = pcall(require, Services.ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        return 0
+    end
+
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData[player.Name] then
+        return 0
+    end
+
+    local playerData = allData[player.Name]
+    local gingerbread = 0
+
+    -- Option 1: Direct property
+    if playerData.gingerbread_2025 then
+        gingerbread = playerData.gingerbread_2025
+    -- Option 2: In inventory or special currency section
+    elseif playerData.inventory and playerData.inventory.currency then
+        gingerbread = playerData.inventory.currency.gingerbread_2025 or 0
+    -- Option 3: Scan all top-level properties
+    else
+        for key, value in pairs(playerData) do
+            if type(key) == "string" and string.find(key:lower(), "gingerbread") then
+                if key == "gingerbread_2025" then
+                    gingerbread = value
+                end
+            end
+        end
+    end
+
+    return gingerbread
+end
+
+-- Function to update the label
+local function updateGingerbreadDisplay()
+    local gingerbread = getCurrentGingerbread()
+    label.Text = string.format("Gingerbread: %d", gingerbread)
+end
+
+-- Button click event
+button.MouseButton1Click:Connect(function()
+    updateGingerbreadDisplay()
+end)
+
+-- Auto-update every second
+coroutine.wrap(function()
+    while true do
+        updateGingerbreadDisplay()
+        task.wait(1)
+    end
+end)()
+
 -- Initialize
 print("Rayfield UI loaded successfully!")
+print("Gingerbread counter GUI created!")
