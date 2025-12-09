@@ -573,25 +573,6 @@ local function updatePetInventory()
         end
     end
     
-    -- Update dropdown if it exists
-    if petsDropdown then
-        local petTypes = {}
-        for petType, _ in pairs(petInventory) do
-            table.insert(petTypes, petType)
-        end
-        table.sort(petTypes)
-        
-        local options = {}
-        for _, petType in ipairs(petTypes) do
-            table.insert(options, {
-                Name = petType .. " (" .. #petInventory[petType] .. ")",
-                Value = petType
-            })
-        end
-        
-        petsDropdown:SetOptions(options)
-    end
-    
     return petInventory
 end
 
@@ -611,10 +592,50 @@ local function getAvailablePlayers()
     return players
 end
 
+-- Function to get pet type options for dropdown
+local function getPetTypeOptions()
+    local options = {}
+    local inventory = updatePetInventory()
+    
+    if inventory and next(inventory) then
+        for petType, pets in pairs(inventory) do
+            if #pets > 0 then
+                table.insert(options, {
+                    Name = petType .. " (" .. #pets .. ")",
+                    Value = petType
+                })
+            end
+        end
+    end
+    
+    -- Sort alphabetically
+    table.sort(options, function(a, b)
+        return a.Name < b.Name
+    end)
+    
+    -- If no pets found, add a placeholder
+    if #options == 0 then
+        table.insert(options, {
+            Name = "No pets found in inventory",
+            Value = ""
+        })
+    end
+    
+    return options
+end
+
 -- Function to give N pets to a player
-local function giveNPetsToPlayer(targetPlayer, petType, numPets)
+local function giveNPetsToPlayer(targetPlayerName, petType, numPets)
+    local Players = game:GetService("Players")
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    
+    if not targetPlayer then
+        print("Player not found: " .. targetPlayerName)
+        return false
+    end
+    
     if not petInventory[petType] or #petInventory[petType] < numPets then
-        print("Not enough " .. petType .. " pets")
+        print("Not enough " .. petType .. " pets. Have: " .. (#petInventory[petType] or 0) .. ", Need: " .. numPets)
         return false
     end
     
@@ -625,23 +646,21 @@ local function giveNPetsToPlayer(targetPlayer, petType, numPets)
         end
     end
     
-    print("Giving " .. numPets .. " " .. petType .. " to " .. targetPlayer)
+    print("Giving " .. numPets .. " " .. petType .. " to " .. targetPlayerName)
     
     for i, uniqueId in ipairs(petUniqueIds) do
-        local args = {
-            game:GetService("Players"):FindFirstChild(targetPlayer),
-            uniqueId
-        }
+        local args = {targetPlayer, uniqueId}
         
         local success, result = pcall(function()
             return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
         
         if success then
-            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer .. ": " .. uniqueId)
-            updatePetInventory()
+            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayerName .. ": " .. uniqueId)
+            -- Update the pet type dropdown after giving
+            updatePetTypeDropdown()
         else
-            print("Failed to give pet " .. i .. " to " .. targetPlayer .. ": " .. tostring(result))
+            print("Failed to give pet " .. i .. " to " .. targetPlayerName .. ": " .. tostring(result))
             -- Add back if failed
             for j = i, #petUniqueIds do
                 table.insert(petInventory[petType], petUniqueIds[j])
@@ -655,6 +674,34 @@ local function giveNPetsToPlayer(targetPlayer, petType, numPets)
     end
     
     return true
+end
+
+-- Function to update pet type dropdown
+local function updatePetTypeDropdown()
+    local options = getPetTypeOptions()
+    if petsDropdown then
+        petsDropdown:SetOptions(options)
+        if #options > 0 and options[1].Value ~= "" then
+            petsDropdown:Set({Name = options[1].Name, Value = options[1].Value})
+            selectedPetType = options[1].Value
+        end
+    end
+end
+
+-- Function to update player dropdown
+local function updatePlayerDropdown()
+    local players = getAvailablePlayers()
+    if playerDropdown then
+        local options = {}
+        for _, playerName in ipairs(players) do
+            table.insert(options, {Name = playerName, Value = playerName})
+        end
+        playerDropdown:SetOptions(options)
+        if #options > 0 then
+            playerDropdown:Set(options[1])
+            selectedPlayer = options[1].Value
+        end
+    end
 end
 
 -- Player Dropdown
@@ -672,8 +719,8 @@ local playerDropdown = TradeTab:CreateDropdown({
 -- Pet Type Dropdown
 local petsDropdown = TradeTab:CreateDropdown({
     Name = "🐾 Select Pet Type",
-    Options = {"Loading..."},
-    CurrentOption = "Choose Pet Type",
+    Options = getPetTypeOptions(),
+    CurrentOption = "Select Pet Type",
     Flag = "PetTypeDropdown",
     Callback = function(Value)
         selectedPetType = Value
@@ -681,11 +728,15 @@ local petsDropdown = TradeTab:CreateDropdown({
     end,
 })
 
+-- Initialize dropdowns
+updatePetTypeDropdown()
+updatePlayerDropdown()
+
 -- Refresh buttons
 TradeTab:CreateButton({
     Name = "🔄 Refresh Players List",
     Callback = function()
-        playerDropdown:SetOptions(getAvailablePlayers())
+        updatePlayerDropdown()
         Rayfield:Notify({
             Title = "Players Refreshed",
             Content = "Updated player list",
@@ -698,7 +749,7 @@ TradeTab:CreateButton({
 TradeTab:CreateButton({
     Name = "🔄 Refresh Pet Inventory",
     Callback = function()
-        updatePetInventory()
+        updatePetTypeDropdown()
         Rayfield:Notify({
             Title = "Inventory Refreshed",
             Content = "Updated pet inventory",
@@ -712,10 +763,20 @@ TradeTab:CreateButton({
 TradeTab:CreateButton({
     Name = "🎁 Give 1 Pet",
     Callback = function()
-        if not selectedPlayer or not selectedPetType then
+        if not selectedPlayer or selectedPlayer == "Choose Player" then
             Rayfield:Notify({
                 Title = "Error",
-                Content = "Please select both a player and pet type!",
+                Content = "Please select a player!",
+                Duration = 3,
+                Image = 6026568198
+            })
+            return
+        end
+        
+        if not selectedPetType or selectedPetType == "" then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Please select a pet type with available pets!",
                 Duration = 3,
                 Image = 6026568198
             })
@@ -732,7 +793,7 @@ TradeTab:CreateButton({
         else
             Rayfield:Notify({
                 Title = "Failed",
-                Content = "Failed to give pet!",
+                Content = "Failed to give pet! Check console for details.",
                 Duration = 3,
                 Image = 6026568198
             })
@@ -748,10 +809,21 @@ local giveAllToggle = TradeTab:CreateToggle({
     Callback = function(Value)
         giveAllRunning = Value
         if Value then
-            if not selectedPlayer or not selectedPetType then
+            if not selectedPlayer or selectedPlayer == "Choose Player" then
                 Rayfield:Notify({
                     Title = "Error",
-                    Content = "Select player and pet type first!",
+                    Content = "Select a player first!",
+                    Duration = 3,
+                    Image = 6026568198
+                })
+                giveAllToggle:Set(false)
+                return
+            end
+            
+            if not selectedPetType or selectedPetType == "" then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Select a pet type first!",
                     Duration = 3,
                     Image = 6026568198
                 })
@@ -761,8 +833,18 @@ local giveAllToggle = TradeTab:CreateToggle({
             
             task.spawn(function()
                 while giveAllRunning do
-                    if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
-                        giveNPetsToPlayer(selectedPlayer, selectedPetType, #petInventory[selectedPetType])
+                    local inventory = updatePetInventory()
+                    if inventory[selectedPetType] and #inventory[selectedPetType] > 0 then
+                        giveNPetsToPlayer(selectedPlayer, selectedPetType, #inventory[selectedPetType])
+                    else
+                        Rayfield:Notify({
+                            Title = "Give All Stopped",
+                            Content = "No more " .. selectedPetType .. " pets left!",
+                            Duration = 3,
+                            Image = 6026568198
+                        })
+                        giveAllToggle:Set(false)
+                        break
                     end
                     task.wait(10)
                 end
@@ -778,10 +860,10 @@ local give4Toggle = TradeTab:CreateToggle({
     Callback = function(Value)
         give4Running = Value
         if Value then
-            if not selectedPetType then
+            if not selectedPetType or selectedPetType == "" then
                 Rayfield:Notify({
                     Title = "Error",
-                    Content = "Select pet type first!",
+                    Content = "Select a pet type first!",
                     Duration = 3,
                     Image = 6026568198
                 })
@@ -793,12 +875,26 @@ local give4Toggle = TradeTab:CreateToggle({
                 while give4Running do
                     local players = getAvailablePlayers()
                     for _, playerName in ipairs(players) do
-                        if petInventory[selectedPetType] and #petInventory[selectedPetType] >= 4 then
+                        if not give4Running then break end
+                        
+                        local inventory = updatePetInventory()
+                        if inventory[selectedPetType] and #inventory[selectedPetType] >= 4 then
                             giveNPetsToPlayer(playerName, selectedPetType, 4)
+                        else
+                            Rayfield:Notify({
+                                Title = "Give 4 Stopped",
+                                Content = "Not enough " .. selectedPetType .. " pets!",
+                                Duration = 3,
+                                Image = 6026568198
+                            })
+                            give4Toggle:Set(false)
+                            break
                         end
                         task.wait(2)
                     end
-                    task.wait(60)
+                    if give4Running then
+                        task.wait(60)
+                    end
                 end
             end)
         end
@@ -812,7 +908,7 @@ local giveawayToggle = TradeTab:CreateToggle({
     Callback = function(Value)
         giveawayRunning = Value
         if Value then
-            if not selectedPlayer then
+            if not selectedPlayer or selectedPlayer == "Choose Player" then
                 Rayfield:Notify({
                     Title = "Error",
                     Content = "Select a player first!",
@@ -826,8 +922,12 @@ local giveawayToggle = TradeTab:CreateToggle({
             task.spawn(function()
                 while giveawayRunning do
                     local gave = false
+                    local inventory = updatePetInventory()
+                    
                     for _, petType in ipairs(targetPets) do
-                        if petInventory[petType] and #petInventory[petType] > 0 then
+                        if not giveawayRunning then break end
+                        
+                        if inventory[petType] and #inventory[petType] > 0 then
                             if giveNPetsToPlayer(selectedPlayer, petType, 1) then
                                 gave = true
                                 break
@@ -836,23 +936,31 @@ local giveawayToggle = TradeTab:CreateToggle({
                     end
                     
                     if not gave then
-                        task.wait(5)
+                        Rayfield:Notify({
+                            Title = "No Target Pets",
+                            Content = "No giveaway pets found in inventory!",
+                            Duration = 3,
+                            Image = 6026568198
+                        })
+                        giveawayToggle:Set(false)
+                        break
                     end
-                    task.wait(9)
+                    
+                    if giveawayRunning then
+                        task.wait(9)
+                    end
                 end
             end)
         end
     end,
 })
 
--- Initial inventory update
-updatePetInventory()
-
--- Auto-update gingerbread label every 10 seconds
+-- Auto-refresh players list every 30 seconds
 task.spawn(function()
     while true do
-        updateGingerbreadLabel()
-        task.wait(10)
+        task.wait(30)
+        updatePlayerDropdown()
+        updatePetTypeDropdown()
     end
 end)
 
