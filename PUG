@@ -1,33 +1,460 @@
--- Replace "YOUR_BAIT_ID_HERE" with the actual ID from step 1
-local baitId = "2_8960019fe5ac437982d56ab8c54698e3"
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
--- Equip
-local args = {baitId, {use_sound_delay = false, equip_as_last = false}}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args))
-wait(0.5)
+-- Player
+local player = Players.LocalPlayer
 
--- Focus pet
-local args = {workspace:WaitForChild("Pets"):WaitForChild("Dog")}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args))
-wait(1)
+-- Debug settings
+local DEBUG_MODE = true
 
--- Start use
-local args = {baitId, "START"}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
-wait(2)
+-- Enhanced debug function with timestamp
+local function debugPrint(message)
+    if not DEBUG_MODE then return end
+    local timestamp = os.date("%H:%M:%S")
+    print(string.format("[%s] %s", timestamp, message))
+end
 
--- End use
-local args = {baitId, "END"}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
-wait(0.5)
+-- Function to get valid character
+local function getValidCharacter()
+    local character = player.Character or player.CharacterAdded:Wait()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        return character
+    end
+    debugPrint("❌ No valid character found!")
+    return nil
+end
 
--- Unfocus
-local args = {workspace:WaitForChild("Pets"):WaitForChild("Dog")}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/UnfocusPet"):FireServer(unpack(args))
-wait(0.5)
+-- Function to scan food inventory with better filtering
+local function scanFoodInventory()
+    debugPrint("=== SCANNING FOOD INVENTORY ===")
+    
+    local foods = {}
+    local foundBaitId = nil
+    local baitName = "winter_2025_yarn_beanie_bait"
+    local totalItems = 0
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
 
--- Progress
-local args = {false}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("WinterEventAPI/ProgressTaming"):InvokeServer(unpack(args))
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id then
+                    local foodName = tostring(foodData.id)
+                    local foodAmount = foodData.amount or 1
+                    totalItems = totalItems + foodAmount
+                    
+                    table.insert(foods, {
+                        id = foodId,
+                        name = foodName,
+                        amount = foodAmount
+                    })
+                    
+                    -- Check for winter bait (case-insensitive)
+                    if string.lower(foodName) == string.lower(baitName) then
+                        foundBaitId = foodId
+                        debugPrint("✅ [FOUND] Winter bait: " .. foodId .. " (Amount: " .. foodAmount .. ")")
+                    end
+                end
+            end
+        end
+    end)
 
-print("Taming complete!")
+    if not success then
+        debugPrint("❌ [ERROR] Reading inventory: " .. tostring(errorMsg))
+        return nil, 0
+    end
+
+    -- Print all foods in categories
+    debugPrint("📦 Food Inventory Summary:")
+    
+    -- Sort by name
+    table.sort(foods, function(a, b)
+        return a.name < b.name
+    end)
+    
+    local baitCount = 0
+    for i, food in ipairs(foods) do
+        local isBait = string.lower(food.name) == string.lower(baitName)
+        local prefix = isBait and "🎯 " or "   "
+        
+        debugPrint(string.format("%s%d. %s - Amount: %d (ID: %s)", 
+            prefix, i, food.name, food.amount, food.id))
+        
+        if isBait then
+            baitCount = baitCount + food.amount
+        end
+    end
+    
+    debugPrint("===================================")
+    debugPrint("📊 Total unique items: " .. #foods)
+    debugPrint("📊 Total food count: " .. totalItems)
+    debugPrint("🎯 Winter bait count: " .. baitCount)
+    debugPrint("===================================")
+    
+    return foundBaitId, baitCount
+end
+
+-- Function to check if dog exists
+local function findDogPet()
+    local petsFolder = Workspace:FindFirstChild("Pets")
+    if not petsFolder then
+        debugPrint("❌ No Pets folder found!")
+        return nil
+    end
+    
+    local dog = petsFolder:FindFirstChild("Dog")
+    if not dog then
+        debugPrint("❌ No Dog pet found!")
+        return nil
+    end
+    
+    return dog
+end
+
+-- Function to equip bait with error handling
+local function equipBait(baitId)
+    debugPrint("🛠️ Equipping bait...")
+    
+    local success, errorMsg = pcall(function()
+        local args = {
+            baitId,
+            {
+                use_sound_delay = false,
+                equip_as_last = false
+            }
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args))
+    end)
+    
+    if success then
+        debugPrint("✅ Bait equipped successfully")
+        return true
+    else
+        debugPrint("❌ Error equipping bait: " .. tostring(errorMsg))
+        return false
+    end
+end
+
+-- Function to focus on pet
+local function focusPet(pet)
+    debugPrint("🎯 Focusing on pet...")
+    
+    local success, errorMsg = pcall(function()
+        local args = { pet }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args))
+    end)
+    
+    if success then
+        debugPrint("✅ Pet focused")
+        return true
+    else
+        debugPrint("❌ Error focusing pet: " .. tostring(errorMsg))
+        return false
+    end
+end
+
+-- Function to unfocus pet
+local function unfocusPet(pet)
+    debugPrint("🔓 Unfocusing pet...")
+    
+    local success, errorMsg = pcall(function()
+        local args = { pet }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/UnfocusPet"):FireServer(unpack(args))
+    end)
+    
+    if success then
+        debugPrint("✅ Pet unfocused")
+        return true
+    else
+        debugPrint("❌ Error unfocusing pet: " .. tostring(errorMsg))
+        return false
+    end
+end
+
+-- Enhanced main function to auto-tame with retry logic
+local function autoTameWithBait()
+    debugPrint("🚀 STARTING AUTO-TAMER...")
+    
+    -- Step 1: Scan for bait
+    local baitId, baitCount = scanFoodInventory()
+    
+    if not baitId then
+        debugPrint("❌ ERROR: Winter bait not found in inventory!")
+        return false
+    end
+    
+    if baitCount <= 0 then
+        debugPrint("❌ ERROR: Winter bait count is 0!")
+        return false
+    end
+    
+    debugPrint("✅ Found bait ID: " .. baitId)
+    debugPrint("✅ Bait count available: " .. baitCount)
+    
+    -- Step 2: Find the dog
+    local dog = findDogPet()
+    if not dog then
+        debugPrint("❌ Cannot proceed - no dog found!")
+        return false
+    end
+    
+    -- Step 3: Equip the bait
+    if not equipBait(baitId) then
+        return false
+    end
+    task.wait(0.5)
+    
+    -- Step 4: Focus on dog
+    if not focusPet(dog) then
+        return false
+    end
+    task.wait(1)
+    
+    -- Step 5: Start using tool
+    debugPrint("🔧 Starting to use bait...")
+    local success1, error1 = pcall(function()
+        local args = { baitId, "START" }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success1 then
+        debugPrint("❌ Error starting bait: " .. tostring(error1))
+        unfocusPet(dog)
+        return false
+    end
+    
+    task.wait(2)
+    
+    -- Step 6: End using tool
+    debugPrint("🔧 Ending bait use...")
+    local success2, error2 = pcall(function()
+        local args = { baitId, "END" }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success2 then
+        debugPrint("❌ Error ending bait: " .. tostring(error2))
+        unfocusPet(dog)
+        return false
+    end
+    
+    task.wait(0.5)
+    
+    -- Step 7: Unfocus pet
+    if not unfocusPet(dog) then
+        debugPrint("⚠️ Failed to unfocus pet, but continuing...")
+    end
+    
+    task.wait(0.5)
+    
+    -- Step 8: Progress taming
+    debugPrint("📈 Progressing taming...")
+    local success3, error3 = pcall(function()
+        local args = { false }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("WinterEventAPI/ProgressTaming"):InvokeServer(unpack(args))
+    end)
+    
+    if not success3 then
+        debugPrint("❌ Error progressing taming: " .. tostring(error3))
+        return false
+    end
+    
+    debugPrint("🎉 Taming completed successfully!")
+    
+    -- Step 9: Rescan to show updated counts
+    task.wait(1)
+    debugPrint("🔄 Rescanning inventory for updates...")
+    scanFoodInventory()
+    
+    return true
+end
+
+-- Auto-tame loop function
+local function autoTameLoop()
+    debugPrint("⏰ Starting auto-tame loop...")
+    
+    local attemptCount = 0
+    local maxAttempts = 10
+    
+    while attemptCount < maxAttempts do
+        attemptCount = attemptCount + 1
+        debugPrint("🔁 Attempt " .. attemptCount .. "/" .. maxAttempts)
+        
+        local success = autoTameWithBait()
+        
+        if success then
+            debugPrint("✅ Attempt " .. attemptCount .. " successful!")
+        else
+            debugPrint("❌ Attempt " .. attemptCount .. " failed")
+        end
+        
+        -- Wait before next attempt
+        if attemptCount < maxAttempts then
+            local waitTime = 5
+            debugPrint("⏳ Waiting " .. waitTime .. " seconds before next attempt...")
+            task.wait(waitTime)
+        end
+    end
+    
+    debugPrint("🏁 Auto-tame loop completed after " .. attemptCount .. " attempts")
+end
+
+-- Compact UI Creation like bb3.txt
+local function createCompactUI()
+    debugPrint("🖥️ Creating UI...")
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FoodTamerUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- Main Frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 180, 0, 160)
+    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.BackgroundTransparency = 0.1
+    frame.Parent = screenGui
+    
+    -- Add corner for modern look
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = frame
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 25)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "Winter Tamer"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 14
+    title.Parent = frame
+    
+    -- Status label
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, 0, 0, 20)
+    statusLabel.Position = UDim2.new(0, 0, 0, 25)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+    statusLabel.Text = "Bait: 0"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 12
+    statusLabel.Parent = frame
+    
+    -- Scan button
+    local scanBtn = Instance.new("TextButton")
+    scanBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    scanBtn.Position = UDim2.new(0.05, 0, 0.35, 0)
+    scanBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    scanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    scanBtn.Text = "SCAN INVENTORY"
+    scanBtn.Font = Enum.Font.SourceSansBold
+    scanBtn.TextSize = 12
+    scanBtn.Parent = frame
+    
+    local scanCorner = Instance.new("UICorner")
+    scanCorner.CornerRadius = UDim.new(0, 4)
+    scanCorner.Parent = scanBtn
+    
+    -- Tame button
+    local tameBtn = Instance.new("TextButton")
+    tameBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    tameBtn.Position = UDim2.new(0.05, 0, 0.55, 0)
+    tameBtn.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
+    tameBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tameBtn.Text = "AUTO-TAME"
+    tameBtn.Font = Enum.Font.SourceSansBold
+    tameBtn.TextSize = 12
+    tameBtn.Parent = frame
+    
+    local tameCorner = Instance.new("UICorner")
+    tameCorner.CornerRadius = UDim.new(0, 4)
+    tameCorner.Parent = tameBtn
+    
+    -- Auto-loop button
+    local loopBtn = Instance.new("TextButton")
+    loopBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    loopBtn.Position = UDim2.new(0.05, 0, 0.75, 0)
+    loopBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+    loopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loopBtn.Text = "AUTO-LOOP [OFF]"
+    loopBtn.Font = Enum.Font.SourceSansBold
+    loopBtn.TextSize = 12
+    loopBtn.Parent = frame
+    
+    local loopCorner = Instance.new("UICorner")
+    loopCorner.CornerRadius = UDim.new(0, 4)
+    loopCorner.Parent = loopBtn
+    
+    -- Update status function
+    local function updateStatus()
+        local _, baitCount = scanFoodInventory()
+        statusLabel.Text = "Winter Bait: " .. baitCount
+    end
+    
+    -- Button connections
+    scanBtn.MouseButton1Click:Connect(function()
+        updateStatus()
+    end)
+    
+    tameBtn.MouseButton1Click:Connect(function()
+        autoTameWithBait()
+        task.wait(1)
+        updateStatus()
+    end)
+    
+    local loopRunning = false
+    loopBtn.MouseButton1Click:Connect(function()
+        loopRunning = not loopRunning
+        
+        if loopRunning then
+            loopBtn.Text = "AUTO-LOOP [ON]"
+            loopBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+            coroutine.wrap(autoTameLoop)()
+        else
+            loopBtn.Text = "AUTO-LOOP [OFF]"
+            loopBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+        end
+    end)
+    
+    return {
+        frame = frame,
+        statusLabel = statusLabel,
+        scanBtn = scanBtn,
+        tameBtn = tameBtn,
+        loopBtn = loopBtn,
+        updateStatus = updateStatus
+    }
+end
+
+-- Initialization function
+local function initializeScript()
+    debugPrint("===================================")
+    debugPrint("WINTER FOOD TAMER v2.0 LOADED")
+    debugPrint("===================================")
+    
+    -- Wait for game to load
+    task.wait(2)
+    
+    -- Initial scan
+    debugPrint("🔄 Initial inventory scan...")
+    local _, baitCount = scanFoodInventory()
+    
+    -- Create UI
+    task.wait(1)
+    local ui = createCompactUI()
+    ui.updateStatus()
+    
+    debugPrint("===================================")
+    debugPrint("✅ System Ready!")
+    debugPrint("🎯 Winter bait count: " .. baitCount)
+    debugPrint("🖱️ UI Created - Check top-left corner")
+    debugPrint("===================================")
+end
+
+-- Start the script
+coroutine.wrap(initializeScript)()
