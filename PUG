@@ -1,0 +1,354 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- Player
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Create GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "🐶"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 350, 0, 400)
+mainFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 50)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+title.BorderSizePixel = 0
+title.Text = "Food Scanner & Auto-Tamer"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 18
+title.Font = Enum.Font.GothamBold
+title.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = title
+
+local foodList = Instance.new("ScrollingFrame")
+foodList.Size = UDim2.new(1, -20, 0, 250)
+foodList.Position = UDim2.new(0, 10, 0, 60)
+foodList.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+foodList.BorderSizePixel = 0
+foodList.ScrollBarThickness = 6
+foodList.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 5)
+listLayout.Parent = foodList
+
+local scanButton = Instance.new("TextButton")
+scanButton.Size = UDim2.new(1, -20, 0, 40)
+scanButton.Position = UDim2.new(0, 10, 0, 320)
+scanButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+scanButton.BorderSizePixel = 0
+scanButton.Text = "SCAN FOOD INVENTORY"
+scanButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+scanButton.TextSize = 16
+scanButton.Font = Enum.Font.GothamBold
+scanButton.Parent = mainFrame
+
+local scanCorner = Instance.new("UICorner")
+scanCorner.CornerRadius = UDim.new(0, 6)
+scanCorner.Parent = scanButton
+
+local tamingButton = Instance.new("TextButton")
+tamingButton.Size = UDim2.new(1, -20, 0, 40)
+tamingButton.Position = UDim2.new(0, 10, 0, 370)
+tamingButton.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
+tamingButton.BorderSizePixel = 0
+tamingButton.Text = "AUTO-TAME WITH BAIT"
+tamingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+tamingButton.TextSize = 16
+tamingButton.Font = Enum.Font.GothamBold
+tamingButton.Visible = false
+tamingButton.Parent = mainFrame
+
+local tamingCorner = Instance.new("UICorner")
+tamingCorner.CornerRadius = UDim.new(0, 6)
+tamingCorner.Parent = tamingButton
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -20, 0, 30)
+statusLabel.Position = UDim2.new(0, 10, 0, 420)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Ready to scan..."
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.TextSize = 14
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Parent = mainFrame
+
+-- Variables
+local foundBaitId = nil
+local foodItems = {}
+
+-- Function to clear food list
+local function clearFoodList()
+    for _, child in ipairs(foodList:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+end
+
+-- Function to print all available FOOD in inventory
+local function scanFoodInventory()
+    clearFoodList()
+    foodItems = {}
+    foundBaitId = nil
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        -- Check for food in inventory
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id then
+                    local foodName = foodData.id
+                    local foodAmount = foodData.amount or 1
+                    
+                    table.insert(foodItems, {
+                        id = foodId,
+                        name = foodName,
+                        amount = foodAmount
+                    })
+                    
+                    -- Check if this is the winter bait
+                    if foodName == "winter_2025_yarn_beanie_bait" then
+                        foundBaitId = foodId
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        statusLabel.Text = "Error: " .. tostring(errorMsg)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+
+    if #foodItems == 0 then
+        statusLabel.Text = "No food found in inventory!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
+        return
+    end
+
+    -- Display food items
+    for i, food in ipairs(foodItems) do
+        local foodFrame = Instance.new("Frame")
+        foodFrame.Size = UDim2.new(1, 0, 0, 40)
+        foodFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+        foodFrame.BorderSizePixel = 0
+        foodFrame.Parent = foodList
+        
+        local foodCorner = Instance.new("UICorner")
+        foodCorner.CornerRadius = UDim.new(0, 4)
+        foodCorner.Parent = foodFrame
+        
+        local foodNameLabel = Instance.new("TextLabel")
+        foodNameLabel.Size = UDim2.new(0.7, -10, 1, 0)
+        foodNameLabel.Position = UDim2.new(0, 10, 0, 0)
+        foodNameLabel.BackgroundTransparency = 1
+        foodNameLabel.Text = food.name
+        foodNameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        foodNameLabel.TextSize = 14
+        foodNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        foodNameLabel.Font = Enum.Font.Gotham
+        foodNameLabel.Parent = foodFrame
+        
+        local amountLabel = Instance.new("TextLabel")
+        amountLabel.Size = UDim2.new(0.3, 0, 1, 0)
+        amountLabel.Position = UDim2.new(0.7, 0, 0, 0)
+        amountLabel.BackgroundTransparency = 1
+        amountLabel.Text = "x" .. food.amount
+        amountLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+        amountLabel.TextSize = 14
+        amountLabel.Font = Enum.Font.GothamBold
+        amountLabel.Parent = foodFrame
+    end
+
+    statusLabel.Text = string.format("Found %d food items", #foodItems)
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    
+    -- Show taming button if bait found
+    if foundBaitId then
+        tamingButton.Visible = true
+        tamingButton.Text = "USE WINTER BAIT ON DOG"
+        statusLabel.Text = statusLabel.Text .. " - Bait Found!"
+    else
+        tamingButton.Visible = false
+        statusLabel.Text = statusLabel.Text .. " - No winter bait found"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
+    end
+end
+
+-- Function to perform taming with winter bait
+local function performTaming()
+    if not foundBaitId then
+        statusLabel.Text = "No winter bait found!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    tamingButton.Visible = false
+    statusLabel.Text = "Starting taming process..."
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+    
+    -- Wait a bit for UI update
+    wait(0.5)
+    
+    -- Equip the bait
+    local success1, error1 = pcall(function()
+        local args = {
+            foundBaitId,
+            {
+                use_sound_delay = false,
+                equip_as_last = false
+            }
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args))
+    end)
+    
+    if not success1 then
+        statusLabel.Text = "Error equipping bait: " .. tostring(error1)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    statusLabel.Text = "Bait equipped, focusing pet..."
+    
+    -- Focus on the dog
+    local success2, error2 = pcall(function()
+        local args = {workspace:WaitForChild("Pets"):WaitForChild("Dog")}
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args))
+    end)
+    
+    if not success2 then
+        statusLabel.Text = "Error focusing pet: " .. tostring(error2)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    wait(1)
+    statusLabel.Text = "Starting to use bait..."
+    
+    -- Start using tool
+    local success3, error3 = pcall(function()
+        local args = {foundBaitId, "START"}
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success3 then
+        statusLabel.Text = "Error starting bait: " .. tostring(error3)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    wait(2) -- Wait for taming action
+    
+    -- End using tool
+    local success4, error4 = pcall(function()
+        local args = {foundBaitId, "END"}
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success4 then
+        statusLabel.Text = "Error ending bait: " .. tostring(error4)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    statusLabel.Text = "Unfocusing pet..."
+    
+    -- Unfocus pet
+    local success5, error5 = pcall(function()
+        local args = {workspace:WaitForChild("Pets"):WaitForChild("Dog")}
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/UnfocusPet"):FireServer(unpack(args))
+    end)
+    
+    if not success5 then
+        statusLabel.Text = "Error unfocusing pet: " .. tostring(error5)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    wait(0.5)
+    
+    -- Progress taming
+    local success6, error6 = pcall(function()
+        local args = {false}
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("WinterEventAPI/ProgressTaming"):InvokeServer(unpack(args))
+    end)
+    
+    if not success6 then
+        statusLabel.Text = "Error progressing taming: " .. tostring(error6)
+        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+        return
+    end
+    
+    statusLabel.Text = "Taming completed successfully!"
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    
+    -- Rescan inventory to update counts
+    wait(1)
+    scanFoodInventory()
+end
+
+-- Connect buttons
+scanButton.MouseButton1Click:Connect(scanFoodInventory)
+tamingButton.MouseButton1Click:Connect(performTaming)
+
+-- Make GUI draggable
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function update(input)
+    local delta = input.Position - dragStart
+    mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
+
+-- Auto-scan on startup
+scanFoodInventory()
