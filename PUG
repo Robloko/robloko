@@ -11,6 +11,13 @@ if not player then
     player = Players.LocalPlayer
 end
 
+-- Updated bait name (common internal ID pattern from similar events)
+local baitName = "yarn_beanie"  -- Try "Yarn Beanie" if case-sensitive, or check inventory print
+
+-- Taming settings
+local tamesNeeded = 20  -- Number of tames required
+local delayBetweenTames = 10  -- Seconds between taming attempts
+
 -- Safe debug print
 local function safePrint(...)
     local args = {...}
@@ -18,7 +25,7 @@ local function safePrint(...)
     for i, v in ipairs(args) do
         message = message .. tostring(v) .. " "
     end
-    print("[Food Scanner] " .. message)
+    print("[Winter Tamer] " .. message)
 end
 
 -- Safe require function
@@ -43,7 +50,6 @@ local function safeFindAPI(apiPath)
         if current:FindFirstChild(part) then
             current = current[part]
         else
-            safePrint("API not found:", apiPath)
             return nil
         end
     end
@@ -57,53 +63,90 @@ local function scanFoodInventory()
     
     local foods = {}
     local foundBaitId = nil
-    local baitName = "winter_2025_yarn_beanie_bait"
+    local baitCount = 0
     
-    local clientData = safeRequire(ReplicatedStorage:FindFirstChild("ClientModules"))
-    if not clientData then
-        clientData = safeRequire(ReplicatedStorage:WaitForChild("ClientModules", 5))
+    -- Try different module paths
+    local clientData = nil
+    
+    -- Try multiple possible paths
+    local modulePaths = {
+        "ClientModules.Core.ClientData",
+        "ClientModules.ClientData",
+        "Modules.ClientData",
+        "CoreModules.ClientData"
+    }
+    
+    for _, path in ipairs(modulePaths) do
+        local module = ReplicatedStorage:FindFirstChild(path, true)
+        if module then
+            safePrint("Found module at:", path)
+            clientData = safeRequire(module)
+            if clientData then break end
+        end
     end
     
     if not clientData then
-        safePrint("ERROR: Could not load ClientModules")
-        return nil
+        safePrint("ERROR: Could not load client data module")
+        return nil, 0
     end
     
-    -- Try different possible paths
+    -- Try different data access patterns
     local playerData = nil
     local success, errorMsg = pcall(function()
-        -- Try different data access patterns
-        if clientData.get then
-            playerData = clientData.get(player.Name)
-        elseif clientData.GetData then
-            playerData = clientData.GetData(player.Name)
-        elseif clientData.get_data then
-            playerData = clientData.get_data()[player.Name]
+        -- Try different access methods
+        if type(clientData) == "table" then
+            if clientData.get then
+                playerData = clientData.get(player.Name)
+            elseif clientData.GetData then
+                playerData = clientData.GetData(player.Name)
+            elseif clientData.get_data then
+                playerData = clientData.get_data()[player.Name]
+            elseif clientData.getPlayerData then
+                playerData = clientData.getPlayerData(player)
+            end
         elseif type(clientData) == "function" then
             playerData = clientData()[player.Name]
         end
     end)
     
-    if not success then
-        safePrint("ERROR: Could not get player data -", errorMsg)
-        return nil
+    if not success or not playerData then
+        safePrint("ERROR: Could not get player data -", errorMsg or "Unknown error")
+        
+        -- Alternative: Try to print debug info
+        safePrint("Debug: ClientData type:", type(clientData))
+        if type(clientData) == "table" then
+            for k, v in pairs(clientData) do
+                safePrint("  Method:", k, "Type:", type(v))
+            end
+        end
+        return nil, 0
     end
     
     if playerData and playerData.inventory and playerData.inventory.food then
+        safePrint("Found food inventory with", #playerData.inventory.food, "items")
+        
         for foodId, foodData in pairs(playerData.inventory.food) do
             if foodData and foodData.id then
+                local foodName = tostring(foodData.id)
+                local foodAmount = foodData.amount or 1
+                
                 local foodInfo = {
                     id = foodId,
-                    name = foodData.id,
-                    amount = foodData.amount or 1
+                    name = foodName,
+                    amount = foodAmount
                 }
                 
                 table.insert(foods, foodInfo)
                 
-                -- Check for winter bait
-                if tostring(foodData.id):lower() == baitName:lower() then
+                -- Updated bait check: Look for yarn beanie with flexible matching
+                local lowerName = foodName:lower()
+                if lowerName == baitName:lower() or 
+                   lowerName:find("yarn") and lowerName:find("beanie") or
+                   lowerName:find("winter") and lowerName:find("bait") then
+                    
                     foundBaitId = foodId
-                    safePrint("FOUND Winter bait:", foodId, "- Amount:", foodInfo.amount)
+                    baitCount = baitCount + foodAmount
+                    safePrint("✅ FOUND BAIT:", foodName, "(ID:", foodId, "- Amount:", foodAmount, ")")
                 end
             end
         end
@@ -112,23 +155,33 @@ local function scanFoodInventory()
     end
 
     -- Print all foods
-    safePrint("Food items found:", #foods)
+    safePrint("=== FOOD INVENTORY ===")
+    safePrint("Total unique food items:", #foods)
+    
+    -- Sort by name
+    table.sort(foods, function(a, b)
+        return a.name:lower() < b.name:lower()
+    end)
+    
     for i, food in ipairs(foods) do
-        safePrint(string.format("%d. %s (ID: %s) - Amount: %d", 
-            i, food.name, food.id:sub(1, 10) .. "...", food.amount))
+        local isBait = food.name:lower():find("yarn") and food.name:lower():find("beanie")
+        local prefix = isBait and "🎯 " or "   "
+        safePrint(string.format("%s%d. %s - Amount: %d", 
+            prefix, i, food.name, food.amount))
     end
     
     safePrint("===================================")
+    safePrint("🎯 Total bait found:", baitCount)
+    safePrint("===================================")
     
-    return foundBaitId
+    return foundBaitId, baitCount
 end
 
 -- Safe API call function
 local function safeAPICall(apiPath, isInvoke, ...)
     local api = safeFindAPI(apiPath)
     if not api then
-        safePrint("API not available:", apiPath)
-        return false, "API not found"
+        return false, "API not found: " .. apiPath
     end
     
     local args = {...}
@@ -148,112 +201,261 @@ local function safeAPICall(apiPath, isInvoke, ...)
     return true, result
 end
 
--- Main function to auto-tame
+-- Find the snowball pug with multiple search methods
+local function findSnowballPug()
+    safePrint("🔍 Searching for Snowball Pug...")
+    
+    -- Try multiple locations and names
+    local searchPaths = {
+        workspace,  -- Direct in workspace
+        workspace:FindFirstChild("Pets"),
+        workspace:FindFirstChild("SnowglobeSummit"),
+        workspace:FindFirstChild("WinterEvent"),
+        workspace:FindFirstChild("Event"),
+        workspace:FindFirstChild("Workspace")  -- Sometimes nested
+    }
+    
+    local petNames = {
+        "Snowball Pug",
+        "SnowballPug", 
+        "Snowball_Pug",
+        "Snow Pug",
+        "Winter Pug",
+        "Pug"  -- Generic fallback
+    }
+    
+    for _, location in ipairs(searchPaths) do
+        if location then
+            for _, petName in ipairs(petNames) do
+                local pet = location:FindFirstChild(petName)
+                if pet then
+                    safePrint("✅ Found pet:", petName, "at", location.Name)
+                    return pet
+                end
+            end
+            
+            -- Also try FindFirstDescendant for deeper search
+            for _, petName in ipairs(petNames) do
+                local pet = location:FindFirstDescendant(petName)
+                if pet then
+                    safePrint("✅ Found pet (descendant):", petName, "in", location.Name)
+                    return pet
+                end
+            end
+        end
+    end
+    
+    -- Last resort: Search all of workspace
+    for _, petName in ipairs(petNames) do
+        local pet = workspace:FindFirstChild(petName, true)
+        if pet then
+            safePrint("✅ Found pet (deep search):", petName)
+            return pet
+        end
+    end
+    
+    safePrint("❌ Could not find Snowball Pug")
+    return nil
+end
+
+-- Main function to auto-tame (single use)
 local function autoTameWithBait()
-    safePrint("Starting auto-tamer...")
+    safePrint("🚀 Starting taming sequence...")
     
     -- Step 1: Scan for bait
-    local baitId = scanFoodInventory()
+    local baitId, baitCount = scanFoodInventory()
     
     if not baitId then
-        safePrint("ERROR: Winter bait not found!")
+        safePrint("❌ ERROR: Winter bait not found!")
         return false
     end
     
-    safePrint("Using bait ID:", baitId)
+    if baitCount <= 0 then
+        safePrint("❌ ERROR: No bait remaining!")
+        return false
+    end
+    
+    safePrint("🎯 Using bait ID:", baitId)
+    safePrint("🎯 Bait remaining:", baitCount)
     
     -- Step 2: Equip the bait
-    safePrint("Equipping bait...")
-    local success1 = safeAPICall("API/ToolAPI/Equip", true, baitId, {
+    safePrint("🛠️ Equipping bait...")
+    local success1, result1 = safeAPICall("API/ToolAPI/Equip", true, baitId, {
         use_sound_delay = false,
         equip_as_last = false
     })
     
     if not success1 then
-        safePrint("Failed to equip bait")
-        return false
+        safePrint("⚠️ Could not equip bait, trying without options...")
+        success1, result1 = safeAPICall("API/ToolAPI/Equip", true, baitId)
     end
     
-    task.wait(0.5)
-    
-    -- Step 3: Try to find and focus on dog
-    safePrint("Looking for dog...")
-    
-    -- Try to find dog in workspace
-    local dog = workspace:FindFirstChild("Pets") and workspace.Pets:FindFirstChild("Dog")
-    
-    if dog then
-        safePrint("Found dog, focusing...")
-        local success2 = safeAPICall("API/AdoptAPI/FocusPet", false, dog)
-        if not success2 then
-            safePrint("Warning: Could not focus pet")
-        end
-    else
-        safePrint("Warning: No dog found in workspace")
+    if not success1 then
+        safePrint("❌ Failed to equip bait")
+        return false
     end
     
     task.wait(1)
     
+    -- Step 3: Find and focus on snowball pug
+    local pug = findSnowballPug()
+    
+    if pug then
+        safePrint("🎯 Focusing on pet...")
+        -- Try multiple focus APIs
+        local focusAPIs = {
+            "API/AdoptAPI/FocusPet",
+            "API/PetAPI/FocusPet", 
+            "API/EventAPI/FocusPet",
+            "API/MinigameAPI/FocusTarget"
+        }
+        
+        local focused = false
+        for _, apiPath in ipairs(focusAPIs) do
+            local success2, _ = safeAPICall(apiPath, false, pug)
+            if success2 then
+                safePrint("✅ Pet focused via", apiPath)
+                focused = true
+                break
+            end
+        end
+        
+        if not focused then
+            safePrint("⚠️ Could not focus pet (may not be needed)")
+        end
+    else
+        safePrint("⚠️ No pet found, continuing anyway...")
+    end
+    
+    task.wait(1.5)
+    
     -- Step 4: Start using tool
-    safePrint("Using bait...")
-    local success3 = safeAPICall("API/ToolAPI/ServerUseTool", false, baitId, "START")
+    safePrint("🎯 Using bait on pet...")
+    local success3, result3 = safeAPICall("API/ToolAPI/ServerUseTool", false, baitId, "START")
     if not success3 then
-        safePrint("Failed to start using bait")
+        safePrint("❌ Failed to start using bait")
         return false
     end
     
-    task.wait(2)
+    task.wait(2.5)
     
     -- Step 5: End using tool
-    safePrint("Ending bait use...")
-    local success4 = safeAPICall("API/ToolAPI/ServerUseTool", false, baitId, "END")
+    safePrint("🎯 Completing bait use...")
+    local success4, result4 = safeAPICall("API/ToolAPI/ServerUseTool", false, baitId, "END")
     if not success4 then
-        safePrint("Failed to end using bait")
+        safePrint("❌ Failed to end using bait")
         return false
     end
     
-    task.wait(0.5)
+    task.wait(1)
     
-    -- Step 6: Try to unfocus if dog exists
-    if dog then
-        safePrint("Unfocusing pet...")
-        safeAPICall("API/AdoptAPI/UnfocusPet", false, dog)
+    -- Step 6: Try to unfocus if pet exists
+    if pug then
+        safePrint("🔓 Unfocusing pet...")
+        local unfocusAPIs = {
+            "API/AdoptAPI/UnfocusPet",
+            "API/PetAPI/UnfocusPet",
+            "API/EventAPI/UnfocusPet"
+        }
+        
+        for _, apiPath in ipairs(unfocusAPIs) do
+            safeAPICall(apiPath, false, pug)
+        end
     end
     
-    task.wait(0.5)
+    task.wait(1)
     
     -- Step 7: Progress taming - try multiple possible API paths
-    safePrint("Progressing taming...")
+    safePrint("📈 Progressing taming...")
     
     local tamingAPIs = {
         "API/WinterEventAPI/ProgressTaming",
+        "API/WinterEventAPI/TamePet", 
+        "API/EventAPI/TameSnowballPug",
         "API/EventAPI/ProgressTaming",
-        "API/ProgressTaming",
-        "API/HalloweenEventAPI/ProgressTaming"  -- Try similar API
+        "API/MinigameAPI/SubmitTamingThrow",
+        "API/ToolAPI/UseOnPet",
+        "API/AdoptAPI/CompleteTaming",
+        "API/PetAPI/CompleteTame"
     }
     
     local tamingSuccess = false
     for _, apiPath in ipairs(tamingAPIs) do
-        local success5 = safeAPICall(apiPath, true, false)
+        local success5, result5 = safeAPICall(apiPath, true, false)
         if success5 then
-            safePrint("Taming progressed via", apiPath)
+            safePrint("✅ Taming progressed via", apiPath)
             tamingSuccess = true
             break
         end
     end
     
     if not tamingSuccess then
-        safePrint("Warning: Could not progress taming with any API")
+        safePrint("⚠️ Could not progress taming with any API")
+        safePrint("⚠️ Taming might still have worked - check inventory")
+    else
+        safePrint("🎉 Taming completed successfully!")
     end
     
-    safePrint("Taming sequence completed!")
-    
-    -- Rescan inventory
-    task.wait(1)
-    safePrint("Rescanning inventory...")
-    scanFoodInventory()
-    
     return true
+end
+
+-- To loop multiple times (since 10-20 needed):
+local function runTamingSequence(times, delay)
+    times = times or tamesNeeded
+    delay = delay or delayBetweenTames
+    
+    safePrint("🔄 Starting auto-taming sequence...")
+    safePrint("🎯 Target:", times, "tames")
+    safePrint("⏱️ Delay between:", delay, "seconds")
+    safePrint("===================================")
+    
+    local successfulTames = 0
+    local failedTames = 0
+    
+    for i = 1, times do
+        safePrint("")
+        safePrint("🔄 ATTEMPT", i, "/", times)
+        safePrint("===================================")
+        
+        local success = autoTameWithBait()
+        
+        if success then
+            successfulTames = successfulTames + 1
+            safePrint("✅ Attempt", i, "SUCCESS")
+        else
+            failedTames = failedTames + 1
+            safePrint("❌ Attempt", i, "FAILED")
+        end
+        
+        -- Check if we have bait left
+        local _, baitCount = scanFoodInventory()
+        if baitCount <= 0 then
+            safePrint("⚠️ OUT OF BAIT! Stopping sequence.")
+            break
+        end
+        
+        -- Wait for next attempt (unless it's the last one)
+        if i < times and baitCount > 0 then
+            safePrint("⏳ Waiting", delay, "seconds before next attempt...")
+            
+            -- Countdown display
+            for j = delay, 1, -1 do
+                safePrint("   Next attempt in", j, "seconds...")
+                task.wait(1)
+            end
+        end
+    end
+    
+    safePrint("")
+    safePrint("===================================")
+    safePrint("🏁 AUTO-TAMING SEQUENCE COMPLETE")
+    safePrint("===================================")
+    safePrint("✅ Successful tames:", successfulTames)
+    safePrint("❌ Failed tames:", failedTames)
+    safePrint("🎯 Success rate:", string.format("%.1f%%", (successfulTames / times) * 100))
+    safePrint("===================================")
+    
+    return successfulTames
 end
 
 -- Simple GUI
@@ -269,18 +471,18 @@ local function createSimpleGUI()
     end
     
     -- Remove existing GUI
-    local existing = player.PlayerGui:FindFirstChild("SimpleFoodTamer")
+    local existing = player.PlayerGui:FindFirstChild("WinterTamerGUI")
     if existing then
         existing:Destroy()
     end
     
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "SimpleFoodTamer"
+    screenGui.Name = "WinterTamerGUI"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = player.PlayerGui
     
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 250, 0, 180)
+    mainFrame.Size = UDim2.new(0, 300, 0, 220)
     mainFrame.Position = UDim2.new(0, 20, 0, 20)
     mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
     mainFrame.BorderSizePixel = 0
@@ -295,58 +497,88 @@ local function createSimpleGUI()
     title.Size = UDim2.new(1, 0, 0, 40)
     title.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     title.BorderSizePixel = 0
-    title.Text = "Winter Tamer v2"
+    title.Text = "❄️ Snowball Pug Tamer ❄️"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 16
     title.Font = Enum.Font.SourceSansBold
     title.Parent = mainFrame
     
+    -- Bait count display
+    local baitText = Instance.new("TextLabel")
+    baitText.Size = UDim2.new(1, 0, 0, 30)
+    baitText.Position = UDim2.new(0, 0, 0.2, 0)
+    baitText.BackgroundTransparency = 1
+    baitText.Text = "Yarn Beanie: 0"
+    baitText.TextColor3 = Color3.fromRGB(200, 255, 200)
+    baitText.TextSize = 14
+    baitText.Font = Enum.Font.SourceSansBold
+    baitText.Parent = mainFrame
+    
     -- Status text
     local statusText = Instance.new("TextLabel")
-    statusText.Size = UDim2.new(1, 0, 0, 30)
-    statusText.Position = UDim2.new(0, 0, 0.25, 0)
+    statusText.Size = UDim2.new(1, 0, 0, 20)
+    statusText.Position = UDim2.new(0, 0, 0.35, 0)
     statusText.BackgroundTransparency = 1
     statusText.Text = "Status: Ready"
     statusText.TextColor3 = Color3.fromRGB(200, 200, 255)
-    statusText.TextSize = 14
+    statusText.TextSize = 12
     statusText.Font = Enum.Font.SourceSans
     statusText.Parent = mainFrame
     
     -- Scan button
     local scanBtn = Instance.new("TextButton")
     scanBtn.Size = UDim2.new(0.9, 0, 0, 35)
-    scanBtn.Position = UDim2.new(0.05, 0, 0.45, 0)
+    scanBtn.Position = UDim2.new(0.05, 0, 0.5, 0)
     scanBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
     scanBtn.BorderSizePixel = 0
-    scanBtn.Text = "SCAN FOOD"
+    scanBtn.Text = "🔍 SCAN INVENTORY"
     scanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     scanBtn.TextSize = 14
     scanBtn.Font = Enum.Font.SourceSansBold
     scanBtn.Parent = mainFrame
     
-    -- Tame button
+    -- Single Tame button
     local tameBtn = Instance.new("TextButton")
     tameBtn.Size = UDim2.new(0.9, 0, 0, 35)
-    tameBtn.Position = UDim2.new(0.05, 0, 0.75, 0)
+    tameBtn.Position = UDim2.new(0.05, 0, 0.7, 0)
     tameBtn.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
     tameBtn.BorderSizePixel = 0
-    tameBtn.Text = "AUTO-TAME"
+    tameBtn.Text = "🎯 SINGLE TAME"
     tameBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     tameBtn.TextSize = 14
     tameBtn.Font = Enum.Font.SourceSansBold
     tameBtn.Parent = mainFrame
     
+    -- Auto Loop button
+    local loopBtn = Instance.new("TextButton")
+    loopBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    loopBtn.Position = UDim2.new(0.05, 0, 0.9, 0)
+    loopBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+    loopBtn.BorderSizePixel = 0
+    loopBtn.Text = "🔄 AUTO-LOOP (20x)"
+    loopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loopBtn.TextSize = 14
+    loopBtn.Font = Enum.Font.SourceSansBold
+    loopBtn.Parent = mainFrame
+    
     -- Add corners
-    for _, btn in pairs({scanBtn, tameBtn}) do
+    for _, btn in pairs({scanBtn, tameBtn, loopBtn}) do
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = btn
     end
     
+    -- Update bait display function
+    local function updateBaitDisplay()
+        local _, baitCount = scanFoodInventory()
+        baitText.Text = "🎯 Yarn Beanie: " .. baitCount
+        return baitCount
+    end
+    
     -- Button functionality
     scanBtn.MouseButton1Click:Connect(function()
         statusText.Text = "Status: Scanning..."
-        scanFoodInventory()
+        updateBaitDisplay()
         statusText.Text = "Status: Scan Complete"
     end)
     
@@ -359,30 +591,68 @@ local function createSimpleGUI()
         
         if success then
             statusText.Text = "Status: Success!"
-            tameBtn.Text = "SUCCESS!"
+            tameBtn.Text = "✅ SUCCESS!"
             task.wait(1)
-            tameBtn.Text = "AUTO-TAME"
+            tameBtn.Text = "🎯 SINGLE TAME"
             tameBtn.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
         else
             statusText.Text = "Status: Failed"
-            tameBtn.Text = "FAILED!"
+            tameBtn.Text = "❌ FAILED!"
             tameBtn.BackgroundColor3 = Color3.fromRGB(215, 0, 0)
             task.wait(1)
-            tameBtn.Text = "AUTO-TAME"
+            tameBtn.Text = "🎯 SINGLE TAME"
             tameBtn.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
         end
+        
+        updateBaitDisplay()
     end)
+    
+    local loopRunning = false
+    loopBtn.MouseButton1Click:Connect(function()
+        if loopRunning then
+            loopRunning = false
+            loopBtn.Text = "🔄 AUTO-LOOP (20x)"
+            loopBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+            statusText.Text = "Status: Loop Stopped"
+        else
+            local baitCount = updateBaitDisplay()
+            if baitCount <= 0 then
+                statusText.Text = "Status: No bait!"
+                return
+            end
+            
+            loopRunning = true
+            loopBtn.Text = "⏸️ STOP LOOP"
+            loopBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+            
+            -- Run in coroutine to not freeze GUI
+            coroutine.wrap(function()
+                runTamingSequence(tamesNeeded, delayBetweenTames)
+                loopRunning = false
+                loopBtn.Text = "🔄 AUTO-LOOP (20x)"
+                loopBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+                updateBaitDisplay()
+                statusText.Text = "Status: Loop Complete"
+            end)()
+        end
+    end)
+    
+    -- Initial update
+    updateBaitDisplay()
     
     safePrint("GUI created successfully!")
     return screenGui
 end
 
 -- Initialize
-task.wait(2) -- Wait for game to load
+task.wait(3) -- Wait for game to load
 
 safePrint("===================================")
-safePrint("FOOD SCANNER & AUTO-TAMER")
-safePrint("Version: 2.1 (Safe Mode)")
+safePrint("❄️ SNOWBALL PUG TAMER v3.0 ❄️")
+safePrint("===================================")
+safePrint("Bait name:", baitName)
+safePrint("Tames needed:", tamesNeeded)
+safePrint("Delay between:", delayBetweenTames, "seconds")
 safePrint("===================================")
 
 -- Initial scan
@@ -394,8 +664,17 @@ task.wait(2)
 createSimpleGUI()
 
 safePrint("===================================")
-safePrint("System Ready!")
+safePrint("✅ System Ready!")
 safePrint("Commands:")
 safePrint("1. scanFoodInventory()")
 safePrint("2. autoTameWithBait()")
+safePrint("3. runTamingSequence(20, 10)")
 safePrint("===================================")
+
+-- Export functions to global for manual use
+_G.scanFoodInventory = scanFoodInventory
+_G.autoTameWithBait = autoTameWithBait
+_G.runTamingSequence = runTamingSequence
+_G.findSnowballPug = findSnowballPug
+
+safePrint("📝 Functions exported to _G for manual use")
