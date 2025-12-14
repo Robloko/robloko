@@ -1,56 +1,58 @@
--- PUG TAMER 🐶
--- Scans for winter_2025_yarn_beanie_bait and auto-tames
-
+-- PUG 🐶 WINTER BAIT TAMER
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 
 -- Player
 local player = Players.LocalPlayer
 
--- Configuration
-local BAIT_NAME = "winter_2025_yarn_beanie_bait"
-local DOG_NAME = "Dog"
+-- Config
+local TARGET_BAIT = "winter_2025_yarn_beanie_bait"
+local USE_SOUND_DELAY = false
+local EQUIP_AS_LAST = false
 
--- Wait for player
-repeat task.wait() until player
-print("🐶 PUG TAMER v1.0 LOADED")
+-- Debug print with emoji
+local function pugPrint(message)
+    local timestamp = os.date("%H:%M:%S")
+    print("🐶 [" .. timestamp .. "] " .. message)
+end
 
--- ========== INVENTORY SCANNER ==========
+-- Scan food inventory for winter bait
 local function scanForBait()
-    print("🔍 Scanning for bait: " .. BAIT_NAME)
+    pugPrint("🔍 Scanning inventory for: " .. TARGET_BAIT)
     
-    local baitInfo = {
-        found = false,
-        id = nil,
-        name = nil,
-        amount = 0
-    }
+    local foundBaitId = nil
+    local baitCount = 0
     
     -- Try to access inventory data
     local success, errorMsg = pcall(function()
-        -- Try different possible paths to get inventory data
+        -- Try different ways to get client data
         local clientData
-        local clientModules = ReplicatedStorage:FindFirstChild("ClientModules")
         
-        if clientModules then
-            -- Try to find Core module
-            local core = clientModules:FindFirstChild("Core")
-            if core then
-                local clientDataModule = core:FindFirstChild("ClientData")
-                if clientDataModule then
-                    clientData = require(clientDataModule)
-                end
+        -- Method 1: Direct require
+        if ReplicatedStorage:FindFirstChild("ClientModules") then
+            local modules = ReplicatedStorage.ClientModules
+            if modules:FindFirstChild("Core") and modules.Core:FindFirstChild("ClientData") then
+                clientData = require(modules.Core.ClientData)
+            end
+        end
+        
+        -- Method 2: Try another path
+        if not clientData and ReplicatedStorage:FindFirstChild("ClientModules") then
+            local success2, data = pcall(function()
+                return require(ReplicatedStorage.ClientModules)
+            end)
+            if success2 and data.Core and data.Core.ClientData then
+                clientData = data.Core.ClientData
             end
         end
         
         if not clientData then
-            print("⚠️ Could not find ClientData module")
+            pugPrint("❌ Could not find ClientData")
             return
         end
         
-        -- Get player data (try different methods)
+        -- Try to get player data
         local playerData
         if clientData.get then
             playerData = clientData.get(player.Name)
@@ -62,405 +64,303 @@ local function scanForBait()
             playerData = clientData()[player.Name]
         end
         
-        if not playerData then
-            print("⚠️ Could not get player data")
-            return
-        end
-        
-        -- Scan food inventory
-        if playerData.inventory and playerData.inventory.food then
-            print("📦 Scanning food inventory...")
+        if playerData and playerData.inventory and playerData.inventory.food then
+            pugPrint("📦 Food inventory found, scanning...")
             
             for foodId, foodData in pairs(playerData.inventory.food) do
                 if foodData and foodData.id then
-                    local itemName = tostring(foodData.id)
+                    local foodName = tostring(foodData.id)
                     local amount = foodData.amount or 1
                     
-                    -- Check if this is our bait (case-insensitive)
-                    if string.lower(itemName) == string.lower(BAIT_NAME) then
-                        baitInfo.found = true
-                        baitInfo.id = foodId
-                        baitInfo.name = itemName
-                        baitInfo.amount = amount
-                        
-                        print("✅ FOUND BAIT!")
-                        print("   Name: " .. itemName)
-                        print("   ID: " .. foodId)
-                        print("   Amount: " .. amount)
-                        break -- Found it, no need to continue
+                    -- Check if it's our winter bait
+                    if string.lower(foodName) == string.lower(TARGET_BAIT) then
+                        foundBaitId = foodId
+                        baitCount = amount
+                        pugPrint("🎯 FOUND: " .. TARGET_BAIT)
+                        pugPrint("   ID: " .. foodId)
+                        pugPrint("   Amount: " .. amount)
+                        break
                     end
                 end
             end
             
-            if not baitInfo.found then
-                print("❌ Bait not found in inventory")
-                print("   Looking for: " .. BAIT_NAME)
+            if not foundBaitId then
+                pugPrint("❌ " .. TARGET_BAIT .. " not found in inventory")
+                pugPrint("   Showing all food items:")
                 
-                -- List what WAS found
-                local foodCount = 0
                 for foodId, foodData in pairs(playerData.inventory.food) do
                     if foodData and foodData.id then
-                        foodCount = foodCount + 1
-                        if foodCount <= 5 then -- Show first 5 items
-                            print("   Found: " .. foodData.id .. " (ID: " .. foodId .. ")")
-                        end
+                        local foodName = tostring(foodData.id)
+                        local amount = foodData.amount or 1
+                        pugPrint("   - " .. foodName .. " (x" .. amount .. ")")
                     end
-                end
-                if foodCount > 5 then
-                    print("   ... and " .. (foodCount - 5) .. " more items")
                 end
             end
         else
-            print("❌ No food inventory found")
+            pugPrint("❌ No food inventory found")
         end
     end)
     
     if not success then
-        print("⚠️ Scan error: " .. tostring(errorMsg))
+        pugPrint("❌ Error scanning inventory: " .. tostring(errorMsg))
     end
     
-    return baitInfo
+    return foundBaitId, baitCount
 end
 
--- ========== FIND CORRECT BAIT ID ==========
+-- Find bait in inventory and return its ID
 local function getBaitId()
-    print("🎯 Getting correct bait ID...")
+    pugPrint("🔄 Looking for bait ID...")
     
-    local baitInfo = scanForBait()
+    -- First try to scan inventory
+    local baitId, baitCount = scanForBait()
     
-    if not baitInfo.found then
-        print("❌ Cannot find bait: " .. BAIT_NAME)
-        return nil
+    if baitId then
+        return baitId
     end
     
-    print("🎯 Using bait ID: " .. baitInfo.id)
-    return baitInfo.id
+    -- If scan didn't find it, try the hardcoded ID
+    pugPrint("⚠️ Could not find bait via scan, trying hardcoded ID...")
+    return "2_8960019fe5ac437982d56ab8c54698e3"
 end
 
--- ========== API HELPER ==========
-local function callAPI(apiPath, isInvoke, ...)
-    local args = {...}
+-- Execute the exact taming sequence
+local function executeTamingSequence()
+    pugPrint("🚀 STARTING WINTER TAMING SEQUENCE")
     
-    -- Find the API
-    local api = ReplicatedStorage
-    local parts = string.split(apiPath, "/")
+    -- Get bait ID
+    local baitId = getBaitId()
+    pugPrint("🎯 Using bait ID: " .. baitId)
     
-    for _, part in ipairs(parts) do
-        api = api:WaitForChild(part, 1)
-        if not api then
-            print("❌ API not found: " .. part .. " in " .. apiPath)
+    -- Step 1: Equip the bait
+    pugPrint("1️⃣ Equipping bait...")
+    local success1, error1 = pcall(function()
+        local args = {
+            baitId,
+            {
+                use_sound_delay = USE_SOUND_DELAY,
+                equip_as_last = EQUIP_AS_LAST
+            }
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args))
+    end)
+    
+    if not success1 then
+        pugPrint("❌ Failed to equip bait: " .. tostring(error1))
+        return false
+    end
+    
+    pugPrint("✅ Bait equipped")
+    wait(1)
+    
+    -- Step 2: Start using tool
+    pugPrint("2️⃣ Starting bait use...")
+    local success2, error2 = pcall(function()
+        local args = {
+            baitId,
+            "START"
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success2 then
+        pugPrint("❌ Failed to start bait: " .. tostring(error2))
+        return false
+    end
+    
+    pugPrint("⏳ Waiting 9 seconds...")
+    wait(9)
+    
+    -- Step 3: End using tool
+    pugPrint("3️⃣ Ending bait use...")
+    local success3, error3 = pcall(function()
+        local args = {
+            baitId,
+            "END"
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end)
+    
+    if not success3 then
+        pugPrint("❌ Failed to end bait: " .. tostring(error3))
+        return false
+    end
+    
+    pugPrint("✅ Bait use completed")
+    wait(1)
+    
+    -- Step 4: Progress taming
+    pugPrint("4️⃣ Progressing taming...")
+    local success4, error4 = pcall(function()
+        local args = { false }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("WinterEventAPI/ProgressTaming"):InvokeServer(unpack(args))
+    end)
+    
+    if not success4 then
+        pugPrint("❌ Failed to progress taming: " .. tostring(error4))
+        
+        -- Try alternative API name
+        pugPrint("🔄 Trying alternative API...")
+        local success5, error5 = pcall(function()
+            local args = { false }
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("EventAPI/ProgressTaming"):InvokeServer(unpack(args))
+        end)
+        
+        if success5 then
+            pugPrint("✅ Taming progressed via alternative API")
+            return true
+        else
+            pugPrint("❌ Alternative API also failed: " .. tostring(error5))
             return false
         end
     end
     
-    -- Call the API
-    local success, result = pcall(function()
-        if isInvoke then
-            return api:InvokeServer(unpack(args))
-        else
-            return api:FireServer(unpack(args))
-        end
-    end)
-    
-    if not success then
-        print("⚠️ API call failed (" .. apiPath .. "): " .. tostring(result))
-        return false
-    end
-    
+    pugPrint("✅ Taming progressed successfully!")
     return true
 end
 
--- ========== PUG TAMING SEQUENCE ==========
-local function tamePug()
-    print("🐶 STARTING PUG TAMING SEQUENCE")
-    print("=" .. string.rep("=", 40))
-    
-    -- Step 1: Get the CORRECT bait ID from inventory
-    local baitId = getBaitId()
-    if not baitId then
-        print("❌ Cannot proceed: No bait ID found")
-        return false
-    end
-    
-    print("🎯 Using bait ID: " .. baitId)
-    
-    -- Step 2: Find the dog
-    local dog = Workspace:WaitForChild("Pets"):WaitForChild(DOG_NAME, 2)
-    if not dog then
-        print("❌ Dog not found in workspace")
-        return false
-    end
-    print("🐕 Found dog: " .. dog.Name)
-    
-    -- Step 3: Equip bait (using the CORRECT ID)
-    print("1️⃣ Equipping bait...")
-    local success1 = callAPI("API/ToolAPI/Equip", true, baitId, {
-        use_sound_delay = false,
-        equip_as_last = false
-    })
-    
-    if not success1 then
-        print("❌ Failed to equip bait")
-        return false
-    end
-    task.wait(0.5)
-    
-    -- Step 4: Focus on dog
-    print("2️⃣ Focusing on dog...")
-    local success2 = callAPI("API/AdoptAPI/FocusPet", false, dog)
-    if not success2 then
-        print("⚠️ Could not focus dog, continuing...")
-    end
-    task.wait(1)
-    
-    -- Step 5: Start using bait (using the CORRECT ID)
-    print("3️⃣ Starting bait use...")
-    local success3 = callAPI("API/ToolAPI/ServerUseTool", false, baitId, "START")
-    if not success3 then
-        print("❌ Failed to start using bait")
-        return false
-    end
-    task.wait(2)
-    
-    -- Step 6: End using bait (using the CORRECT ID)
-    print("4️⃣ Ending bait use...")
-    local success4 = callAPI("API/ToolAPI/ServerUseTool", false, baitId, "END")
-    if not success4 then
-        print("❌ Failed to end using bait")
-        return false
-    end
-    task.wait(0.5)
-    
-    -- Step 7: Unfocus dog
-    print("5️⃣ Unfocusing dog...")
-    local success5 = callAPI("API/AdoptAPI/UnfocusPet", false, dog)
-    if not success5 then
-        print("⚠️ Could not unfocus dog, continuing...")
-    end
-    task.wait(0.5)
-    
-    -- Step 8: Progress taming
-    print("6️⃣ Progressing taming...")
-    local success6 = callAPI("API/WinterEventAPI/ProgressTaming", true, false)
-    if not success6 then
-        print("❌ Failed to progress taming")
-        return false
-    end
-    
-    print("✅ PUG TAMING SEQUENCE COMPLETED!")
-    print("=" .. string.rep("=", 40))
-    
-    return true
-end
-
--- ========== QUICK TEST FUNCTION ==========
-local function quickTest()
-    print("🧪 QUICK TEST: Finding bait...")
-    
-    -- Just scan for bait to see what IDs we have
-    local baitInfo = scanForBait()
-    
-    if baitInfo.found then
-        print("\n✅ Test passed!")
-        print("Bait found: " .. baitInfo.name)
-        print("Bait ID: " .. baitInfo.id)
-        print("Amount: " .. baitInfo.amount)
-        
-        -- Test the ID
-        print("\n🧪 Testing bait ID: " .. baitInfo.id)
-        local success = callAPI("API/ToolAPI/Equip", true, baitInfo.id, {
-            use_sound_delay = false,
-            equip_as_last = false
-        })
-        
-        if success then
-            print("✅ ID works! Can equip bait.")
-            -- Unequip it
-            task.wait(0.5)
-            callAPI("API/ToolAPI/Unequip", true, baitInfo.id, {
-                use_sound_delay = false,
-                equip_as_last = false
-            })
-        else
-            print("❌ ID doesn't work.")
-        end
-    else
-        print("❌ Test failed: No bait found")
-    end
-end
-
--- ========== SIMPLE GUI ==========
-local function createGUI()
+-- Create simple PUG UI
+local function createPugUI()
+    -- Wait for PlayerGui
     if not player:FindFirstChild("PlayerGui") then
         player:WaitForChild("PlayerGui", 5)
     end
     
     if not player.PlayerGui then return end
     
-    -- Remove existing GUI
-    local existing = player.PlayerGui:FindFirstChild("PugTamerGUI")
-    if existing then existing:Destroy() end
+    -- Remove old UI if exists
+    local oldUI = player.PlayerGui:FindFirstChild("PugTamerUI")
+    if oldUI then
+        oldUI:Destroy()
+    end
     
+    -- Create new UI
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PugTamerGUI"
+    screenGui.Name = "PugTamerUI"
+    screenGui.ResetOnSpawn = false
     screenGui.Parent = player.PlayerGui
     
-    -- Main Frame
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 220, 0, 240)
-    frame.Position = UDim2.new(0, 10, 0, 10)
-    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
+    -- Main frame
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 200, 0, 140)
+    mainFrame.Position = UDim2.new(0, 20, 0, 20)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    mainFrame.BackgroundTransparency = 0.1
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = screenGui
     
+    -- Corner
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = frame
+    corner.Parent = mainFrame
     
     -- Title
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-    title.Text = "🐶 SMART PUG TAMER"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 18
-    title.Font = Enum.Font.SourceSansBold
-    title.Parent = frame
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundTransparency = 1
+    title.Text = "🐶 PUG TAMER"
+    title.TextColor3 = Color3.fromRGB(255, 200, 100)
+    title.TextSize = 16
+    title.Font = Enum.Font.GothamBold
+    title.Parent = mainFrame
     
     -- Status
     local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, 0, 0, 40)
-    status.Position = UDim2.new(0, 0, 0.18, 0)
+    status.Size = UDim2.new(1, 0, 0, 20)
+    status.Position = UDim2.new(0, 0, 0.25, 0)
     status.BackgroundTransparency = 1
-    status.Text = "Finds correct bait ID"
-    status.TextColor3 = Color3.fromRGB(200, 200, 255)
+    status.Text = "Status: Ready"
+    status.TextColor3 = Color3.fromRGB(150, 255, 150)
     status.TextSize = 12
-    status.TextWrapped = true
-    status.Parent = frame
+    status.Font = Enum.Font.Gotham
+    status.Parent = mainFrame
     
-    -- Bait ID Display
-    local idLabel = Instance.new("TextLabel")
-    idLabel.Size = UDim2.new(1, 0, 0, 30)
-    idLabel.Position = UDim2.new(0, 0, 0.35, 0)
-    idLabel.BackgroundTransparency = 1
-    idLabel.Text = "Bait ID: Not scanned"
-    idLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-    idLabel.TextSize = 11
-    idLabel.TextWrapped = true
-    idLabel.Parent = frame
+    -- Scan button
+    local scanBtn = Instance.new("TextButton")
+    scanBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    scanBtn.Position = UDim2.new(0.05, 0, 0.45, 0)
+    scanBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 200)
+    scanBtn.Text = "🔍 SCAN BAIT"
+    scanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    scanBtn.TextSize = 13
+    scanBtn.Font = Enum.Font.GothamBold
+    scanBtn.Parent = mainFrame
     
-    -- Update ID display function
-    local function updateIdDisplay()
-        local baitInfo = scanForBait()
-        if baitInfo.found then
-            idLabel.Text = "Bait ID: " .. string.sub(baitInfo.id, 1, 15) .. "..."
-            status.Text = "✅ Found: " .. baitInfo.name
-        else
-            idLabel.Text = "Bait ID: Not found"
-            status.Text = "❌ No bait found"
-        end
-    end
+    -- Tame button
+    local tameBtn = Instance.new("TextButton")
+    tameBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    tameBtn.Position = UDim2.new(0.05, 0, 0.75, 0)
+    tameBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+    tameBtn.Text = "🎯 AUTO-TAME"
+    tameBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tameBtn.TextSize = 13
+    tameBtn.Font = Enum.Font.GothamBold
+    tameBtn.Parent = mainFrame
     
-    -- Buttons
-    local function createButton(name, position, color, text)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.9, 0, 0, 35)
-        btn.Position = position
-        btn.BackgroundColor3 = color
-        btn.Text = text
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 14
-        btn.Font = Enum.Font.SourceSansBold
-        btn.BorderSizePixel = 0
-        btn.Parent = frame
-        
+    -- Button corners
+    for _, btn in pairs({scanBtn, tameBtn}) do
         local btnCorner = Instance.new("UICorner")
         btnCorner.CornerRadius = UDim.new(0, 6)
         btnCorner.Parent = btn
-        
-        return btn
     end
     
-    -- Scan Button
-    local scanBtn = createButton("ScanBtn", UDim2.new(0.05, 0, 0.52, 0), 
-        Color3.fromRGB(0, 120, 215), "SCAN BAIT")
-    
-    -- Test Button
-    local testBtn = createButton("TestBtn", UDim2.new(0.05, 0, 0.67, 0), 
-        Color3.fromRGB(100, 100, 200), "TEST BAIT ID")
-    
-    -- Tame Button
-    local tameBtn = createButton("TameBtn", UDim2.new(0.05, 0, 0.82, 0), 
-        Color3.fromRGB(215, 80, 0), "TAME PUG")
-    
-    -- Button Actions
+    -- Button actions
     scanBtn.MouseButton1Click:Connect(function()
-        scanBtn.Text = "SCANNING..."
-        scanBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-        
-        updateIdDisplay()
-        
-        task.wait(0.5)
-        scanBtn.Text = "SCAN BAIT"
-        scanBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-    end)
-    
-    testBtn.MouseButton1Click:Connect(function()
-        testBtn.Text = "TESTING..."
-        testBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 255)
-        
-        quickTest()
-        
-        task.wait(0.5)
-        testBtn.Text = "TEST BAIT ID"
-        testBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 200)
+        status.Text = "Status: Scanning..."
+        scanForBait()
+        status.Text = "Status: Scan Complete"
     end)
     
     tameBtn.MouseButton1Click:Connect(function()
-        tameBtn.Text = "TAMING..."
-        tameBtn.BackgroundColor3 = Color3.fromRGB(180, 60, 0)
+        status.Text = "Status: Taming..."
+        tameBtn.Text = "⏳ TAMING..."
+        tameBtn.BackgroundColor3 = Color3.fromRGB(150, 80, 30)
         
-        if tamePug() then
-            status.Text = "Success! Taming completed"
-            tameBtn.Text = "SUCCESS!"
-            task.wait(1)
+        local success = executeTamingSequence()
+        
+        if success then
+            status.Text = "Status: Success! 🎉"
+            tameBtn.Text = "✅ DONE!"
+            tameBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            wait(2)
+            tameBtn.Text = "🎯 AUTO-TAME"
+            tameBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+            status.Text = "Status: Ready"
         else
-            status.Text = "Taming failed"
-            tameBtn.Text = "FAILED!"
-            tameBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            task.wait(1)
+            status.Text = "Status: Failed 😢"
+            tameBtn.Text = "❌ FAILED"
+            tameBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            wait(2)
+            tameBtn.Text = "🎯 AUTO-TAME"
+            tameBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+            status.Text = "Status: Ready"
         end
-        
-        tameBtn.Text = "TAME PUG"
-        tameBtn.BackgroundColor3 = Color3.fromRGB(215, 80, 0)
-        updateIdDisplay()
     end)
     
-    -- Initial scan
-    task.wait(0.5)
-    updateIdDisplay()
-    
-    print("✅ GUI Created")
-    return screenGui
+    pugPrint("UI created! Check top-left corner 🐶")
 end
 
--- ========== INITIALIZATION ==========
-print("=" .. string.rep("=", 50))
-print("🐶 SMART PUG TAMER v2.0")
-print("Finds CORRECT bait ID from inventory")
-print("Target Bait: " .. BAIT_NAME)
-print("=" .. string.rep("=", 50))
+-- Auto-run sequence
+local function autoRun()
+    pugPrint("========================================")
+    pugPrint("      PUG 🐶 WINTER TAMER v1.0")
+    pugPrint("========================================")
+    
+    -- Initial scan
+    wait(2)
+    scanForBait()
+    
+    -- Create UI
+    wait(1)
+    createPugUI()
+    
+    pugPrint("System ready! Use UI buttons to scan/tame")
+    pugPrint("========================================")
+    
+    -- Optional: Auto-start taming after 5 seconds
+    -- wait(5)
+    -- executeTamingSequence()
+end
 
--- Wait a bit for game to load
-task.wait(2)
-
--- Create GUI
-createGUI()
-
-print("\n✅ SYSTEM READY!")
-print("Commands:")
-print("1. scanForBait() - Find bait and its ID")
-print("2. getBaitId() - Get the correct bait ID")
-print("3. tamePug() - Tame using correct ID")
-print("4. quickTest() - Test bait ID works")
-print("=" .. string.rep("=", 50))
+-- Start everything
+coroutine.wrap(autoRun)()
