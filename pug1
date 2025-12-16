@@ -1,15 +1,22 @@
--- Services (same as before)
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
--- Player (same as before)
+-- Player
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ClientData Module (same as before)
-local ClientDataModule
+-- Declare variables FIRST
+local tameButton = nil
+local mainFrame = nil
+local screenGui = nil
+local ClientDataModule = nil
+
+-- Wait for game to fully load
+wait(1)
+
+-- Load ClientData Module
 local success, err = pcall(function()
     ClientDataModule = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
 end)
@@ -18,22 +25,30 @@ if not success then
     return
 end
 
--- Declare variables FIRST so they exist everywhere
-local tameButton = nil
-local mainFrame = nil
-local screenGui = nil
+print("ClientData module loaded successfully")
 
--- Function to find bait ID (same as before)
+-- Function to find bait ID
 local function findBaitId(baitName)
     local foundId = nil
     pcall(function()
+        if not ClientDataModule then
+            warn("ClientDataModule not loaded!")
+            return
+        end
+        
         local clientData = ClientDataModule.get_data()
+        if not clientData then
+            warn("No client data found!")
+            return
+        end
+        
         local playerData = clientData[player.Name]
         
         if playerData and playerData.inventory and playerData.inventory.food then
             for foodId, foodData in pairs(playerData.inventory.food) do
                 if (foodData.name == baitName or foodData.id == baitName) and (foodData.amount or 1) > 0 then
                     foundId = foodId
+                    print("Found bait in inventory: " .. foodId)
                     break
                 end
             end
@@ -42,14 +57,23 @@ local function findBaitId(baitName)
     return foundId
 end
 
--- Taming Function - FIXED: Now checks if button exists
+-- Taming Function - DEFINED AFTER all dependencies are ready
 local function tamePug()
-    -- Check if button exists BEFORE using it
+    print("tamePug function started")
+    
+    -- Check if button exists
     if not tameButton or not tameButton:IsA("TextButton") then
-        warn("Tame button not found or invalid!")
+        warn("Tame button not found!")
         return
     end
     
+    -- Check if API paths exist
+    if not ReplicatedStorage:FindFirstChild("API") then
+        warn("API folder not found in ReplicatedStorage!")
+        return
+    end
+    
+    -- Find bait ID
     local baitId = findBaitId("winter_2025_yarn_beanie_bait")
     
     if not baitId then
@@ -61,51 +85,74 @@ local function tamePug()
         return
     end
     
-    print("Found bait with ID: " .. baitId)
-
-    -- Now it's safe to access tameButton
+    print("Starting taming sequence with ID: " .. baitId)
+    
+    -- Disable button
     tameButton.AutoButtonColor = false
     tameButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-
-    -- ... rest of your taming sequence code ...
-    pcall(function()
+    
+    -- TAMING SEQUENCE - FIXED: Now has access to everything
+    local success, errorMsg = pcall(function()
+        print("Step 1: Sending END command")
         local args1 = {baitId, "END"}
         ReplicatedStorage.API.ToolAPI.ServerUseTool:FireServer(unpack(args1))
         wait(9)
-
+        
+        print("Step 2: Sending START command")
         local args2 = {baitId, "START"}
         ReplicatedStorage.API.ToolAPI.ServerUseTool:FireServer(unpack(args2))
         wait(2)
-
+        
+        print("Step 3: Equipping bait")
         local args3 = {baitId, {use_sound_delay = false, equip_as_last = false}}
         ReplicatedStorage.API.ToolAPI.Equip:InvokeServer(unpack(args3))
         wait(1)
-
+        
+        print("Step 4: Progress taming")
         local args4 = {false}
         ReplicatedStorage.API.WinterEventAPI.ProgressTaming:InvokeServer(unpack(args4))
         wait(1)
-
+        
+        print("Step 5: Equipping toy")
         local toyId = findBaitId("2_cad0eace6dca44908c1a74bb32fea4f2") or "2_cad0eace6dca44908c1a74bb32fea4f2"
         local args5 = {toyId, {use_sound_delay = false, equip_as_last = false}}
         ReplicatedStorage.API.ToolAPI.Equip:InvokeServer(unpack(args5))
+        
+        print("Taming sequence completed!")
     end)
-
+    
+    if not success then
+        warn("Error in taming sequence: " .. tostring(errorMsg))
+    end
+    
+    -- Re-enable button
     wait(1)
     tameButton.AutoButtonColor = true
     tameButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     
     game.StarterGui:SetCore("SendNotification", {
         Title = "Tame Pug";
-        Text = "Taming executed with ID: " .. baitId;
+        Text = "Taming sequence completed!";
         Duration = 3;
     })
+    
+    print("tamePug function finished")
 end
 
--- CREATE UI - This must run BEFORE the button can be used
+-- Create UI
 local function createUI()
+    print("Creating UI...")
+    
     screenGui = Instance.new("ScreenGui")
     screenGui.Name = "TamePugGui"
     screenGui.ResetOnSpawn = false
+    
+    -- Check if PlayerGui exists
+    if not playerGui then
+        warn("PlayerGui not found!")
+        return false
+    end
+    
     screenGui.Parent = playerGui
 
     mainFrame = Instance.new("Frame")
@@ -148,23 +195,35 @@ local function createUI()
         normalTween:Play()
     end)
 
-    -- Connect button click - NOW it's safe
-    tameButton.MouseButton1Click:Connect(tamePug)
+    -- Connect button click - THIS IS CRITICAL
+    tameButton.MouseButton1Click:Connect(function()
+        print("Button clicked, calling tamePug...")
+        tamePug()
+    end)
 
-    -- Initial check
+    -- Initial color check
     if findBaitId("winter_2025_yarn_beanie_bait") then
         mainFrame.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     else
         mainFrame.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
     end
 
-    print("Tame Pug UI created successfully!")
+    print("UI created successfully")
     return true
 end
 
--- Actually create the UI
+-- Main execution flow
+print("Starting Tame Pug script...")
+
+-- Wait a bit for game to load
+wait(2)
+
+-- Create the UI
 if createUI() then
     print("Tame Pug UI loaded! Button at top-left corner.")
+    print("Make sure you have the bait in your inventory!")
 else
     warn("Failed to create UI!")
 end
+
+print("Script initialization complete")
