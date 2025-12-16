@@ -1,0 +1,156 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+-- Player
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ClientData Module
+local ClientDataModule
+local success, err = pcall(function()
+    ClientDataModule = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+end)
+if not success then
+    warn("Failed to load ClientData module: " .. tostring(err))
+    return
+end
+
+-- Function to find the actual bait ID from inventory
+local function findBaitId(baitName)
+    local foundId = nil
+    pcall(function()
+        local clientData = ClientDataModule.get_data()
+        local playerData = clientData[player.Name]
+        
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                -- Check both the foodData.name and foodData.id fields
+                if (foodData.name == baitName or foodData.id == baitName) and (foodData.amount or 1) > 0 then
+                    foundId = foodId  -- This is the actual unique ID in the inventory
+                    break
+                end
+            end
+        end
+    end)
+    return foundId
+end
+
+-- Updated Taming Function
+local function tamePug()
+    -- Find the actual bait ID
+    local baitId = findBaitId("winter_2025_yarn_beanie_bait")
+    
+    if not baitId then
+        -- Notify no bait
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "Tame Pug";
+            Text = "No winter_2025_yarn_beanie_bait found in inventory!";
+            Duration = 3;
+        })
+        return
+    end
+    
+    print("Found bait with ID: " .. baitId)
+
+    -- Disable button during process
+    tameButton.AutoButtonColor = false
+    tameButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+
+    -- UPDATED SEQUENCE with dynamic bait ID
+    pcall(function()
+        -- Use the actual found bait ID instead of hardcoded one
+        local args1 = {baitId, "END"}
+        ReplicatedStorage.API.ToolAPI.ServerUseTool:FireServer(unpack(args1))
+        wait(9)
+
+        local args2 = {baitId, "START"}
+        ReplicatedStorage.API.ToolAPI.ServerUseTool:FireServer(unpack(args2))
+        wait(2)
+
+        local args3 = {baitId, {use_sound_delay = false, equip_as_last = false}}
+        ReplicatedStorage.API.ToolAPI.Equip:InvokeServer(unpack(args3))
+        wait(1)
+
+        local args4 = {false}
+        ReplicatedStorage.API.WinterEventAPI.ProgressTaming:InvokeServer(unpack(args4))
+        wait(1)
+
+        -- This might also need to be dynamic if it's another item
+        local toyId = findBaitId("2_cad0eace6dca44908c1a74bb32fea4f2") or "2_cad0eace6dca44908c1a74bb32fea4f2"
+        local args5 = {toyId, {use_sound_delay = false, equip_as_last = false}}
+        ReplicatedStorage.API.ToolAPI.Equip:InvokeServer(unpack(args5))
+    end)
+
+    -- Re-enable button
+    wait(1)
+    tameButton.AutoButtonColor = true
+    tameButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    
+    -- Success notify
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Tame Pug";
+        Text = "Taming sequence executed with ID: " .. baitId;
+        Duration = 3;
+    })
+end
+
+-- Create UI (same as before)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TamePugGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 150, 0, 50)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(0, 170, 0)
+stroke.Thickness = 2
+stroke.Parent = mainFrame
+
+local tameButton = Instance.new("TextButton")
+tameButton.Name = "TameButton"
+tameButton.Size = UDim2.new(1, 0, 1, 0)
+tameButton.Position = UDim2.new(0, 0, 0, 0)
+tameButton.BackgroundTransparency = 1
+tameButton.Text = "Tame Pug"
+tameButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+tameButton.TextScaled = true
+tameButton.Font = Enum.Font.GothamBold
+tameButton.Parent = mainFrame
+
+-- Hover effects
+local hoverTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 160, 0, 55)})
+local normalTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 150, 0, 50)})
+
+tameButton.MouseEnter:Connect(function()
+    hoverTween:Play()
+end)
+
+tameButton.MouseLeave:Connect(function()
+    normalTween:Play()
+end)
+
+-- Button click
+tameButton.MouseButton1Click:Connect(tamePug)
+
+-- Initial check and color
+if findBaitId("winter_2025_yarn_beanie_bait") then
+    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+else
+    mainFrame.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+end
+
+print("Tame Pug UI loaded! Button at top-left corner.")
