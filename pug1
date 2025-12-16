@@ -1,14 +1,14 @@
--- Services
+-- Services (same as before)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
--- Player
+-- Player (same as before)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ClientData Module
+-- ClientData Module (same as before)
 local ClientDataModule
 local success, err = pcall(function()
     ClientDataModule = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
@@ -18,7 +18,12 @@ if not success then
     return
 end
 
--- Function to find the actual bait ID from inventory
+-- Declare variables FIRST so they exist everywhere
+local tameButton = nil
+local mainFrame = nil
+local screenGui = nil
+
+-- Function to find bait ID (same as before)
 local function findBaitId(baitName)
     local foundId = nil
     pcall(function()
@@ -27,9 +32,8 @@ local function findBaitId(baitName)
         
         if playerData and playerData.inventory and playerData.inventory.food then
             for foodId, foodData in pairs(playerData.inventory.food) do
-                -- Check both the foodData.name and foodData.id fields
                 if (foodData.name == baitName or foodData.id == baitName) and (foodData.amount or 1) > 0 then
-                    foundId = foodId  -- This is the actual unique ID in the inventory
+                    foundId = foodId
                     break
                 end
             end
@@ -38,16 +42,20 @@ local function findBaitId(baitName)
     return foundId
 end
 
--- Updated Taming Function
+-- Taming Function - FIXED: Now checks if button exists
 local function tamePug()
-    -- Find the actual bait ID
+    -- Check if button exists BEFORE using it
+    if not tameButton or not tameButton:IsA("TextButton") then
+        warn("Tame button not found or invalid!")
+        return
+    end
+    
     local baitId = findBaitId("winter_2025_yarn_beanie_bait")
     
     if not baitId then
-        -- Notify no bait
         game.StarterGui:SetCore("SendNotification", {
             Title = "Tame Pug";
-            Text = "No winter_2025_yarn_beanie_bait found in inventory!";
+            Text = "No winter_2025_yarn_beanie_bait found!";
             Duration = 3;
         })
         return
@@ -55,13 +63,12 @@ local function tamePug()
     
     print("Found bait with ID: " .. baitId)
 
-    -- Disable button during process
+    -- Now it's safe to access tameButton
     tameButton.AutoButtonColor = false
     tameButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
 
-    -- UPDATED SEQUENCE with dynamic bait ID
+    -- ... rest of your taming sequence code ...
     pcall(function()
-        -- Use the actual found bait ID instead of hardcoded one
         local args1 = {baitId, "END"}
         ReplicatedStorage.API.ToolAPI.ServerUseTool:FireServer(unpack(args1))
         wait(9)
@@ -78,79 +85,86 @@ local function tamePug()
         ReplicatedStorage.API.WinterEventAPI.ProgressTaming:InvokeServer(unpack(args4))
         wait(1)
 
-        -- This might also need to be dynamic if it's another item
         local toyId = findBaitId("2_cad0eace6dca44908c1a74bb32fea4f2") or "2_cad0eace6dca44908c1a74bb32fea4f2"
         local args5 = {toyId, {use_sound_delay = false, equip_as_last = false}}
         ReplicatedStorage.API.ToolAPI.Equip:InvokeServer(unpack(args5))
     end)
 
-    -- Re-enable button
     wait(1)
     tameButton.AutoButtonColor = true
     tameButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     
-    -- Success notify
     game.StarterGui:SetCore("SendNotification", {
         Title = "Tame Pug";
-        Text = "Taming sequence executed with ID: " .. baitId;
+        Text = "Taming executed with ID: " .. baitId;
         Duration = 3;
     })
 end
 
--- Create UI (same as before)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "TamePugGui"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = playerGui
+-- CREATE UI - This must run BEFORE the button can be used
+local function createUI()
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "TamePugGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 150, 0, 50)
-mainFrame.Position = UDim2.new(0, 10, 0, 10)
-mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 150, 0, 50)
+    mainFrame.Position = UDim2.new(0, 10, 0, 10)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = screenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = mainFrame
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = mainFrame
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(0, 170, 0)
-stroke.Thickness = 2
-stroke.Parent = mainFrame
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(0, 170, 0)
+    stroke.Thickness = 2
+    stroke.Parent = mainFrame
 
-local tameButton = Instance.new("TextButton")
-tameButton.Name = "TameButton"
-tameButton.Size = UDim2.new(1, 0, 1, 0)
-tameButton.Position = UDim2.new(0, 0, 0, 0)
-tameButton.BackgroundTransparency = 1
-tameButton.Text = "Tame Pug"
-tameButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-tameButton.TextScaled = true
-tameButton.Font = Enum.Font.GothamBold
-tameButton.Parent = mainFrame
+    tameButton = Instance.new("TextButton")
+    tameButton.Name = "TameButton"
+    tameButton.Size = UDim2.new(1, 0, 1, 0)
+    tameButton.Position = UDim2.new(0, 0, 0, 0)
+    tameButton.BackgroundTransparency = 1
+    tameButton.Text = "Tame Pug"
+    tameButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tameButton.TextScaled = true
+    tameButton.Font = Enum.Font.GothamBold
+    tameButton.Parent = mainFrame
 
--- Hover effects
-local hoverTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 160, 0, 55)})
-local normalTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 150, 0, 50)})
+    -- Hover effects
+    local hoverTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 160, 0, 55)})
+    local normalTween = TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 150, 0, 50)})
 
-tameButton.MouseEnter:Connect(function()
-    hoverTween:Play()
-end)
+    tameButton.MouseEnter:Connect(function()
+        hoverTween:Play()
+    end)
 
-tameButton.MouseLeave:Connect(function()
-    normalTween:Play()
-end)
+    tameButton.MouseLeave:Connect(function()
+        normalTween:Play()
+    end)
 
--- Button click
-tameButton.MouseButton1Click:Connect(tamePug)
+    -- Connect button click - NOW it's safe
+    tameButton.MouseButton1Click:Connect(tamePug)
 
--- Initial check and color
-if findBaitId("winter_2025_yarn_beanie_bait") then
-    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-else
-    mainFrame.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    -- Initial check
+    if findBaitId("winter_2025_yarn_beanie_bait") then
+        mainFrame.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    else
+        mainFrame.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    end
+
+    print("Tame Pug UI created successfully!")
+    return true
 end
 
-print("Tame Pug UI loaded! Button at top-left corner.")
+-- Actually create the UI
+if createUI() then
+    print("Tame Pug UI loaded! Button at top-left corner.")
+else
+    warn("Failed to create UI!")
+end
