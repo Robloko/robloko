@@ -17,44 +17,39 @@ local Window = Rayfield:CreateWindow({
         RememberJoins = true
     },
     KeySystem = false,
-    KeySettings = {
-        Title = "Untitled",
-        Subtitle = "Key System",
-        Note = "No method of obtaining the key is provided",
-        FileName = "Key",
-        SaveKey = true,
-        GrabKeyFromSite = false,
-        Key = {"Hello"}
-    }
 })
+
+-- Variables
+local selectedPlayer = "None"
+local PlayerDropdown
 
 -- Create the main tab
 local MainTab = Window:CreateTab("Players", 4483362458)
 
--- Variables
-local playerNames = {"None"}
-local selectedPlayer = "None"
-
--- Function to get player list
-local function getPlayers()
-    local players = {}
-    for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
-        if player and player.Name then
-            table.insert(players, player.Name)
+-- Function to get player names (excluding yourself)
+local function getPlayerNames()
+    local names = {"None"}
+    local localPlayerName = game.Players.LocalPlayer.Name
+    
+    for _, player in ipairs(game.Players:GetPlayers()) do
+        if player.Name ~= localPlayerName then
+            table.insert(names, player.Name)
         end
     end
-    return players
+    return names
 end
 
--- Create the dropdown first with empty options
-local PlayerDropdown = MainTab:CreateDropdown({
+-- Create the dropdown with initial options
+PlayerDropdown = MainTab:CreateDropdown({
     Name = "Select Player",
-    Options = playerNames,
-    CurrentOption = "None",
+    Options = getPlayerNames(), -- Initialize with current players
+    CurrentOption = {"None"},
+    MultipleOptions = false,
     Flag = "PlayerDropdown",
-    Callback = function(SelectedOption)
-        selectedPlayer = SelectedOption
+    Callback = function(Option)
+        selectedPlayer = Option[1] -- Get first selected option
         print("Selected player:", selectedPlayer)
+        
         Rayfield:Notify({
             Title = "Player Selected",
             Content = "Selected: " .. selectedPlayer,
@@ -64,118 +59,45 @@ local PlayerDropdown = MainTab:CreateDropdown({
     end,
 })
 
--- Create the player list section
+-- Create sections
 local PlayerSection = MainTab:CreateSection("Player List")
 
--- Function to update player list
-local function UpdatePlayerList()
-    local players = getPlayers()
-    local newOptions = {"None"}
-    
-    -- Add all players to options
-    for _, playerName in ipairs(players) do
-        table.insert(newOptions, playerName)
-    end
-    
-    -- Clear old options and add new ones
-    PlayerDropdown.Options = newOptions
-    
-    -- Try different method names based on Rayfield version
-    local success, errorMsg = pcall(function()
-        PlayerDropdown:Set(newOptions) -- Try Set method
-    end)
-    
-    if not success then
-        success, errorMsg = pcall(function()
-            PlayerDropdown:Refresh(newOptions) -- Try Refresh method
-        end)
-    end
-    
-    if not success then
-        success, errorMsg = pcall(function()
-            PlayerDropdown:Update(newOptions) -- Try Update method
-        end)
-    end
-    
-    -- If none work, recreate the dropdown
-    if not success then
-        PlayerDropdown = MainTab:CreateDropdown({
-            Name = "Select Player",
-            Options = newOptions,
-            CurrentOption = "None",
-            Flag = "PlayerDropdown2",
-            Callback = function(SelectedOption)
-                selectedPlayer = SelectedOption
-                print("Selected player:", selectedPlayer)
-            end,
-        })
-    end
-    
-    return #players
-end
-
--- Button to refresh player list
+-- Refresh button (using correct Refresh() method)
 MainTab:CreateButton({
     Name = "Refresh Player List",
     Callback = function()
-        local playerCount = UpdatePlayerList()
+        local playerNames = getPlayerNames()
+        local playerCount = #playerNames - 1 -- Subtract 1 for "None" option
+        
+        -- CORRECT METHOD: Refresh the dropdown with new options
+        PlayerDropdown:Refresh(playerNames)
+        
         Rayfield:Notify({
-            Title = "Player List Updated",
-            Content = "Found " .. playerCount .. " players in server.",
+            Title = "Refreshed",
+            Content = "Found " .. playerCount .. " players",
             Duration = 3,
             Image = 4483362458
         })
+        
+        print("Refreshed player list. Options:", table.concat(playerNames, ", "))
     end,
 })
 
--- Function to auto-update when players join/leave
-local function SetupPlayerTracking()
-    -- Update initially
-    local initialCount = UpdatePlayerList()
-    print("Initial player count:", initialCount)
-    
-    -- Update when player joins
-    game:GetService("Players").PlayerAdded:Connect(function(player)
-        task.wait(0.5)
-        local count = UpdatePlayerList()
-        print("Player joined:", player.Name, "Total:", count)
-        
-        Rayfield:Notify({
-            Title = player.Name .. " joined",
-            Content = "Total players: " .. count,
-            Duration = 3,
-            Image = 4483362458
-        })
-    end)
-    
-    -- Update when player leaves
-    game:GetService("Players").PlayerRemoved:Connect(function(player)
-        task.wait(0.5)
-        local count = UpdatePlayerList()
-        print("Player left:", player.Name, "Total:", count)
-        
-        Rayfield:Notify({
-            Title = player.Name .. " left",
-            Content = "Total players: " .. count,
-            Duration = 3,
-            Image = 4483362458
-        })
-    end)
-end
-
--- Create some example player actions
+-- Player actions section
 local ActionsSection = MainTab:CreateSection("Player Actions")
 
--- Example: Teleport to player
+-- Teleport to player
 MainTab:CreateButton({
-    Name = "Teleport to Selected Player",
+    Name = "Teleport to Player",
     Callback = function()
         if selectedPlayer and selectedPlayer ~= "None" then
-            local target = game:GetService("Players"):FindFirstChild(selectedPlayer)
-            if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                local localPlayer = game:GetService("Players").LocalPlayer
-                if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                    localPlayer.Character.HumanoidRootPart.CFrame = target.Character.HumanoidRootPart.CFrame
+            local target = game.Players:FindFirstChild(selectedPlayer)
+            if target and target.Character then
+                local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+                local localPlayer = game.Players.LocalPlayer
+                if localPlayer.Character and hrp then
+                    -- Teleport to player
+                    localPlayer.Character:MoveTo(hrp.Position)
                     Rayfield:Notify({
                         Title = "Teleported",
                         Content = "Teleported to " .. selectedPlayer,
@@ -185,7 +107,7 @@ MainTab:CreateButton({
                 else
                     Rayfield:Notify({
                         Title = "Error",
-                        Content = "Your character doesn't exist!",
+                        Content = "Cannot teleport - character issue",
                         Duration = 3,
                         Image = 4483362458
                     })
@@ -193,7 +115,7 @@ MainTab:CreateButton({
             else
                 Rayfield:Notify({
                     Title = "Error",
-                    Content = selectedPlayer .. " not found or doesn't have character!",
+                    Content = "Player or character not found",
                     Duration = 3,
                     Image = 4483362458
                 })
@@ -201,7 +123,7 @@ MainTab:CreateButton({
         else
             Rayfield:Notify({
                 Title = "No Player Selected",
-                Content = "Please select a player first.",
+                Content = "Please select a player first",
                 Duration = 3,
                 Image = 4483362458
             })
@@ -209,18 +131,21 @@ MainTab:CreateButton({
     end,
 })
 
--- Example: View player info
+-- View player info
 MainTab:CreateButton({
     Name = "Show Player Info",
     Callback = function()
         if selectedPlayer and selectedPlayer ~= "None" then
-            local target = game:GetService("Players"):FindFirstChild(selectedPlayer)
+            local target = game.Players:FindFirstChild(selectedPlayer)
             if target then
                 Rayfield:Notify({
                     Title = "Player Info: " .. selectedPlayer,
-                    Content = "UserID: " .. target.UserId .. 
-                             "\nAccount Age: " .. target.AccountAge .. " days" ..
-                             "\nDisplay Name: " .. target.DisplayName,
+                    Content = string.format(
+                        "UserID: %d\nAccount Age: %d days\nDisplay Name: %s",
+                        target.UserId,
+                        target.AccountAge,
+                        target.DisplayName
+                    ),
                     Duration = 5,
                     Image = 4483362458
                 })
@@ -235,7 +160,7 @@ MainTab:CreateButton({
         else
             Rayfield:Notify({
                 Title = "No Player Selected",
-                Content = "Please select a player first.",
+                Content = "Please select a player first",
                 Duration = 3,
                 Image = 4483362458
             })
@@ -243,47 +168,75 @@ MainTab:CreateButton({
     end,
 })
 
--- Debug button to check current players
-MainTab:CreateButton({
-    Name = "Debug: Check Players",
-    Callback = function()
-        local players = getPlayers()
-        local playerList = ""
-        for i, name in ipairs(players) do
-            playerList = playerList .. i .. ". " .. name .. "\n"
-        end
+-- Function to set a specific player in the dropdown
+local function selectPlayerInDropdown(playerName)
+    if playerName then
+        -- Using the correct Set() method from documentation
+        PlayerDropdown:Set({playerName})
+    end
+end
+
+-- Auto-update player list when players join/leave
+local function setupAutoUpdates()
+    -- Update when player joins
+    game.Players.PlayerAdded:Connect(function(player)
+        task.wait(1) -- Brief delay to ensure player is fully loaded
+        local playerNames = getPlayerNames()
+        PlayerDropdown:Refresh(playerNames)
         
-        if #players == 0 then
-            playerList = "No players found (except you)"
+        Rayfield:Notify({
+            Title = "Player Joined",
+            Content = player.Name .. " joined the game",
+            Duration = 2,
+            Image = 4483362458
+        })
+    end)
+    
+    -- Update when player leaves
+    game.Players.PlayerRemoved:Connect(function(player)
+        task.wait(1) -- Brief delay
+        local playerNames = getPlayerNames()
+        PlayerDropdown:Refresh(playerNames)
+        
+        -- If the selected player left, reset to "None"
+        if selectedPlayer == player.Name then
+            PlayerDropdown:Set({"None"})
         end
         
         Rayfield:Notify({
-            Title = "Debug: Player List",
-            Content = "Players in server:\n" .. playerList,
-            Duration = 6,
+            Title = "Player Left",
+            Content = player.Name .. " left the game",
+            Duration = 2,
             Image = 4483362458
         })
-        
-        print("DEBUG - Players in game:")
-        for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
-            print("  - " .. player.Name .. " (UserId: " .. player.UserId .. ")")
+    end)
+end
+
+-- Initialize auto-updates
+setupAutoUpdates()
+
+-- Debug button to check current state
+MainTab:CreateButton({
+    Name = "Debug Info",
+    Callback = function()
+        print("=== DEBUG INFO ===")
+        print("Selected Player:", selectedPlayer)
+        print("Dropdown CurrentOption:", PlayerDropdown.CurrentOption and table.concat(PlayerDropdown.CurrentOption, ", ") or "nil")
+        print("Players in game:")
+        for _, player in ipairs(game.Players:GetPlayers()) do
+            print("  - " .. player.Name)
         end
+        print("==================")
     end,
 })
 
--- Start tracking players
-task.spawn(function()
-    task.wait(1) -- Wait a bit for UI to load
-    SetupPlayerTracking()
-end)
-
--- Initialize the UI
-task.wait(0.5)
+-- Initial notification
 Rayfield:Notify({
     Title = "Player Manager Loaded",
-    Content = "Select a player from the dropdown to begin.",
+    Content = "Select a player from the dropdown\nUse Refresh if players are missing",
     Duration = 5,
     Image = 4483362458
 })
 
-print("Player Manager UI Loaded Successfully!")
+print("Player Manager UI successfully loaded!")
+print("Using correct Rayfield methods: Dropdown:Refresh() and Dropdown:Set()")
