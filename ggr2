@@ -615,7 +615,7 @@ local GiveOutToggle = GiveTab:CreateToggle({
 })
 
 -- ============================================
--- GIFT FUNCTIONS (MOVED TO BOTTOM AS REQUESTED)
+-- GIFT FUNCTIONS (AUTOMATED SCANNING)
 -- ============================================
 
 -- Function to scan and get all available gift types
@@ -691,36 +691,25 @@ local GiftDropdown = GiveTab:CreateDropdown({
     Flag = "GiftDropdown",
     Callback = function(Option)
         selectedGiftType = Option
-        updateGiftCountLabel()
-    end,
-})
-
--- Button to refresh gift types
-GiveTab:CreateButton({
-    Name = "🔄 Scan Available Gifts",
-    Callback = function()
-        local availableGifts = scanAvailableGifts()
-        if #availableGifts == 0 then
-            Rayfield:Notify({
-                Title = "No Gifts Found",
-                Content = "No gifts found in your inventory!",
-                Duration = 3,
-                Image = 4483362458
-            })
-        else
-            GiftDropdown:Refresh(availableGifts)
-            Rayfield:Notify({
-                Title = "Gift Scan Complete",
-                Content = "Found " .. #availableGifts .. " gift type(s)",
-                Duration = 3,
-                Image = 4483362458
-            })
-        end
     end,
 })
 
 -- Label for gift count
-local giftCountLabel = GiveTab:CreateLabel("🎁 Gifts: 0")
+local giftCountLabel = GiveTab:CreateLabel("🎁 Select a gift type from dropdown")
+
+-- Function to update gifts dropdown automatically
+local function updateGiftsDropdown()
+    local availableGifts = scanAvailableGifts()
+    if #availableGifts > 0 then
+        GiftDropdown:Refresh(availableGifts)
+        
+        -- Automatically select the first gift type if none is selected
+        if not selectedGiftType and #availableGifts > 0 then
+            selectedGiftType = availableGifts[1]
+            GiftDropdown:Set(availableGifts[1])
+        end
+    end
+end
 
 -- Function to update gift count label
 local function updateGiftCountLabel()
@@ -728,7 +717,7 @@ local function updateGiftCountLabel()
         updateGiftInventory()
         giftCountLabel:Set("🎁 " .. selectedGiftType .. ": " .. totalGiftAmount)
     else
-        giftCountLabel:Set("🎁 Gifts: 0 (Select a gift type)")
+        giftCountLabel:Set("🎁 No gift type selected")
     end
 end
 
@@ -797,7 +786,7 @@ local function giveAllGiftsToPlayer()
     })
 end
 
--- Toggle for Auto Give Gifts (AT BOTTOM AS REQUESTED)
+-- Toggle for Auto Give Gifts
 local GiveGiftsToggle = GiveTab:CreateToggle({
     Name = "🎁 Auto Give Gifts",
     CurrentValue = false,
@@ -809,23 +798,6 @@ local GiveGiftsToggle = GiveTab:CreateToggle({
                 while isGivingGifts do
                     giveAllGiftsToPlayer()
                     task.wait(600) -- Wait 10 minutes before next check
-                end
-            end)
-        end
-    end,
-})
-
--- Toggle for Auto Refresh Gift Count
-local RefreshGiftToggle = GiveTab:CreateToggle({
-    Name = "🔄 Auto Refresh Gift Count",
-    CurrentValue = true,
-    Flag = "RefreshGiftToggle",
-    Callback = function(Value)
-        if Value then
-            task.spawn(function()
-                while true do
-                    updateGiftCountLabel()
-                    task.wait(10)
                 end
             end)
         end
@@ -844,6 +816,7 @@ local function updatePetsDropdown()
 end
 
 -- Initial updates
+updateGiftsDropdown()
 updateGiftCountLabel()
 updatePetsDropdown()
 
@@ -860,6 +833,15 @@ task.spawn(function()
     while true do
         task.wait(30)
         updatePetsDropdown()
+    end
+end)
+
+-- Periodic refresh for gifts (every 30 seconds)
+task.spawn(function()
+    while true do
+        task.wait(30)
+        updateGiftsDropdown()
+        updateGiftCountLabel()
     end
 end)
 
