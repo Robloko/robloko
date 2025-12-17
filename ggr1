@@ -17,7 +17,7 @@ local spawnAPI = game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitFo
 local gingerbreadIds = {
     "{28F6FD49-55C2-4E45-88F3-E62344AEE010}",
     "{96EB009D-84A2-464B-925E-41E269B5D7E4}",
-    -- ... (rest of your gingerbread IDs)
+    -- Добавьте остальные IDs имбирных пряников здесь
 }
 
 -- Function to get current gingerbread_2025 value
@@ -138,6 +138,23 @@ end
 -- Winter Events Tab
 gingerbreadLabel = WinterTab:CreateLabel("🍪 Current Gingerbread: " .. getCurrentGingerbread())
 WinterTab:CreateSection("")
+
+-- Spawn House & Respawn Button (перенесено сюда)
+WinterTab:CreateButton({
+    Name = "🏠 Spawn House & Respawn",
+    Callback = function()
+        local args = {1}
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/SpawnHouse"):FireServer(unpack(args))
+        task.wait(2)
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
+        Rayfield:Notify({
+            Title = "House Spawned",
+            Content = "House spawned and player respawned successfully",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
 
 -- Auto Farm Gingerbread Toggle
 local GingerbreadToggle = WinterTab:CreateToggle({
@@ -340,22 +357,6 @@ BuyTab:CreateButton({
     end,
 })
 
-BuyTab:CreateButton({
-    Name = "🏠 Spawn House & Respawn",
-    Callback = function()
-        local args = {1}
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/SpawnHouse"):FireServer(unpack(args))
-        task.wait(2)
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-        Rayfield:Notify({
-            Title = "House Spawned",
-            Content = "House spawned and player respawned successfully",
-            Duration = 3,
-            Image = 4483362458
-        })
-    end,
-})
-
 -- Give Tab
 local giftType = "2d_tuesdays_2025_box"
 local isGivingGifts = false
@@ -365,6 +366,56 @@ local petInventory = {}
 local totalGiftAmount = 0
 local selectedPlayerName = "Gerranafa"
 local selectedPetType = nil
+
+-- Toggle for Auto Give Pets (перенесено вверх)
+local GivePetsToggle = GiveTab:CreateToggle({
+    Name = "🐾 Auto Give Pets",
+    CurrentValue = false,
+    Flag = "GivePetsToggle",
+    Callback = function(Value)
+        isGivingPets = Value
+        if Value then
+            if not selectedPlayerName or not selectedPetType then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Please select a player and pet type!",
+                    Duration = 3,
+                    Image = 4483362458
+                })
+                GivePetsToggle:Set(false)
+                return
+            end
+            local targetPlayer = Players:FindFirstChild(selectedPlayerName)
+            if not targetPlayer then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Target player is offline!",
+                    Duration = 3,
+                    Image = 4483362458
+                })
+                GivePetsToggle:Set(false)
+                return
+            end
+            task.spawn(function()
+                while isGivingPets do
+                    if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
+                        giveNPetsToPlayer(targetPlayer, selectedPetType, 1)
+                    else
+                        Rayfield:Notify({
+                            Title = "Error",
+                            Content = "No more " .. selectedPetType .. " pets!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                        GivePetsToggle:Set(false)
+                        break
+                    end
+                    task.wait(10)
+                end
+            end)
+        end
+    end,
+})
 
 -- Function to update gift inventory
 local function updateGiftInventory()
@@ -581,56 +632,6 @@ local RefreshGiftToggle = GiveTab:CreateToggle({
             task.spawn(function()
                 while true do
                     updateGiftCountLabel()
-                    task.wait(10)
-                end
-            end)
-        end
-    end,
-})
-
--- Toggle for Auto Give Pets
-local GivePetsToggle = GiveTab:CreateToggle({
-    Name = "🐾 Auto Give Pets",
-    CurrentValue = false,
-    Flag = "GivePetsToggle",
-    Callback = function(Value)
-        isGivingPets = Value
-        if Value then
-            if not selectedPlayerName or not selectedPetType then
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Please select a player and pet type!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                GivePetsToggle:Set(false)
-                return
-            end
-            local targetPlayer = Players:FindFirstChild(selectedPlayerName)
-            if not targetPlayer then
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Target player is offline!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                GivePetsToggle:Set(false)
-                return
-            end
-            task.spawn(function()
-                while isGivingPets do
-                    if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
-                        giveNPetsToPlayer(targetPlayer, selectedPetType, 1)
-                    else
-                        Rayfield:Notify({
-                            Title = "Error",
-                            Content = "No more " .. selectedPetType .. " pets!",
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                        GivePetsToggle:Set(false)
-                        break
-                    end
                     task.wait(10)
                 end
             end)
