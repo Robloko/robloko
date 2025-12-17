@@ -1,6 +1,4 @@
--- Load Rayfield UI Library
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
+wait(5)
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -268,7 +266,7 @@ local function completeTradeProcess(targetPlayer)
           
             -- Confirm trade
             local success3, result3 = pcall(function()
-                ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
+                return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
             end)
           
             if success3 then
@@ -2097,31 +2095,99 @@ end
 -- ==================================================================
 -- UPDATED UI CREATION WITH AUTO ACCEPT FEATURE
 -- ==================================================================
--- Updated updatePetsDropdown function with proper error handling
-local function updatePetsDropdown(dropdown)
+-- Load Kavo UI Library
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Cocoon PetFarm", "DarkTheme")
+
+-- Create Main Tab
+local MainTab = Window:NewTab("Main")
+
+-- Session Display Label (we'll update it dynamically)
+local SessionSection = MainTab:NewSection("Session Stats")
+local sessionLabel = SessionSection:NewLabel("💵 0 +0 | 🧪 0 +0 | ♻️ 0 | 🥚 0")
+
+-- Trading Section
+local TradingSection = MainTab:NewSection("Trading")
+local playerNameBox = TradingSection:NewTextbox("Enter Player Name", "Player name for trade", function(text)
+    -- No immediate action, used in button
+end)
+TradingSection:NewButton("Send Trade", "Send trade request", function()
+    sendTradeRequest(playerNameBox.Text)
+end)
+TradingSection:NewButton("Add All Pets", "Add all pets to trade", function()
+    addAllPetsToTrade()
+end)
+
+-- Auto Features Section
+local AutoSection = MainTab:NewSection("Auto Features")
+AutoSection:NewToggle("Auto Trade", "Toggle auto trade", function(state)
+    toggleContinuousMode()
+end)
+AutoSection:NewToggle("Auto Potion", "Toggle auto potion", function(state)
+    toggleAutoPotionMode()
+end)
+AutoSection:NewToggle("Auto Accept", "Toggle auto accept trades", function(state)
+    toggleAutoAcceptMode()
+end)
+AutoSection:NewToggle("Auto PetPen", "Toggle auto PetPen", function(state)
+    toggleAutoPetPenMode()
+end)
+AutoSection:NewToggle("PetFarm", "Toggle PetFarm", function(state)
+    togglePetFarmMode()
+end)
+
+-- Pets Dropdown Section
+local PetsSection = MainTab:NewSection("Pets List")
+local petsDropdown = PetsSection:NewDropdown("Select a Pet", "Choose a pet", {}, function(selected)
+    if PetsShow[selected] and PetsShow[selected].unique then
+        if PetID and PetID ~= PetsShow[selected].unique then
+            pcall(function()
+                ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
+            end)
+        end
+        PetID = PetsShow[selected].unique
+        lastValidPetID = PetID
+      
+        -- Safe equip with error handling
+        local equipSuccess, equipError = pcall(function()
+            Pet = ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
+        end)
+      
+        if not equipSuccess then
+            debugPrint("Failed to equip pet: " .. tostring(equipError))
+        end
+      
+        if PetFarmMode and petFarmPetID ~= PetID then
+            petFarmPetID = PetID
+            debugPrint("Updated PetFarm pet to current selection")
+        end
+        debugPrint("Selected pet: " .. selected)
+    else
+        debugPrint("Error: Invalid pet data for selection: " .. selected)
+    end
+end)
+
+-- Developer Console Button
+local MiscSection = MainTab:NewSection("Misc")
+MiscSection:NewButton("Open Dev Console", "Opens developer console", function()
+    game:GetService("StarterGui"):SetCore("DevConsoleVisible", true)
+end)
+
+-- Function to update pets dropdown options
+local function updatePetsDropdownOptions()
     local List = {}
-    local currentSelection = dropdown.CurrentOption
-    local wasSelected = false
-    local previousPetsShow = PetsShow
-    PetsShow = {}
-  
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         if playerData and playerData.inventory and playerData.inventory.pets then
+            PetsShow = {}
             for i, v in pairs(playerData.inventory.pets) do
-                -- Add safety checks for pet data
                 if v and v.id and v.properties then
                     local neonStatus = v.properties.neon and "Neon" or ""
                     local petAge = v.properties.age or 0
                     local key = tostring(v.id) .. " - " .. tostring(petAge) .. " years old (" .. neonStatus .. ")"
                     PetsShow[key] = v
                     table.insert(List, key)
-                    if key == currentSelection then
-                        wasSelected = true
-                    end
-                else
-                    debugPrint("Skipping invalid pet data: " .. tostring(v))
                 end
             end
             table.sort(List)
@@ -2132,138 +2198,15 @@ local function updatePetsDropdown(dropdown)
         debugPrint("Error updating pets dropdown: " .. tostring(errorMsg))
     end
   
-    if wasSelected and currentSelection ~= "Select an option" then
-        dropdown.CurrentOption = currentSelection
-        if PetsShow[currentSelection] then
-            PetID = PetsShow[currentSelection].unique
-            petFarmPetID = PetID
-        end
-    else
-        dropdown.CurrentOption = #List > 0 and "Select a Pet (" .. #List .. ")" or "No Pets Found"
-        if PetID and not wasSelected and not PetFarmMode then
-            local petStillExists = false
-            for _, petKey in ipairs(List) do
-                if PetsShow[petKey] and PetsShow[petKey].unique == PetID then
-                    petStillExists = true
-                    break
-                end
-            end
-            if not petStillExists then
-                pcall(function()
-                    ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
-                end)
-                PetID = nil
-                Pet = nil
-                debugPrint("Previous pet selection no longer available, unequipped")
-            else
-                debugPrint("Pet still exists in inventory, preserving selection despite UI change")
-            end
-        elseif PetFarmMode and PetID and not wasSelected then
-            debugPrint("PetFarm active - preserving current pet selection")
-            for petKey, petData in pairs(PetsShow) do
-                if petData and petData.unique == PetID then
-                    dropdown.CurrentOption = petKey
-                    wasSelected = true
-                    debugPrint("Updated dropdown to match current PetFarm pet: " .. petKey)
-                    break
-                end
-            end
-        end
-    end
-  
-    dropdown:Refresh(List, true)
+    petsDropdown:Refresh(List, true)
 end
--- ==================================================================
--- AUTO-START FUNCTIONALITY
--- ==================================================================
--- Function to automatically start everything
-local function autoStartEverything()
-    debugPrint("=== AUTO-START INITIATED ===")
-  
-    -- Wait a bit for game to load
-    task.wait(3)
-  
-    -- Step 1: Find and select the best starter pet (only starter_egg or 6yo dog/cat)
-    debugPrint("Step 1: Finding best starter pet (starter_egg or 6yo dog/cat)...")
-    local bestPetID = findBestStarterPet()
-    if bestPetID then
-        PetID = bestPetID
-        lastValidPetID = bestPetID
-        petFarmPetID = bestPetID
-        debugPrint("Auto-selected and equipped pet: " .. tostring(bestPetID))
-      
-        -- Try to equip the pet
-        local equipSuccess = ensurePetEquipped(bestPetID, 10)
-        if not equipSuccess then
-            debugPrint("Warning: Could not auto-equip pet, but continuing...")
-        end
-    else
-        debugPrint("Warning: No suitable pets found for auto-start (starter_egg or 6yo dog/cat)")
-    end
-  
-    -- Step 2: Start Auto PetPen
-    debugPrint("Step 2: Starting Auto PetPen...")
-    if not AutoPetPenMode then
-        toggleAutoPetPenMode()
-    end
-  
-    -- Step 3: Start PetFarm
-    debugPrint("Step 3: Starting PetFarm...")
-    if not PetFarmMode then
-        togglePetFarmMode()
-    end
-  
-    -- Step 4: Update UI to reflect auto-started state
-    debugPrint("Step 4: Updating UI...")
-    autoPetPenToggle:Set(true)
-    petFarmToggle:Set(true)
-  
-    debugPrint("=== AUTO-START COMPLETED ===")
-    debugPrint("PetFarm: RUNNING | Auto PetPen: RUNNING")
-    debugPrint("Selected Pet: " .. tostring(PetID))
-end
--- ==================================================================
--- INITIALIZATION AND MAIN LOOP
--- ==================================================================
--- Create Rayfield Window
-local Window = Rayfield:CreateWindow({
-    Name = "Cocoon PetFarm",
-    LoadingTitle = "PetFarm UI",
-    LoadingSubtitle = "Loading...",
-    ConfigurationSaving = {
-        Enabled = false,
-        FolderName = nil,
-        FileName = "PetFarmConfig"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "",
-        RememberJoins = true
-    },
-    KeySystem = false,
-    KeySettings = {
-        Title = "",
-        Subtitle = "",
-        Note = "",
-        FileName = "",
-        SaveKey = false,
-        GrabKeyFromSite = false,
-        Key = {}
-    }
-})
-
--- Create Main Tab
-local MainTab = Window:CreateTab("Main", nil)
-
--- Session Label
-local sessionLabel = MainTab:CreateLabel("💵 0 +0 | 🧪 0 +0 | ♻️ 0 | 🥚 0")
 
 -- Function to update session display
 local function updateSessionDisplay()
     local currentMoney, currentPotions = updateSessionEarnings()
     local recyclingPoints, crystalEggs = getRecyclingAndEggData()
  
-    sessionLabel:Set(string.format(
+    sessionLabel:UpdateLabel(string.format(
         "💵 %d +%d | 🧪 %d +%d | ♻️ %d | 🥚 %d",
         currentMoney, sessionBucksEarned,
         currentPotions, sessionPotionsEarned,
@@ -2271,122 +2214,10 @@ local function updateSessionDisplay()
     ))
 end
 
--- Player Name Input
-local playerNameInput = MainTab:CreateInput({
-    Name = "Enter Player Name for Trade",
-    PlaceholderText = "Player Name",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(Text)
-        -- Optional: Send trade on enter if desired
-    end
-})
-
--- Send Trade Button
-local tradeButton = MainTab:CreateButton({
-    Name = "Send Trade",
-    Callback = function()
-        sendTradeRequest(playerNameInput.CurrentText)
-    end
-})
-
--- Add All Pets Button
-local addPetsButton = MainTab:CreateButton({
-    Name = "Add All Pets",
-    Callback = addAllPetsToTrade
-})
-
--- Auto Trade Toggle
-local autoTradeToggle = MainTab:CreateToggle({
-    Name = "Auto Trade",
-    CurrentValue = false,
-    Callback = function(Value)
-        toggleContinuousMode()
-    end
-})
-
--- Auto Potion Toggle
-local autoPotionToggle = MainTab:CreateToggle({
-    Name = "Auto Potion",
-    CurrentValue = false,
-    Callback = function(Value)
-        toggleAutoPotionMode()
-    end
-})
-
--- Auto Accept Toggle
-local autoAcceptToggle = MainTab:CreateToggle({
-    Name = "Auto Accept",
-    CurrentValue = false,
-    Callback = function(Value)
-        toggleAutoAcceptMode()
-    end
-})
-
--- Auto PetPen Toggle
-local autoPetPenToggle = MainTab:CreateToggle({
-    Name = "Auto PetPen",
-    CurrentValue = true, -- ON by default
-    Callback = function(Value)
-        toggleAutoPetPenMode()
-    end
-})
-
--- PetFarm Toggle
-local petFarmToggle = MainTab:CreateToggle({
-    Name = "PetFarm",
-    CurrentValue = false,
-    Callback = function(Value)
-        togglePetFarmMode()
-    end
-})
-
--- Pets Dropdown
-local petsDropdown = MainTab:CreateDropdown({
-    Name = "Select Pet",
-    Options = {"Loading..."},
-    CurrentOption = "Select an option",
-    Callback = function(Option)
-        if PetsShow[Option] and PetsShow[Option].unique then
-            if PetID and PetID ~= PetsShow[Option].unique then
-                pcall(function()
-                    ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
-                end)
-            end
-            PetID = PetsShow[Option].unique
-            lastValidPetID = PetID
-          
-            -- Safe equip with error handling
-            local equipSuccess, equipError = pcall(function()
-                Pet = ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
-            end)
-          
-            if not equipSuccess then
-                debugPrint("Failed to equip pet: " .. tostring(equipError))
-            end
-          
-            if PetFarmMode and petFarmPetID ~= PetID then
-                petFarmPetID = PetID
-                debugPrint("Updated PetFarm pet to current selection")
-            end
-            debugPrint("Selected pet: " .. Option)
-        else
-            debugPrint("Error: Invalid pet data for selection: " .. Option)
-        end
-    end
-})
-
--- Developer Console Button
-local devConsoleButton = MainTab:CreateButton({
-    Name = "Open Dev Console",
-    Callback = function()
-        game:GetService("StarterGui"):SetCore("DevConsoleVisible", true)
-    end
-})
-
 -- Update pets dropdown periodically
 coroutine.wrap(function()
     while true do
-        updatePetsDropdown(petsDropdown)
+        updatePetsDropdownOptions()
         task.wait(10)
     end
 end)()
@@ -2398,6 +2229,7 @@ local function mainLoop()
         task.wait(1)
     end
 end
+
 -- Initialize session tracking
 lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
 -- Debug the recycler data structure on startup
