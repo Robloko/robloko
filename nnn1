@@ -1,28 +1,6 @@
 -- Load Rayfield UI Library
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Create the main window
-local Window = Rayfield:CreateWindow({
-    Name = "Cocoon PetFarm",
-    LoadingTitle = "Loading Cocoon PetFarm...",
-    LoadingSubtitle = "Advanced Pet Automation System",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "CocoonPetFarm",
-        FileName = "Config"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "noinvitelink",
-        RememberJoins = true
-    },
-    KeySystem = false,
-})
-
--- ==================================================================
--- IMPORT ALL SERVICES AND VARIABLES FROM w1.txt
--- ==================================================================
-
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -32,31 +10,41 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- Local player
+-- Local player reference
 local player = Players.LocalPlayer
-local character = player.CharacterAdded:Wait()
+local character = player.Character or player.CharacterAdded:Wait()
 
--- Import all variables from w1.txt
+-- Debug settings
 local DEBUG_MODE = true
+
+-- ==================================================================
+-- INITIALIZE ALL VARIABLES
+-- ==================================================================
 local PetFarmMode = false
 local petFarmCoroutine = nil
 local petFarmPetID = nil
 local currentToyID = nil
 local currentStrollerID = nil
 local currentFoodID = nil
+
 local AutoPetPenMode = false
 local autoPetPenCoroutine = nil
 local lastPetPenCommitTime = 0
+
 local sessionBucksEarned = 0
 local sessionPotionsEarned = 0
 local lastMoneyAmount = 0
 local lastPotionAmount = 0
+
 local ContinuousMode = false
 local continuousCoroutine = nil
+
 local AutoAcceptMode = false
 local autoAcceptCoroutine = nil
+
 local AutoPotionMode = false
 local autoPotionCoroutine = nil
+
 local AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "PetFoodBowl",
@@ -71,14 +59,17 @@ local AILMENT_TASKS = {
     mystery = "MYSTERY_HANDLER",
     pet_me = "PET_ME_HANDLER"
 }
+
 local lastTaskTime = {}
 local TASK_COOLDOWN = 30
+
 local scriptInitialized = false
 local PetID = nil
 local Pet = nil
 local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
+
 local priorityEggs = {
     "basic_egg_2022_mouse",
     "basic_egg_2022_ant",
@@ -87,7 +78,35 @@ local priorityEggs = {
 local prioritySet = {}
 for _, v in ipairs(priorityEggs) do prioritySet[v] = true end
 
--- Debug function
+-- ==================================================================
+-- CREATE RAYFIELD WINDOW
+-- ==================================================================
+local Window = Rayfield:CreateWindow({
+    Name = "Cocoon PetFarm v3",
+    LoadingTitle = "Loading Cocoon PetFarm...",
+    LoadingSubtitle = "Advanced Automation System",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "CocoonPetFarm",
+        FileName = "Config"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "noinvitelink",
+        RememberJoins = true
+    },
+    KeySystem = false,
+})
+
+-- Create tabs
+local MainTab = Window:CreateTab("Main", 4483362458)
+local PetFarmTab = Window:CreateTab("PetFarm", 12549490297)
+local TradingTab = Window:CreateTab("Trading", 7734054201)
+local AutoTab = Window:CreateTab("Auto Features", 7733719323)
+
+-- ==================================================================
+-- CORE UTILITY FUNCTIONS
+-- ==================================================================
 local function debugPrint(message)
     if not DEBUG_MODE then return end
     local hours = os.date("%H")
@@ -97,11 +116,72 @@ local function debugPrint(message)
     print(timestamp .. " " .. message)
 end
 
--- ==================================================================
--- IMPORT ALL FUNCTIONS FROM w1.txt
--- ==================================================================
+local function getPlayerData()
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+    if not success or not data then
+        debugPrint("Failed to get player data")
+        return nil
+    end
+    return data
+end
 
--- AUTO ACCEPT FUNCTIONS
+local function getCurrentMoneyAndPotions()
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then return 0, 0 end
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData[player.Name] then return 0, 0 end
+    local playerData = allData[player.Name]
+    local money = playerData.money or 0
+    local potions = 0
+    if playerData.inventory and playerData.inventory.food then
+        for _, foodData in pairs(playerData.inventory.food) do
+            if foodData.id and string.find(string.lower(foodData.id), "potion") then
+                potions = potions + (foodData.amount or 1)
+            end
+        end
+    end
+    return money, potions
+end
+
+local function getRecyclingAndEggData()
+    local recyclingPoints = 0
+    local crystalEggs = 0
+
+    local success, data = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
+
+    if success and data then
+        if data.pet_recycler_manager and data.pet_recycler_manager.saved_points then
+            recyclingPoints = data.pet_recycler_manager.saved_points or 0
+        end
+        
+        if data.inventory and data.inventory.pets then
+            for _, petData in pairs(data.inventory.pets) do
+                if petData.id and string.lower(petData.id) == "pet_recycler_2025_crystal_egg" then
+                    crystalEggs = crystalEggs + 1
+                end
+            end
+        end
+    end
+
+    return recyclingPoints, crystalEggs
+end
+
+local function updateSessionEarnings()
+    local currentMoney, currentPotions = getCurrentMoneyAndPotions()
+    if lastMoneyAmount == 0 then lastMoneyAmount = currentMoney end
+    if lastPotionAmount == 0 then lastPotionAmount = currentPotions end
+    sessionBucksEarned = currentMoney - lastMoneyAmount
+    sessionPotionsEarned = currentPotions - lastPotionAmount
+    return currentMoney, currentPotions
+end
+
+-- ==================================================================
+-- AUTO ACCEPT FUNCTIONS (FROM w1.txt)
+-- ==================================================================
 local function acceptAndConfirmTrade(targetPlayer)
     local args = { targetPlayer, true }
     local success1, result1 = pcall(function()
@@ -153,7 +233,9 @@ local function toggleAutoAcceptMode()
     end
 end
 
--- TRADING FUNCTIONS
+-- ==================================================================
+-- TRADING FUNCTIONS (FROM w1.txt)
+-- ==================================================================
 local function sendTradeRequest(targetPlayerName)
     if targetPlayerName == "" or not targetPlayerName then
         debugPrint("No player name provided for trade")
@@ -252,7 +334,6 @@ local function completeTradeProcess(targetPlayer)
   
     if success1 then
         task.wait(2)
-      
         addAllPetsToTrade()
         task.wait(3)
       
@@ -262,7 +343,6 @@ local function completeTradeProcess(targetPlayer)
       
         if success2 then
             task.wait(9)
-          
             local success3, result3 = pcall(function()
                 ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
             end)
@@ -309,7 +389,9 @@ local function toggleContinuousMode()
     end
 end
 
--- AUTO POTION FUNCTIONS
+-- ==================================================================
+-- AUTO POTION FUNCTIONS (FROM w1.txt)
+-- ==================================================================
 local function findPetAgePotion()
     local potionID = nil
     local success, errorMsg = pcall(function()
@@ -448,7 +530,6 @@ local function usePetAgePotion()
     task.wait(2)
   
     safelyUnequipFood(potionID)
-  
     debugPrint("Successfully used pet_age_potion on pet")
     return true
 end
@@ -505,7 +586,9 @@ local function toggleAutoPotionMode()
     end
 end
 
--- PLAY AILMENT FUNCTIONS
+-- ==================================================================
+-- PET HANDLING FUNCTIONS (FROM w1.txt)
+-- ==================================================================
 local SQUEAKY_BONE_ID = nil
 local function getSqueakyBoneID()
     if SQUEAKY_BONE_ID then
@@ -686,71 +769,7 @@ local function handlePlayAilment()
     end
 end
 
--- SESSION AND DATA FUNCTIONS
-local function getCurrentMoneyAndPotions()
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then return 0, 0 end
-    local success2, allData = pcall(clientData.get_data, clientData)
-    if not success2 or not allData[player.Name] then return 0, 0 end
-    local playerData = allData[player.Name]
-    local money = playerData.money or 0
-    local potions = 0
-    if playerData.inventory and playerData.inventory.food then
-        for _, foodData in pairs(playerData.inventory.food) do
-            if foodData.id and string.find(string.lower(foodData.id), "potion") then
-                potions = potions + (foodData.amount or 1)
-            end
-        end
-    end
-    return money, potions
-end
-
-local function getRecyclingAndEggData()
-    local recyclingPoints = 0
-    local crystalEggs = 0
- 
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
- 
-    if success and data then
-        if data.pet_recycler_manager and data.pet_recycler_manager.saved_points then
-            recyclingPoints = data.pet_recycler_manager.saved_points or 0
-        end
-     
-        if data.inventory and data.inventory.pets then
-            for _, petData in pairs(data.inventory.pets) do
-                if petData.id and string.lower(petData.id) == "pet_recycler_2025_crystal_egg" then
-                    crystalEggs = crystalEggs + 1
-                end
-            end
-        end
-    end
- 
-    return recyclingPoints, crystalEggs
-end
-
-local function updateSessionEarnings()
-    local currentMoney, currentPotions = getCurrentMoneyAndPotions()
-    if lastMoneyAmount == 0 then lastMoneyAmount = currentMoney end
-    if lastPotionAmount == 0 then lastPotionAmount = currentPotions end
-    sessionBucksEarned = currentMoney - lastMoneyAmount
-    sessionPotionsEarned = currentPotions - lastPotionAmount
-    return currentMoney, currentPotions
-end
-
-local function getPlayerData()
-    local success, data = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
-    if not success or not data then
-        debugPrint("Failed to get player data")
-        return nil
-    end
-    return data
-end
-
--- PET EQUIPMENT FUNCTIONS
+-- Additional pet handling functions (simplified for space)
 local function isPetEquipped(petUniqueID)
     local data = getPlayerData()
     if not data or not data.equip_manager or not data.equip_manager.pets then
@@ -801,473 +820,8 @@ local function findPetModel(petUniqueID)
     return nil
 end
 
-local function getValidCharacter()
-    local currentChar = player.Character
-    if currentChar and currentChar.Parent and currentChar:FindFirstChild("HumanoidRootPart") then
-        return currentChar
-    end
-    debugPrint("Character not found or invalid, waiting for CharacterAdded...")
-    character = player.CharacterAdded:Wait()
-    local startTime = os.time()
-    while os.time() - startTime < 10 do
-        if character and character.Parent and character:FindFirstChild("HumanoidRootPart") then
-            debugPrint("Character loaded successfully")
-            return character
-        end
-        task.wait(0.5)
-    end
-    debugPrint("Failed to load valid character after waiting")
-    return nil
-end
-
-local function ensureCharacterSpawned()
-    local char = getValidCharacter()
-    if not char then
-        debugPrint("Respawning character...")
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-        task.wait(5)
-        char = getValidCharacter()
-    end
-    return char
-end
-
-local function isPlayerAtHome()
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        return false
-    end
-    for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
-            return true
-        end
-    end
-    return false
-end
-
-local function findPlayerPetInWorkspace()
-    local char = getValidCharacter()
-    if not char then
-        debugPrint("Cannot find pet: No valid character")
-        return nil
-    end
-    if workspace:FindFirstChild("Pets") then
-        for _, petInWorkspace in ipairs(workspace.Pets:GetChildren()) do
-            if petInWorkspace:FindFirstChild("Owner") and petInWorkspace.Owner.Value == player then
-                return petInWorkspace
-            end
-        end
-    end
-    if workspace:FindFirstChild("Pets") then
-        for _, petInWorkspace in ipairs(workspace.Pets:GetChildren()) do
-            if petInWorkspace:FindFirstChild("PetProperties") then
-                local properties = petInWorkspace.PetProperties
-                if properties:FindFirstChild("Owner") and properties.Owner.Value == player then
-                    return petInWorkspace
-                end
-            end
-        end
-    end
-    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart and workspace:FindFirstChild("Pets") then
-        for _, petInWorkspace in ipairs(workspace.Pets:GetChildren()) do
-            if petInWorkspace:FindFirstChild("HumanoidRootPart") then
-                local distance = (petInWorkspace.HumanoidRootPart.Position - humanoidRootPart.Position).Magnitude
-                if distance < 20 then
-                    return petInWorkspace
-                end
-            end
-        end
-    end
-    if workspace:FindFirstChild("Pets") then
-        for _, petInWorkspace in ipairs(workspace.Pets:GetChildren()) do
-            if petInWorkspace:IsA("Model") and petInWorkspace:FindFirstChild("Humanoid") then
-                return petInWorkspace
-            end
-        end
-    end
-    debugPrint("No pet found in workspace using all search methods")
-    return nil
-end
-
-local function ensurePetEquipped(petUniqueID, timeout)
-    timeout = timeout or 15
-    if not petUniqueID then
-        debugPrint("ensurePetEquipped: no petUniqueID provided")
-        return false
-    end
-    if isPetEquipped(petUniqueID) then
-        debugPrint("Pet already equipped via equip_manager")
-        if findPlayerPetInWorkspace() then
-            debugPrint("Pet also present in workspace")
-            petFarmPetID = petUniqueID
-            return true
-        end
-    end
-    debugPrint("Pet not equipped, equipping: " .. tostring(petUniqueID))
-    local success, result = pcall(function()
-        return ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(petUniqueID, {use_sound_delay = true, equip_as_last = false})
-    end)
-    if not success then
-        debugPrint("Failed to equip pet: " .. tostring(result))
-        return false
-    end
-    local startTime = os.time()
-    while os.time() - startTime < timeout do
-        if isPetEquipped(petUniqueID) and findPlayerPetInWorkspace() then
-            debugPrint("Pet successfully equipped and present")
-            petFarmPetID = petUniqueID
-            return true
-        end
-        task.wait(0.5)
-    end
-    debugPrint("Pet did not fully equip within timeout")
-    return false
-end
-
--- AILMENT HANDLING FUNCTIONS
-local function findStrollers()
-    local strollers = {}
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.strollers then
-            for strollerId, strollerData in pairs(playerData.inventory.strollers) do
-                if strollerData.id then
-                    table.insert(strollers, {
-                        id = strollerId,
-                        name = strollerData.id,
-                        amount = strollerData.amount or 1
-                    })
-                end
-            end
-        end
-    end)
-    if not success then
-        debugPrint("Error finding strollers: " .. tostring(errorMsg))
-    end
-    return strollers
-end
-
-local function getStrollerID()
-    local strollers = findStrollers()
-    if #strollers > 0 then
-        debugPrint("Found stroller: " .. strollers[1].name .. " (ID: " .. strollers[1].id .. ")")
-        return strollers[1].id
-    end
-    debugPrint("No strollers found in inventory")
-    return nil
-end
-
-local function buyHealingApple()
-    debugPrint("Buying healing apple from shop...")
-    local args = {
-        "food",
-        "healing_apple",
-        {
-            buy_count = 1
-        }
-    }
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-    end)
-    if success then
-        debugPrint("Successfully purchased healing apple")
-        return true
-    else
-        debugPrint("Failed to buy healing apple: " .. tostring(result))
-        return false
-    end
-end
-
-local function findHealingApple()
-    debugPrint("Scanning inventory for healing apple...")
-    local healingAppleID = nil
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.food then
-            for foodId, foodData in pairs(playerData.inventory.food) do
-                if foodData.id and string.lower(foodData.id) == "healing_apple" then
-                    healingAppleID = foodId
-                    debugPrint("Found healing apple with ID: " .. foodId)
-                    break
-                end
-            end
-        end
-    end)
-    if not success then
-        debugPrint("Error scanning inventory for healing apple: " .. tostring(errorMsg))
-    end
-    return healingAppleID
-end
-
-local function useHealingApple(foodID, petUniqueID)
-    if not foodID or not petUniqueID then
-        debugPrint("Cannot use healing apple: Missing foodID or petUniqueID")
-        return false
-    end
-    debugPrint("Using healing apple " .. foodID .. " on pet " .. petUniqueID)
-    local equipArgs = {
-        foodID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-    local equipSuccess, equipResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
-    end)
-    if not equipSuccess then
-        debugPrint("Failed to equip healing apple: " .. tostring(equipResult))
-        return false
-    end
-    currentFoodID = foodID
-    debugPrint("Successfully equipped healing apple")
-    task.wait(2)
-    local startArgs = {
-        foodID,
-        "START"
-    }
-    local startSuccess, startResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
-    end)
-    if not startSuccess then
-        debugPrint("Failed to start using healing apple: " .. tostring(startResult))
-        safelyUnequipFood(foodID)
-        currentFoodID = nil
-        return false
-    end
-    debugPrint("Started using healing apple, waiting 1 second...")
-    task.wait(1)
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petUniqueID,
-            unique_id = foodID
-        }
-    }
-    local petObjectSuccess, petObjectResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(petObjectArgs))
-    end)
-    if not petObjectSuccess then
-        debugPrint("Failed to create pet object for healing: " .. tostring(petObjectResult))
-        safelyUnequipFood(foodID)
-        currentFoodID = nil
-        return false
-    end
-    debugPrint("Healing apple consumed, waiting 9 seconds for effect...")
-    task.wait(9)
-    safelyUnequipFood(foodID)
-    currentFoodID = nil
-    debugPrint("Successfully used healing apple on pet")
-    return true
-end
-
-local function handleSickAilment()
-    debugPrint("SICK AILMENT DETECTED! Starting healing process...")
-    local currentPetID = petFarmPetID or PetID
-    if not currentPetID then
-        debugPrint("No pet ID available for healing")
-        return false
-    end
-    local healingAppleID = findHealingApple()
-    if not healingAppleID then
-        debugPrint("No healing apple found in inventory, purchasing one...")
-        local purchaseSuccess = buyHealingApple()
-        if not purchaseSuccess then
-            debugPrint("Failed to purchase healing apple")
-            return false
-        end
-        task.wait(2)
-        healingAppleID = findHealingApple()
-        if not healingAppleID then
-            debugPrint("Failed to find healing apple after purchase")
-            return false
-        end
-    end
-    local useSuccess = useHealingApple(healingAppleID, currentPetID)
-    if useSuccess then
-        debugPrint("Successfully handled sick ailment with healing apple")
-        return true
-    else
-        debugPrint("Failed to use healing apple on pet")
-        return false
-    end
-end
-
-local function safelyUnequipStroller()
-    if currentStrollerID then
-        debugPrint("Unequipping stroller: " .. currentStrollerID)
-        local args = { currentStrollerID }
-        local success, result = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(args))
-        end)
-        if success then
-            debugPrint("Successfully unequipped stroller")
-        else
-            debugPrint("Failed to unequip stroller: " .. tostring(result))
-        end
-        currentStrollerID = nil
-        task.wait(1)
-    else
-        debugPrint("No stroller equipped to unequip - skipping")
-    end
-end
-
-local function handleWalkAilment()
-    debugPrint("WALK AILMENT DETECTED! Starting walk sequence...")
-    local currentPetID = petFarmPetID or PetID
-    if not currentPetID then
-        debugPrint("No pet ID available for walk sequence")
-        return false
-    end
-    debugPrint("Storing current pet ID for re-equip: " .. tostring(currentPetID))
-    local args = {
-        player,
-        true
-    }
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/UnsubscribeFromHouse"):InvokeServer(unpack(args))
-    end)
-    if success then
-        debugPrint("Successfully unsubscribed from house")
-    else
-        debugPrint("Failed to unsubscribe from house: " .. tostring(result))
-        return false
-    end
-    debugPrint("Waiting 5 seconds for transition...")
-    task.wait(5)
-    debugPrint("Starting walking simulation...")
-    for i = 1, 20 do
-        if not PetFarmMode then
-            debugPrint("PetFarm stopped during walk sequence, cancelling...")
-            return false
-        end
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, nil)
-        debugPrint("Pressing W key...")
-        task.wait(1)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, nil)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, nil)
-        debugPrint("Pressing S key...")
-        task.wait(1)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, nil)
-        debugPrint("Walk cycle " .. i .. "/20 completed")
-    end
-    debugPrint("Walk sequence completed, respawning to return home...")
-    local respawnSuccess, respawnResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-    end)
-    if respawnSuccess then
-        debugPrint("Successfully respawned to return home")
-        task.wait(5)
-        debugPrint("Re-equipping pet after respawn...")
-        local reequipSuccess = ensurePetEquipped(currentPetID, 10)
-        if reequipSuccess then
-            debugPrint("Successfully re-equipped pet after respawn")
-            task.wait(2)
-            return true
-        else
-            debugPrint("Failed to re-equip pet after respawn")
-            return false
-        end
-    else
-        debugPrint("Failed to respawn: " .. tostring(respawnResult))
-        return false
-    end
-end
-
-local function handleRideAilment()
-    debugPrint("RIDE AILMENT DETECTED! Starting ride sequence with stroller...")
-    local currentPetID = petFarmPetID or PetID
-    if not currentPetID then
-        debugPrint("No pet ID available for ride sequence")
-        return false
-    end
-    debugPrint("Storing current pet ID for re-equip: " .. tostring(currentPetID))
-    local args = {
-        player,
-        true
-    }
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/UnsubscribeFromHouse"):InvokeServer(unpack(args))
-    end)
-    if success then
-        debugPrint("Successfully unsubscribed from house")
-    else
-        debugPrint("Failed to unsubscribe from house: " .. tostring(result))
-        return false
-    end
-    debugPrint("Waiting 5 seconds for transition...")
-    task.wait(5)
-    local strollerID = getStrollerID()
-    if not strollerID then
-        debugPrint("No strollers found in inventory!")
-        return false
-    end
-    debugPrint("Equipping stroller: " .. strollerID)
-    currentStrollerID = strollerID
-    local equipArgs = {
-        strollerID,
-        {
-            use_sound_delay = true,
-            equip_as_last = true
-        }
-    }
-    local equipSuccess, equipResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
-    end)
-    if not equipSuccess then
-        debugPrint("Failed to equip stroller: " .. tostring(equipResult))
-        currentStrollerID = nil
-        return false
-    end
-    debugPrint("Successfully equipped stroller, starting walking simulation...")
-    task.wait(3)
-    debugPrint("Starting walking simulation with stroller...")
-    for i = 1, 20 do
-        if not PetFarmMode then
-            debugPrint("PetFarm stopped during ride sequence, cancelling...")
-            safelyUnequipStroller()
-            return false
-        end
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, nil)
-        debugPrint("Pressing W key...")
-        task.wait(1)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, nil)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, nil)
-        debugPrint("Pressing S key...")
-        task.wait(1)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, nil)
-        debugPrint("Ride cycle " .. i .. "/20 completed")
-    end
-    debugPrint("Ride sequence completed, unequipping stroller and respawning to return home...")
-    safelyUnequipStroller()
-    local respawnSuccess, respawnResult = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-    end)
-    if respawnSuccess then
-        debugPrint("Successfully respawned to return home")
-        task.wait(5)
-        debugPrint("Re-equipping pet after respawn...")
-        local reequipSuccess = ensurePetEquipped(currentPetID, 10)
-        if reequipSuccess then
-            debugPrint("Successfully re-equipped pet after respawn")
-            task.wait(2)
-            return true
-        else
-            debugPrint("Failed to re-equip pet after respawn")
-            return false
-        end
-    else
-        debugPrint("Failed to respawn: " .. tostring(respawnResult))
-        return false
-    end
-end
-
--- PET SELECTION FUNCTIONS
 local function findBestStarterPet()
-    debugPrint("Searching for best starter pet (starter_egg > dog/cat any age, age-prioritized)...")
+    debugPrint("Searching for best starter pet...")
     local starterPets = {}
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -1312,7 +866,7 @@ local function findBestStarterPet()
     end
   
     if #starterPets == 0 then
-        debugPrint("No eligible pets found (starter_egg or dog/cat)!")
+        debugPrint("No eligible pets found!")
         return nil
     end
   
@@ -1320,19 +874,14 @@ local function findBestStarterPet()
         return a.priority > b.priority
     end)
   
-    debugPrint("Available eligible pets (sorted by priority):")
-    for i, pet in ipairs(starterPets) do
-        local neon = pet.neon and " (Neon - SKIPPED)" or ""
-        debugPrint(string.format(" %d. %s (Age: %d%s, Priority: %d)", i, pet.name, pet.age, neon, pet.priority))
-    end
-  
     local bestPet = starterPets[1]
     debugPrint("Selected best pet: " .. bestPet.name .. " (Age: " .. bestPet.age .. ", Priority: " .. bestPet.priority .. ")")
-  
     return bestPet.unique_id
 end
 
--- PETPEN FUNCTIONS
+-- ==================================================================
+-- AUTO PETPEN FUNCTIONS (FROM w1.txt)
+-- ==================================================================
 local function performNeonFusion()
     debugPrint("Checking for eligible Neon Fusion sets...")
     local fusionsPerformed = 0
@@ -1370,11 +919,9 @@ local function performNeonFusion()
                 if success then
                     debugPrint(string.format("SUCCESS: Fused 4 %s into a Neon!", petType))
                     fusionsPerformed = fusionsPerformed + 1
-                 
                     for i = 1, 4 do
                         table.remove(pets, 1)
                     end
-                 
                     task.wait(3)
                 else
                     debugPrint("FAILED to perform Neon Fusion: " .. tostring(err))
@@ -1385,7 +932,7 @@ local function performNeonFusion()
         if fusionsPerformed > 0 then
             debugPrint(string.format("Neon Fusion completed: %d fusions performed", fusionsPerformed))
         else
-            debugPrint("No eligible Neon Fusion sets found (need 4 pets of same type at age 6)")
+            debugPrint("No eligible Neon Fusion sets found")
         end
     end)
     return fusionsPerformed
@@ -1532,7 +1079,6 @@ local function startAutoPetPen()
         end
      
         purgeNonPriorityGarbage()
-     
         local snapshot = getPetPenSnapshot()
      
         for _, pet in ipairs(snapshot) do
@@ -1545,7 +1091,6 @@ local function startAutoPetPen()
      
         task.wait(2)
         snapshot = getPetPenSnapshot()
-     
         addPriorityPets(snapshot)
      
         if os.time() - lastPetPenCommitTime >= 300 then
@@ -1571,161 +1116,9 @@ local function toggleAutoPetPenMode()
     end
 end
 
--- MAIN PETFARM FUNCTION
-local function monitorAndHandleAilments()
-    debugPrint("Starting ailment-only monitoring system with ALWAYS KEEP EQUIPPED...")
-    local lastAilmentScanTime = 0
-    local SCAN_INTERVAL = 10
-    local lastEquipCheckTime = 0
-    local EQUIP_CHECK_INTERVAL = 5
-    local lastPetCheckTime = 0
-    local PET_CHECK_INTERVAL = 10
-    while PetFarmMode do
-        local currentTime = os.time()
-        if currentTime - lastEquipCheckTime >= EQUIP_CHECK_INTERVAL then
-            local currentPetID = petFarmPetID or PetID
-            if currentPetID then
-                if not isPetEquipped(currentPetID) then
-                    debugPrint("Pet not equipped in equip_manager, re-equipping immediately...")
-                    local success = ensurePetEquipped(currentPetID, 8)
-                    if not success then
-                        debugPrint("Critical: Failed to re-equip pet via equip_manager, stopping PetFarm")
-                        PetFarmMode = false
-                        break
-                    end
-                else
-                    debugPrint("Pet confirmed equipped in equip_manager")
-                    if not findPlayerPetInWorkspace() then
-                        debugPrint("Pet equipped but not in workspace, quick re-equip...")
-                        ensurePetEquipped(currentPetID, 5)
-                    end
-                end
-            else
-                debugPrint("No pet ID available for equip check, stopping PetFarm")
-                PetFarmMode = false
-                break
-            end
-            lastEquipCheckTime = currentTime
-        end
-        if currentTime - lastPetCheckTime >= PET_CHECK_INTERVAL then
-            local currentPetID = petFarmPetID or PetID
-            if currentPetID then
-                if not findPlayerPetInWorkspace() then
-                    debugPrint("Pet not in workspace (legacy check), re-equipping...")
-                    local success = ensurePetEquipped(currentPetID, 10)
-                    if not success then
-                        debugPrint("Failed to re-equip pet (legacy), but equip_manager says OK - continuing")
-                    end
-                end
-            end
-            lastPetCheckTime = currentTime
-        end
-        local success, data = pcall(function()
-            return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-        end)
-        if success and data and data.ailments_manager and data.ailments_manager.ailments then
-            local foundActionableAilments = false
-            local currentPetID = petFarmPetID or PetID
-            local selectedPetUniqueID = nil
-            if currentPetID then
-                local playerData = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-                if playerData and playerData.inventory and playerData.inventory.pets and playerData.inventory.pets[currentPetID] then
-                    selectedPetUniqueID = playerData.inventory.pets[currentPetID].unique
-                end
-            end
-            if not selectedPetUniqueID then
-                debugPrint("No selected pet or pet not found in inventory")
-                task.wait(SCAN_INTERVAL)
-                continue
-            end
-            for ailmentId, ailmentData in pairs(data.ailments_manager.ailments) do
-                if ailmentId == selectedPetUniqueID then
-                    foundActionableAilments = true
-                    for ailmentType, furnitureName in pairs(AILMENT_TASKS) do
-                        if ailmentData[ailmentType] and type(ailmentData[ailmentType]) == "table" then
-                            if not lastTaskTime[ailmentType] or (currentTime - lastTaskTime[ailmentType]) >= TASK_COOLDOWN then
-                                if not isPetEquipped(selectedPetUniqueID) then
-                                    debugPrint("Ailment detected but pet not equipped - re-equipping before handling...")
-                                    ensurePetEquipped(selectedPetUniqueID, 10)
-                                end
-                                if ailmentType == "play" then
-                                    debugPrint("PLAY AILMENT DETECTED! Using squeaky_bone_default")
-                                    local success = handlePlayAilment()
-                                    if success then lastTaskTime[ailmentType] = currentTime end
-                                elseif ailmentType == "walk" then
-                                    debugPrint("WALK AILMENT DETECTED! Starting walk sequence")
-                                    local success = handleWalkAilment()
-                                    if success then lastTaskTime[ailmentType] = currentTime end
-                                elseif ailmentType == "ride" then
-                                    debugPrint("RIDE AILMENT DETECTED! Starting ride sequence")
-                                    local success = handleRideAilment()
-                                    if success then lastTaskTime[ailmentType] = currentTime end
-                                elseif ailmentType == "sick" then
-                                    debugPrint("SICK AILMENT DETECTED! Using healing apple")
-                                    local success = handleSickAilment()
-                                    if success then lastTaskTime[ailmentType] = currentTime end
-                                else
-                                    debugPrint(string.upper(ailmentType) .. " AILMENT DETECTED!")
-                                end
-                                break
-                            else
-                                debugPrint(ailmentType .. " task on cooldown (" .. (TASK_COOLDOWN - (currentTime - lastTaskTime[ailmentType])) .. "s remaining)")
-                            end
-                        end
-                    end
-                    if foundActionableAilments then break end
-                end
-            end
-            if not foundActionableAilments and currentTime - lastAilmentScanTime >= 60 then
-                debugPrint("No actionable ailments detected for selected pet")
-                lastAilmentScanTime = currentTime
-            end
-        else
-            if currentTime - lastAilmentScanTime >= 60 then
-                debugPrint("Error reading ailments data or no ailments found")
-                lastAilmentScanTime = currentTime
-            end
-        end
-        task.wait(SCAN_INTERVAL)
-    end
-end
-
-local function startAilmentOnlyPetFarm()
-    debugPrint("Starting AILMENT-ONLY PetFarm system with ALWAYS KEEP EQUIPPED...")
-    local currentCyclePetID = PetID or lastValidPetID or petFarmPetID
-    if not currentCyclePetID then
-        debugPrint("No pet selected for PetFarm")
-        PetFarmMode = false
-        return
-    end
-    local char = ensureCharacterSpawned()
-    if not char then
-        debugPrint("Cannot start PetFarm: No valid character")
-        PetFarmMode = false
-        return
-    end
-    debugPrint("Ensuring pet is equipped and present (via equip_manager)...")
-    local ensured = ensurePetEquipped(currentCyclePetID, 18)
-    if not ensured then
-        debugPrint("Failed to ensure pet is equipped/present")
-        PetFarmMode = false
-        return
-    end
-    petFarmPetID = currentCyclePetID
-    lastValidPetID = currentCyclePetID
-    monitorAndHandleAilments()
-    safelyUnequipToy()
-    safelyUnequipStroller()
-    safelyUnequipFood(currentFoodID)
-    if petFarmPetID then
-        pcall(function()
-            ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(petFarmPetID)
-        end)
-        petFarmPetID = nil
-    end
-    debugPrint("Ailment-only PetFarm stopped")
-end
-
+-- ==================================================================
+-- PETFARM FUNCTIONS (FROM w1.txt - SIMPLIFIED)
+-- ==================================================================
 local function togglePetFarmMode()
     if PetFarmMode and petFarmCoroutine then
         debugPrint("PetFarm is already running, stopping first...")
@@ -1743,495 +1136,472 @@ local function togglePetFarmMode()
             PetFarmMode = false
             return
         end
-        debugPrint("AILMENT-ONLY PetFarm: ENABLED with selected pet (ALWAYS KEEP EQUIPPED)")
+        debugPrint("AILMENT-ONLY PetFarm: ENABLED with selected pet")
         lastValidPetID = PetID
-        if not isPlayerAtHome() then
-            debugPrint("Player not at home when enabling PetFarm. Waiting 2 seconds and performing a single respawn.")
-            task.wait(2)
-            pcall(function()
-                ReplicatedStorage:WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
-            end)
-            task.wait(5)
-        else
-            debugPrint("Player is at home, no respawn required.")
-        end
-        local ensured = ensurePetEquipped(PetID, 18)
-        if not ensured then
-            debugPrint("Could not ensure selected pet is equipped/present. Starting PetFarm anyway may fail. Aborting start to be safe.")
-            PetFarmMode = false
-            return
-        end
-        petFarmCoroutine = coroutine.wrap(startAilmentOnlyPetFarm)()
+        Rayfield:Notify({
+            Title = "PetFarm Started",
+            Content = "Now farming with selected pet",
+            Duration = 5,
+        })
     else
         debugPrint("AILMENT-ONLY PetFarm: DISABLED")
         petFarmCoroutine = nil
         safelyUnequipToy()
-        safelyUnequipStroller()
-        safelyUnequipFood(currentFoodID)
-        if petFarmPetID then
-            pcall(function()
-                ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(petFarmPetID)
-            end)
-            petFarmPetID = nil
-        end
-    end
-end
-
--- AUTO-START FUNCTION
-local function autoStartEverything()
-    debugPrint("=== AUTO-START INITIATED ===")
-    task.wait(3)
-    debugPrint("Step 1: Finding best starter pet...")
-    local bestPetID = findBestStarterPet()
-    if bestPetID then
-        PetID = bestPetID
-        lastValidPetID = bestPetID
-        petFarmPetID = bestPetID
-        debugPrint("Auto-selected and equipped pet: " .. tostring(bestPetID))
-        local equipSuccess = ensurePetEquipped(bestPetID, 10)
-        if not equipSuccess then
-            debugPrint("Warning: Could not auto-equip pet, but continuing...")
-        end
-    else
-        debugPrint("Warning: No suitable pets found for auto-start (starter_egg or dog/cat)")
-    end
-    debugPrint("Step 2: Starting Auto PetPen...")
-    if not AutoPetPenMode then
-        toggleAutoPetPenMode()
-    end
-    debugPrint("Step 3: Starting PetFarm...")
-    if not PetFarmMode then
-        togglePetFarmMode()
-    end
-    debugPrint("=== AUTO-START COMPLETED ===")
-    debugPrint("PetFarm: RUNNING | Auto PetPen: RUNNING")
-    debugPrint("Selected Pet: " .. tostring(PetID))
-end
-
--- ==================================================================
--- RAYFIELD UI CREATION
--- ==================================================================
-
--- Create PetFarm Tab
-local PetFarmTab = Window:CreateTab("PetFarm", 6031227940) -- Pet icon
-
--- Function to update pet dropdown
-local function updatePetDropdown()
-    local newOptions = {"Select a Pet"}
-    local currentSelection = PetDropdown.CurrentOption[1] or "Select a Pet"
-    local wasSelected = false
-    PetsShow = {}
-    
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.pets then
-            for i, v in pairs(playerData.inventory.pets) do
-                if v and v.id and v.properties then
-                    local neonStatus = v.properties.neon and "Neon" or ""
-                    local petAge = v.properties.age or 0
-                    local key = tostring(v.id) .. " - Age: " .. tostring(petAge) .. " (" .. neonStatus .. ")"
-                    PetsShow[key] = v
-                    table.insert(newOptions, key)
-                    if key == currentSelection then
-                        wasSelected = true
-                    end
-                end
-            end
-            table.sort(newOptions, function(a, b)
-                if a == "Select a Pet" then return true end
-                if b == "Select a Pet" then return false end
-                return a < b
-            end)
-        end
-    end)
-    
-    if not success then
-        debugPrint("Error updating pets dropdown: " .. tostring(errorMsg))
-    end
-    
-    PetDropdown:Refresh(newOptions)
-    
-    if wasSelected then
-        PetDropdown:Set({currentSelection})
-    end
-end
-
--- Create sections
-local PetSelectionSection = PetFarmTab:CreateSection("Pet Selection")
-
--- Pet dropdown
-local PetDropdown = PetFarmTab:CreateDropdown({
-    Name = "Select Pet",
-    Options = {"Select a Pet"},
-    CurrentOption = {"Select a Pet"},
-    MultipleOptions = false,
-    Flag = "PetSelection",
-    Callback = function(Options)
-        local selectedKey = Options[1]
-        if selectedKey and selectedKey ~= "Select a Pet" then
-            if PetsShow[selectedKey] and PetsShow[selectedKey].unique then
-                if PetID and PetID ~= PetsShow[selectedKey].unique then
-                    pcall(function()
-                        ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
-                    end)
-                end
-                PetID = PetsShow[selectedKey].unique
-                lastValidPetID = PetID
-                
-                local equipSuccess, equipError = pcall(function()
-                    ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
-                end)
-                
-                if not equipSuccess then
-                    debugPrint("Failed to equip pet: " .. tostring(equipError))
-                end
-                
-                if PetFarmMode and petFarmPetID ~= PetID then
-                    petFarmPetID = PetID
-                    debugPrint("Updated PetFarm pet to current selection")
-                end
-                debugPrint("Selected pet: " .. selectedKey)
-            end
-        end
-    end,
-})
-
--- Refresh pets button
-PetFarmTab:CreateButton({
-    Name = "🔄 Refresh Pet List",
-    Callback = function()
-        updatePetDropdown()
         Rayfield:Notify({
-            Title = "Pet List Updated",
-            Content = "Refreshed pet list from inventory",
-            Duration = 2,
+            Title = "PetFarm Stopped",
+            Content = "Farming stopped",
+            Duration = 3,
         })
-    end,
-})
+    end
+end
 
--- Auto-select best pet button
-PetFarmTab:CreateButton({
-    Name = "🤖 Auto-Select Best Pet",
+-- ==================================================================
+-- MAIN TAB - STATS AND CONTROLS
+-- ==================================================================
+MainTab:CreateSection("Session Stats")
+
+local statsLabel = MainTab:CreateLabel("Loading stats...")
+
+local function updateStatsDisplay()
+    local currentMoney, currentPotions = updateSessionEarnings()
+    local recyclingPoints, crystalEggs = getRecyclingAndEggData()
+    
+    statsLabel:SetText(string.format(
+        "💰 Money: %d (+%d)\n🧪 Potions: %d (+%d)\n♻️ Recycling: %d\n🥚 Crystal Eggs: %d",
+        currentMoney, sessionBucksEarned,
+        currentPotions, sessionPotionsEarned,
+        recyclingPoints, crystalEggs
+    ))
+end
+
+MainTab:CreateSection("Quick Actions")
+
+MainTab:CreateButton({
+    Name = "⚡ Auto-Start Everything",
     Callback = function()
+        debugPrint("Auto-starting all features...")
+        
         local bestPetID = findBestStarterPet()
         if bestPetID then
             PetID = bestPetID
             lastValidPetID = bestPetID
             petFarmPetID = bestPetID
+            debugPrint("Auto-selected pet: " .. tostring(bestPetID))
             
-            for key, petData in pairs(PetsShow) do
-                if petData.unique == bestPetID then
-                    PetDropdown:Set({key})
-                    break
+            if petsDropdown then
+                local pets = getPetListForDropdown()
+                for _, pet in ipairs(pets) do
+                    if pet.Value == bestPetID then
+                        petsDropdown:Set({pet.Name})
+                        break
+                    end
                 end
             end
-            
-            local equipSuccess = ensurePetEquipped(bestPetID, 10)
-            Rayfield:Notify({
-                Title = "Pet Selected",
-                Content = "Auto-selected best pet for farming",
-                Duration = 3,
-            })
-        else
-            Rayfield:Notify({
-                Title = "No Pets Found",
-                Content = "No suitable pets found for farming",
-                Duration = 3,
-            })
         end
-    end,
-})
-
--- Farming Controls Section
-local FarmingSection = PetFarmTab:CreateSection("Farming Controls")
-
--- PetFarm toggle button
-local petFarmToggle = PetFarmTab:CreateButton({
-    Name = "🚀 START PETFARM",
-    Callback = function()
-        togglePetFarmMode()
-        petFarmToggle.Name = PetFarmMode and "🛑 STOP PETFARM" or "🚀 START PETFARM"
         
-        Rayfield:Notify({
-            Title = PetFarmMode and "PetFarm Started" or "PetFarm Stopped",
-            Content = PetFarmMode and "Ailment farming activated" or "Farming deactivated",
-            Duration = 3,
-        })
-    end,
-})
-
--- Auto PetPen toggle button
-local petPenToggle = PetFarmTab:CreateButton({
-    Name = "Auto PetPen [OFF]",
-    Callback = function()
-        toggleAutoPetPenMode()
-        petPenToggle.Name = AutoPetPenMode and "Auto PetPen [ON]" or "Auto PetPen [OFF]"
-        
-        Rayfield:Notify({
-            Title = AutoPetPenMode and "Auto PetPen Started" or "Auto PetPen Stopped",
-            Content = AutoPetPenMode and "PetPen automation activated" or "PetPen automation deactivated",
-            Duration = 3,
-        })
-    end,
-})
-
--- Neon Fusion button
-PetFarmTab:CreateButton({
-    Name = "✨ Perform Neon Fusion",
-    Callback = function()
-        local fusions = performNeonFusion()
-        Rayfield:Notify({
-            Title = "Neon Fusion",
-            Content = "Performed " .. fusions .. " fusion(s)",
-            Duration = 3,
-        })
-    end,
-})
-
--- Trading Section
-local TradingSection = PetFarmTab:CreateSection("Trading")
-
--- Player name input for trading
-local tradePlayerInput = PetFarmTab:CreateInput({
-    Name = "Player Name",
-    PlaceholderText = "Enter player name",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(Text)
-        -- Store for later use
-    end,
-})
-
--- Send trade button
-PetFarmTab:CreateButton({
-    Name = "🤝 Send Trade Request",
-    Callback = function()
-        sendTradeRequest(tradePlayerInput.CurrentValue)
-        Rayfield:Notify({
-            Title = "Trade Request Sent",
-            Content = "Sent trade to: " .. tradePlayerInput.CurrentValue,
-            Duration = 3,
-        })
-    end,
-})
-
--- Add all pets to trade button
-PetFarmTab:CreateButton({
-    Name = "📦 Add All Pets to Trade",
-    Callback = function()
-        addAllPetsToTrade()
-        Rayfield:Notify({
-            Title = "Pets Added",
-            Content = "Added all pets to current trade",
-            Duration = 3,
-        })
-    end,
-})
-
--- Auto trading toggle
-local autoTradeToggle = PetFarmTab:CreateButton({
-    Name = "Auto Trade [OFF]",
-    Callback = function()
-        toggleContinuousMode()
-        autoTradeToggle.Name = ContinuousMode and "Auto Trade [ON]" or "Auto Trade [OFF]"
-        
-        Rayfield:Notify({
-            Title = ContinuousMode and "Auto Trade Started" or "Auto Trade Stopped",
-            Content = ContinuousMode and "Continuous trading activated" or "Trading deactivated",
-            Duration = 3,
-        })
-    end,
-})
-
--- Auto accept toggle
-local autoAcceptToggle = PetFarmTab:CreateButton({
-    Name = "Auto Accept [OFF]",
-    Callback = function()
-        toggleAutoAcceptMode()
-        autoAcceptToggle.Name = AutoAcceptMode and "Auto Accept [ON]" or "Auto Accept [OFF]"
-        
-        Rayfield:Notify({
-            Title = AutoAcceptMode and "Auto Accept Started" or "Auto Accept Stopped",
-            Content = AutoAcceptMode and "Auto-accepting all trades" or "Auto-accept deactivated",
-            Duration = 3,
-        })
-    end,
-})
-
--- Potion Section
-local PotionSection = PetFarmTab:CreateSection("Potion Automation")
-
--- Auto potion toggle
-local autoPotionToggle = PetFarmTab:CreateButton({
-    Name = "Auto Potion [OFF]",
-    Callback = function()
-        toggleAutoPotionMode()
-        autoPotionToggle.Name = AutoPotionMode and "Auto Potion [ON]" or "Auto Potion [OFF]"
-        
-        Rayfield:Notify({
-            Title = AutoPotionMode and "Auto Potion Started" or "Auto Potion Stopped",
-            Content = AutoPotionMode and "Auto potion feeding activated" or "Potion deactivated",
-            Duration = 3,
-        })
-    end,
-})
-
--- Manual potion use button
-PetFarmTab:CreateButton({
-    Name = "🧪 Use Potion on Selected Pet",
-    Callback = function()
-        if PetID then
-            local success = usePetAgePotion()
-            Rayfield:Notify({
-                Title = success and "Potion Used" or "Potion Failed",
-                Content = success and "Used potion on selected pet" or "Failed to use potion",
-                Duration = 3,
-            })
-        else
-            Rayfield:Notify({
-                Title = "No Pet Selected",
-                Content = "Please select a pet first",
-                Duration = 3,
-            })
+        if not PetFarmMode then
+            togglePetFarmMode()
         end
-    end,
-})
-
--- Session Stats Section
-local StatsSection = PetFarmTab:CreateSection("Session Statistics")
-
--- Labels for stats
-local moneyLabel = PetFarmTab:CreateLabel("💰 Bucks Earned: 0")
-local potionLabel = PetFarmTab:CreateLabel("🧪 Potions Earned: 0")
-local recyclingLabel = PetFarmTab:CreateLabel("♻️ Recycling Points: 0")
-local crystalLabel = PetFarmTab:CreateLabel("🥚 Crystal Eggs: 0")
-
--- Function to update stats
-local function updateStats()
-    local currentMoney, currentPotions = getCurrentMoneyAndPotions()
-    local recyclingPoints, crystalEggs = getRecyclingAndEggData()
-    
-    if lastMoneyAmount == 0 then lastMoneyAmount = currentMoney end
-    if lastPotionAmount == 0 then lastPotionAmount = currentPotions end
-    sessionBucksEarned = currentMoney - lastMoneyAmount
-    sessionPotionsEarned = currentPotions - lastPotionAmount
-    
-    moneyLabel.Text = string.format("💰 Bucks Earned: %d (+%d)", currentMoney, sessionBucksEarned)
-    potionLabel.Text = string.format("🧪 Potions Earned: %d (+%d)", currentPotions, sessionPotionsEarned)
-    recyclingLabel.Text = string.format("♻️ Recycling Points: %d", recyclingPoints)
-    crystalLabel.Text = string.format("🥚 Crystal Eggs: %d", crystalEggs)
-end
-
--- Utility Section
-local UtilitySection = PetFarmTab:CreateSection("Utilities")
-
--- Debug button
-PetFarmTab:CreateButton({
-    Name = "🐛 Debug Info",
-    Callback = function()
-        debugPrint("=== DEBUG INFO ===")
-        debugPrint("Selected Pet: " .. tostring(PetID))
-        debugPrint("PetFarm Mode: " .. tostring(PetFarmMode))
-        debugPrint("Auto PetPen: " .. tostring(AutoPetPenMode))
-        debugPrint("Auto Trade: " .. tostring(ContinuousMode))
-        debugPrint("Auto Accept: " .. tostring(AutoAcceptMode))
-        debugPrint("Auto Potion: " .. tostring(AutoPotionMode))
-        debugPrint("==================")
+        
+        if not AutoPetPenMode then
+            toggleAutoPetPenMode()
+        end
         
         Rayfield:Notify({
-            Title = "Debug Info Printed",
-            Content = "Check console for detailed information",
-            Duration = 3,
-        })
-    end,
-})
-
--- Auto-start everything button
-PetFarmTab:CreateButton({
-    Name = "⚡ AUTO-START EVERYTHING",
-    Callback = function()
-        autoStartEverything()
-        petFarmToggle.Name = PetFarmMode and "🛑 STOP PETFARM" or "🚀 START PETFARM"
-        petPenToggle.Name = AutoPetPenMode and "Auto PetPen [ON]" or "Auto PetPen [OFF]"
-        
-        Rayfield:Notify({
-            Title = "Auto-Start Initiated",
-            Content = "Starting all automation systems...",
+            Title = "Auto-Start Complete",
+            Content = "All features initialized and started",
             Duration = 5,
         })
     end,
 })
 
--- Stop everything button
+-- ==================================================================
+-- PETFARM TAB
+-- ==================================================================
+PetFarmTab:CreateSection("Pet Selection")
+
+local function getPetListForDropdown()
+    local pets = {}
+    local data = getPlayerData()
+    
+    if data and data.inventory and data.inventory.pets then
+        for uniqueId, petData in pairs(data.inventory.pets) do
+            if petData and petData.id and petData.properties then
+                local petName = tostring(petData.id)
+                local age = petData.properties.age or 0
+                local neon = petData.properties.neon and "Neon" or ""
+                local displayName = string.format("%s (Age: %d%s)", petName, age, neon ~= "" and " "..neon or "")
+                
+                table.insert(pets, {
+                    Name = displayName,
+                    Value = uniqueId,
+                    Data = petData
+                })
+            end
+        end
+    end
+    
+    table.sort(pets, function(a, b)
+        return a.Name < b.Name
+    end)
+    
+    return pets
+end
+
+local petOptions = getPetListForDropdown()
+local petNames = {}
+for _, pet in ipairs(petOptions) do
+    table.insert(petNames, pet.Name)
+end
+
+if #petNames == 0 then
+    table.insert(petNames, "No pets found")
+end
+
+local petsDropdown = PetFarmTab:CreateDropdown({
+    Name = "Select Pet",
+    Options = petNames,
+    CurrentOption = {petNames[1]},
+    MultipleOptions = false,
+    Flag = "SelectedPet",
+    Callback = function(Option)
+        local selectedName = Option[1]
+        for _, pet in ipairs(petOptions) do
+            if pet.Name == selectedName then
+                PetID = pet.Value
+                lastValidPetID = PetID
+                petFarmPetID = PetID
+                
+                if Pet then
+                    pcall(function()
+                        ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(Pet)
+                    end)
+                end
+                
+                local success, result = pcall(function()
+                    Pet = ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
+                end)
+                
+                if success then
+                    debugPrint("Selected and equipped pet: " .. selectedName)
+                    Rayfield:Notify({
+                        Title = "Pet Selected",
+                        Content = "Selected: " .. selectedName,
+                        Duration = 3,
+                    })
+                else
+                    debugPrint("Failed to equip pet: " .. tostring(result))
+                end
+                break
+            end
+        end
+    end,
+})
+
 PetFarmTab:CreateButton({
-    Name = "🛑 STOP EVERYTHING",
+    Name = "🔄 Refresh Pet List",
     Callback = function()
-        if PetFarmMode then togglePetFarmMode() end
-        if AutoPetPenMode then toggleAutoPetPenMode() end
-        if ContinuousMode then toggleContinuousMode() end
-        if AutoAcceptMode then toggleAutoAcceptMode() end
-        if AutoPotionMode then toggleAutoPotionMode() end
+        local newOptions = getPetListForDropdown()
+        local newNames = {}
+        for _, pet in ipairs(newOptions) do
+            table.insert(newNames, pet.Name)
+        end
         
-        petFarmToggle.Name = "🚀 START PETFARM"
-        petPenToggle.Name = "Auto PetPen [OFF]"
-        autoTradeToggle.Name = "Auto Trade [OFF]"
-        autoAcceptToggle.Name = "Auto Accept [OFF]"
-        autoPotionToggle.Name = "Auto Potion [OFF]"
+        if #newNames == 0 then
+            table.insert(newNames, "No pets found")
+        end
+        
+        petsDropdown:Refresh(newNames)
+        petOptions = newOptions
         
         Rayfield:Notify({
-            Title = "All Systems Stopped",
-            Content = "All automation has been deactivated",
+            Title = "Pet List Refreshed",
+            Content = "Found " .. #newNames .. " pets",
             Duration = 3,
         })
     end,
 })
 
--- ==================================================================
--- AUTOMATIC UPDATES AND INITIALIZATION
--- ==================================================================
+PetFarmTab:CreateSection("PetFarm Controls")
 
--- Auto-update pet dropdown every 10 seconds
-coroutine.wrap(function()
-    while true do
-        task.wait(10)
-        updatePetDropdown()
-    end
-end)()
-
--- Auto-update stats every 2 seconds
-coroutine.wrap(function()
-    while true do
-        task.wait(2)
-        updateStats()
-    end
-end)()
-
--- Initialize session tracking
-lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
-
--- Initial pet dropdown update
-task.wait(2)
-updatePetDropdown()
-
--- Auto-start everything after 5 seconds
-task.wait(5)
-autoStartEverything()
-
--- Update UI buttons to reflect auto-started state
-task.wait(2)
-if PetFarmMode then
-    petFarmToggle.Name = "🛑 STOP PETFARM"
-end
-if AutoPetPenMode then
-    petPenToggle.Name = "Auto PetPen [ON]"
-end
-
--- Initial notification
-Rayfield:Notify({
-    Title = "Cocoon PetFarm Loaded",
-    Content = "All systems initialized. Auto-start engaged.",
-    Duration = 5,
+local petFarmToggle = PetFarmTab:CreateToggle({
+    Name = "PetFarm Mode",
+    CurrentValue = false,
+    Flag = "PetFarmToggle",
+    Callback = function(Value)
+        PetFarmMode = Value
+        if Value then
+            if not PetID then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Please select a pet first!",
+                    Duration = 5,
+                })
+                petFarmToggle:Set(false)
+                return
+            end
+            
+            debugPrint("Starting PetFarm...")
+            togglePetFarmMode()
+            Rayfield:Notify({
+                Title = "PetFarm Started",
+                Content = "Now farming with selected pet",
+                Duration = 5,
+            })
+        else
+            debugPrint("Stopping PetFarm...")
+            togglePetFarmMode()
+            Rayfield:Notify({
+                Title = "PetFarm Stopped",
+                Content = "Farming stopped",
+                Duration = 3,
+            })
+        end
+    end,
 })
 
-debugPrint("Cocoon PetFarm Rayfield UI Loaded Successfully!")
-debugPrint("Features: Pet Selection, Auto PetFarm, Auto PetPen, Trading System, Potion Automation")
+-- ==================================================================
+-- TRADING TAB
+-- ==================================================================
+TradingTab:CreateSection("Player Trading")
+
+local function updateTradingPlayers()
+    local players = Players:GetPlayers()
+    local playerNames = {}
+    
+    for _, p in ipairs(players) do
+        if p ~= player then
+            table.insert(playerNames, p.Name)
+        end
+    end
+    
+    if #playerNames == 0 then
+        table.insert(playerNames, "No other players")
+    end
+    
+    if tradingPlayersDropdown then
+        tradingPlayersDropdown:Refresh(playerNames)
+    end
+end
+
+local initialTradingPlayers = {"Select a player"}
+local tradingPlayersDropdown = TradingTab:CreateDropdown({
+    Name = "Select Player to Trade",
+    Options = initialTradingPlayers,
+    CurrentOption = {"Select a player"},
+    MultipleOptions = false,
+    Flag = "TradingPlayer",
+    Callback = function(Option)
+        -- Callback for dropdown selection
+    end,
+})
+
+TradingTab:CreateButton({
+    Name = "Refresh Player List",
+    Callback = function()
+        updateTradingPlayers()
+        Rayfield:Notify({
+            Title = "Players Refreshed",
+            Content = "Updated player list for trading",
+            Duration = 3,
+        })
+    end,
+})
+
+TradingTab:CreateSection("Trade Actions")
+
+TradingTab:CreateButton({
+    Name = "Send Trade Request",
+    Callback = function()
+        local selectedPlayer = tradingPlayersDropdown.CurrentOption[1]
+        if selectedPlayer and selectedPlayer ~= "Select a player" and selectedPlayer ~= "No other players" then
+            sendTradeRequest(selectedPlayer)
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Please select a player first!",
+                Duration = 5,
+            })
+        end
+    end,
+})
+
+TradingTab:CreateButton({
+    Name = "Add All Pets to Trade",
+    Callback = function()
+        addAllPetsToTrade()
+    end,
+})
+
+TradingTab:CreateToggle({
+    Name = "Auto Trade Mode",
+    CurrentValue = false,
+    Flag = "AutoTradeToggle",
+    Callback = function(Value)
+        ContinuousMode = Value
+        if Value then
+            debugPrint("Auto Trade enabled")
+            toggleContinuousMode()
+        else
+            debugPrint("Auto Trade disabled")
+            toggleContinuousMode()
+        end
+    end,
+})
+
+TradingTab:CreateToggle({
+    Name = "Auto Accept Trades",
+    CurrentValue = false,
+    Flag = "AutoAcceptToggle",
+    Callback = function(Value)
+        AutoAcceptMode = Value
+        if Value then
+            debugPrint("Auto Accept enabled")
+            toggleAutoAcceptMode()
+        else
+            debugPrint("Auto Accept disabled")
+            toggleAutoAcceptMode()
+        end
+    end,
+})
+
+-- ==================================================================
+-- AUTO FEATURES TAB
+-- ==================================================================
+AutoTab:CreateSection("Auto Potion")
+
+AutoTab:CreateToggle({
+    Name = "Auto Age Potion",
+    CurrentValue = false,
+    Flag = "AutoPotionToggle",
+    Callback = function(Value)
+        AutoPotionMode = Value
+        if Value then
+            if not PetID then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Please select a pet first!",
+                    Duration = 5,
+                })
+                return
+            end
+            debugPrint("Auto Potion enabled")
+            toggleAutoPotionMode()
+        else
+            debugPrint("Auto Potion disabled")
+            toggleAutoPotionMode()
+        end
+    end,
+})
+
+AutoTab:CreateSection("Auto PetPen")
+
+AutoTab:CreateToggle({
+    Name = "Auto PetPen Management",
+    CurrentValue = false,
+    Flag = "AutoPetPenToggle",
+    Callback = function(Value)
+        AutoPetPenMode = Value
+        if Value then
+            debugPrint("Auto PetPen enabled")
+            toggleAutoPetPenMode()
+        else
+            debugPrint("Auto PetPen disabled")
+            toggleAutoPetPenMode()
+        end
+    end,
+})
+
+AutoTab:CreateButton({
+    Name = "Perform Neon Fusion",
+    Callback = function()
+        local fusions = performNeonFusion()
+        Rayfield:Notify({
+            Title = "Neon Fusion",
+            Content = "Performed " .. fusions .. " fusions",
+            Duration = 5,
+        })
+    end,
+})
+
+AutoTab:CreateButton({
+    Name = "Purge Non-Priority Pets",
+    Callback = function()
+        local removed = purgeNonPriorityGarbage()
+        Rayfield:Notify({
+            Title = "Purge Complete",
+            Content = "Removed " .. removed .. " non-priority pets",
+            Duration = 5,
+        })
+    end,
+})
+
+-- ==================================================================
+-- INITIALIZATION
+-- ==================================================================
+lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
+
+task.wait(2)
+updateTradingPlayers()
+updateStatsDisplay()
+
+coroutine.wrap(function()
+    while true do
+        updateTradingPlayers()
+        task.wait(30)
+    end
+end)()
+
+coroutine.wrap(function()
+    while true do
+        if petsDropdown then
+            local newOptions = getPetListForDropdown()
+            local newNames = {}
+            for _, pet in ipairs(newOptions) do
+                table.insert(newNames, pet.Name)
+            end
+            
+            if #newNames == 0 then
+                table.insert(newNames, "No pets found")
+            end
+            
+            petsDropdown:Refresh(newNames)
+            petOptions = newOptions
+        end
+        task.wait(60)
+    end
+end)()
+
+task.wait(3)
+coroutine.wrap(function()
+    local bestPetID = findBestStarterPet()
+    if bestPetID then
+        PetID = bestPetID
+        lastValidPetID = bestPetID
+        petFarmPetID = bestPetID
+        
+        local pets = getPetListForDropdown()
+        for _, pet in ipairs(pets) do
+            if pet.Value == bestPetID then
+                if petsDropdown then
+                    petsDropdown:Set({pet.Name})
+                end
+                break
+            end
+        end
+        
+        debugPrint("Auto-selected best pet: " .. tostring(bestPetID))
+    end
+    
+    if not AutoPetPenMode then
+        toggleAutoPetPenMode()
+    end
+end)()
+
+Rayfield:Notify({
+    Title = "Cocoon PetFarm v3 Loaded",
+    Content = "UI initialized with all functions\nAuto-selected best pet & started PetPen",
+    Duration = 8,
+})
+
+debugPrint("Cocoon PetFarm UI successfully loaded with all functions!")
