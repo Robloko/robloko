@@ -142,7 +142,8 @@ local petInventory = {}
 local totalGiftAmount = 0
 local selectedPlayerName = "Gerranafa"
 local selectedPetType = nil
-local selectedGiftType = "2d_tuesdays_2025_box"
+local selectedGiftType = nil
+local giftTypes = {} -- Will be populated from inventory
 
 -- Function to update gingerbread label
 local function updateGingerbreadLabel()
@@ -150,6 +151,75 @@ local function updateGingerbreadLabel()
     if gingerbreadLabel then
         gingerbreadLabel:Set("🍪 Current Gingerbread: " .. currentGingerbread)
     end
+end
+
+-- Function to update pet inventory
+local function updatePetInventory()
+    petInventory = {}
+    local uniqueTypes = {}
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
+            for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
+                if petData.id then
+                    local petType = petData.id
+                    if not uniqueTypes[petType] then
+                        uniqueTypes[petType] = {}
+                    end
+                    table.insert(uniqueTypes[petType], uniqueId)
+                    petInventory[petType] = uniqueTypes[petType]
+                end
+            end
+        end
+    end
+    return petInventory
+end
+
+-- Function to give N pets to a player
+local function giveNPetsToPlayer(targetPlayer, petType, numPets)
+    if not petInventory[petType] or #petInventory[petType] < numPets then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Not enough " .. petType .. " pets!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
+    local petUniqueIds = {}
+    for i = 1, numPets do
+        table.insert(petUniqueIds, table.remove(petInventory[petType], 1))
+    end
+
+    for i, uniqueId in ipairs(petUniqueIds) do
+        local args = {targetPlayer, uniqueId}
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Failed to give pet: " .. tostring(result),
+                Duration = 3,
+                Image = 4483362458
+            })
+            for j = #petUniqueIds, i, -1 do
+                table.insert(petInventory[petType], petUniqueIds[j])
+            end
+            return false
+        end
+
+        if i < numPets then
+            task.wait(9)
+        end
+    end
+
+    return true
 end
 
 -- Winter Events Tab
@@ -420,15 +490,57 @@ local PlayerInput = GiveTab:CreateInput({
 })
 PlayerInput:Set("Gerranafa")
 
+-- Function to scan for available gifts in inventory
+local function scanAvailableGifts()
+    giftTypes = {}
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[localPlayer.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.gifts then
+            for giftId, giftData in pairs(playerData.inventory.gifts) do
+                if giftData.id then
+                    -- Add gift type to list if not already present
+                    local found = false
+                    for _, existingType in ipairs(giftTypes) do
+                        if existingType == giftData.id then
+                            found = true
+                            break
+                        end
+                    end
+                    if not found then
+                        table.insert(giftTypes, giftData.id)
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        print("Error scanning gifts: " .. tostring(errorMsg))
+        return {}
+    end
+    
+    -- Sort alphabetically
+    table.sort(giftTypes)
+    return giftTypes
+end
+
 -- Function to update gift inventory
 local function updateGiftInventory()
     giftInventory = {}
     totalGiftAmount = 0
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if success then
-        local success2, allData = pcall(clientData.get_data, clientData)
-        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
-            for uniqueId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+    
+    if not selectedGiftType then
+        return totalGiftAmount
+    end
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[localPlayer.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.gifts then
+            for uniqueId, giftData in pairs(playerData.inventory.gifts) do
                 if giftData.id == selectedGiftType then
                     local amount = giftData.amount or 1
                     table.insert(giftInventory, {uid = uniqueId, amount = amount})
@@ -436,51 +548,14 @@ local function updateGiftInventory()
                 end
             end
         end
+    end)
+
+    if not success then
+        print("Error updating gift inventory: " .. tostring(errorMsg))
     end
+    
     return totalGiftAmount
 end
-
--- Function to update pet inventory
-local function updatePetInventory()
-    petInventory = {}
-    local uniqueTypes = {}
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if success then
-        local success2, allData = pcall(clientData.get_data, clientData)
-        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
-            for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
-                if petData.id then
-                    local petType = petData.id
-                    if not uniqueTypes[petType] then
-                        uniqueTypes[petType] = {}
-                    end
-                    table.insert(uniqueTypes[petType], uniqueId)
-                    petInventory[petType] = uniqueTypes[petType]
-                end
-            end
-        end
-    end
-    return petInventory
-end
-
--- Gift Type Dropdown
-local giftTypes = {
-    "2d_tuesdays_2025_box",
-    "winter_2025_gift",
-    -- Add more gift types here as needed
-}
-
-local GiftDropdown = GiveTab:CreateDropdown({
-    Name = "Select Gift Type",
-    Options = giftTypes,
-    CurrentOption = "2d_tuesdays_2025_box",
-    MultipleOptions = false,
-    Flag = "GiftDropdown",
-    Callback = function(Option)
-        selectedGiftType = Option
-        updateGiftCountLabel()
-    end,
-})
 
 -- Function to give all gifts to target player
 local function giveAllGiftsToPlayer()
@@ -536,6 +611,35 @@ local function giveAllGiftsToPlayer()
     })
 end
 
+-- Gift Type Dropdown
+local GiftDropdown = GiveTab:CreateDropdown({
+    Name = "Select Gift Type",
+    Options = {"Scanning..."},
+    CurrentOption = "None",
+    MultipleOptions = false,
+    Flag = "GiftDropdown",
+    Callback = function(Option)
+        selectedGiftType = Option
+        updateGiftCountLabel()
+    end,
+})
+
+-- Function to refresh gift dropdown
+local function refreshGiftDropdown()
+    local availableGifts = scanAvailableGifts()
+    if #availableGifts == 0 then
+        GiftDropdown:Refresh({"No gifts found"})
+        selectedGiftType = nil
+    else
+        GiftDropdown:Refresh(availableGifts)
+        if not selectedGiftType then
+            selectedGiftType = availableGifts[1]
+            GiftDropdown:Set(availableGifts[1])
+        end
+    end
+    updateGiftCountLabel()
+end
+
 -- Toggle for Auto Give Gifts
 local GiveGiftsToggle = GiveTab:CreateToggle({
     Name = "🎁 Auto Give Gifts",
@@ -544,6 +648,16 @@ local GiveGiftsToggle = GiveTab:CreateToggle({
     Callback = function(Value)
         isGivingGifts = Value
         if Value then
+            if not selectedGiftType then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Please select a gift type first!",
+                    Duration = 3,
+                    Image = 4483362458
+                })
+                GiveGiftsToggle:Set(false)
+                return
+            end
             task.spawn(function()
                 while isGivingGifts do
                     giveAllGiftsToPlayer()
@@ -555,13 +669,31 @@ local GiveGiftsToggle = GiveTab:CreateToggle({
 })
 
 -- Label for gift count
-local giftCountLabel = GiveTab:CreateLabel("🎁 Gifts: 0")
+local giftCountLabel = GiveTab:CreateLabel("🎁 Select a gift type")
 
 -- Function to update gift count label
 local function updateGiftCountLabel()
+    if not selectedGiftType or selectedGiftType == "None" then
+        giftCountLabel:Set("🎁 Select a gift type")
+        return
+    end
     updateGiftInventory()
     giftCountLabel:Set("🎁 " .. selectedGiftType .. ": " .. totalGiftAmount)
 end
+
+-- Refresh Gift List Button
+GiveTab:CreateButton({
+    Name = "🔄 Refresh Gift List",
+    Callback = function()
+        refreshGiftDropdown()
+        Rayfield:Notify({
+            Title = "Gift List Refreshed",
+            Content = "Scanned for available gifts",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
 
 -- Pet Dropdown
 local PetDropdown = GiveTab:CreateDropdown({
@@ -574,52 +706,6 @@ local PetDropdown = GiveTab:CreateDropdown({
         selectedPetType = Option
     end,
 })
-
--- Function to give N pets to a player
-local function giveNPetsToPlayer(targetPlayer, petType, numPets)
-    if not petInventory[petType] or #petInventory[petType] < numPets then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Not enough " .. petType .. " pets!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return false
-    end
-
-    local petUniqueIds = {}
-    for i = 1, numPets do
-        table.insert(petUniqueIds, table.remove(petInventory[petType], 1))
-    end
-
-    for i, uniqueId in ipairs(petUniqueIds) do
-        local args = {targetPlayer, uniqueId}
-        local success, result = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
-        end)
-
-        if success then
-            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
-        else
-            Rayfield:Notify({
-                Title = "Error",
-                Content = "Failed to give pet: " .. tostring(result),
-                Duration = 3,
-                Image = 4483362458
-            })
-            for j = #petUniqueIds, i, -1 do
-                table.insert(petInventory[petType], petUniqueIds[j])
-            end
-            return false
-        end
-
-        if i < numPets then
-            task.wait(9)
-        end
-    end
-
-    return true
-end
 
 -- Toggle for Auto Give Pets
 local GivePetsToggle = GiveTab:CreateToggle({
@@ -763,7 +849,7 @@ local function updatePetsDropdown()
 end
 
 -- Initial updates
-updateGiftCountLabel()
+refreshGiftDropdown()
 updatePetsDropdown()
 
 -- Auto-update gingerbread label every 10 seconds
