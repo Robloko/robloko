@@ -2095,6 +2095,85 @@ local function togglePetFarmMode()
     end
 end
 -- ==================================================================
+-- UPDATED UI CREATION WITH AUTO ACCEPT FEATURE
+-- ==================================================================
+-- Updated updatePetsDropdown function with proper error handling
+local function updatePetsDropdown(dropdown)
+    local List = {}
+    local currentSelection = dropdown.CurrentOption
+    local wasSelected = false
+    local previousPetsShow = PetsShow
+    PetsShow = {}
+  
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            for i, v in pairs(playerData.inventory.pets) do
+                -- Add safety checks for pet data
+                if v and v.id and v.properties then
+                    local neonStatus = v.properties.neon and "Neon" or ""
+                    local petAge = v.properties.age or 0
+                    local key = tostring(v.id) .. " - " .. tostring(petAge) .. " years old (" .. neonStatus .. ")"
+                    PetsShow[key] = v
+                    table.insert(List, key)
+                    if key == currentSelection then
+                        wasSelected = true
+                    end
+                else
+                    debugPrint("Skipping invalid pet data: " .. tostring(v))
+                end
+            end
+            table.sort(List)
+        end
+    end)
+  
+    if not success then
+        debugPrint("Error updating pets dropdown: " .. tostring(errorMsg))
+    end
+  
+    if wasSelected and currentSelection ~= "Select an option" then
+        dropdown.CurrentOption = currentSelection
+        if PetsShow[currentSelection] then
+            PetID = PetsShow[currentSelection].unique
+            petFarmPetID = PetID
+        end
+    else
+        dropdown.CurrentOption = #List > 0 and "Select a Pet (" .. #List .. ")" or "No Pets Found"
+        if PetID and not wasSelected and not PetFarmMode then
+            local petStillExists = false
+            for _, petKey in ipairs(List) do
+                if PetsShow[petKey] and PetsShow[petKey].unique == PetID then
+                    petStillExists = true
+                    break
+                end
+            end
+            if not petStillExists then
+                pcall(function()
+                    ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
+                end)
+                PetID = nil
+                Pet = nil
+                debugPrint("Previous pet selection no longer available, unequipped")
+            else
+                debugPrint("Pet still exists in inventory, preserving selection despite UI change")
+            end
+        elseif PetFarmMode and PetID and not wasSelected then
+            debugPrint("PetFarm active - preserving current pet selection")
+            for petKey, petData in pairs(PetsShow) do
+                if petData and petData.unique == PetID then
+                    dropdown.CurrentOption = petKey
+                    wasSelected = true
+                    debugPrint("Updated dropdown to match current PetFarm pet: " .. petKey)
+                    break
+                end
+            end
+        end
+    end
+  
+    dropdown:Refresh(List, true)
+end
+-- ==================================================================
 -- AUTO-START FUNCTIONALITY
 -- ==================================================================
 -- Function to automatically start everything
@@ -2136,44 +2215,47 @@ local function autoStartEverything()
   
     -- Step 4: Update UI to reflect auto-started state
     debugPrint("Step 4: Updating UI...")
+    autoPetPenToggle:Set(true)
+    petFarmToggle:Set(true)
   
     debugPrint("=== AUTO-START COMPLETED ===")
     debugPrint("PetFarm: RUNNING | Auto PetPen: RUNNING")
     debugPrint("Selected Pet: " .. tostring(PetID))
 end
 -- ==================================================================
--- RAYFIELD UI SETUP
+-- INITIALIZATION AND MAIN LOOP
 -- ==================================================================
+-- Create Rayfield Window
 local Window = Rayfield:CreateWindow({
-   Name = "🐾 Cocoon PetFarm",
-   LoadingTitle = "PetFarm UI",
-   LoadingSubtitle = "by xAI",
-   ConfigurationSaving = {
-      Enabled = false,
-      FolderName = nil,
-      FileName = "PetFarmConfig"
-   },
-   Discord = {
-      Invite = nil,
-      RememberJoins = false
-   },
-   KeySystem = false,
-   KeySettings = {
-      Title = "PetFarm",
-      Subtitle = "Key System",
-      Note = "No key required",
-      FileName = "PetFarmKey",
-      SaveKey = false,
-      GrabKeyFromSite = false,
-      Key = {"None"}
-   }
+    Name = "Cocoon PetFarm",
+    LoadingTitle = "PetFarm UI",
+    LoadingSubtitle = "Loading...",
+    ConfigurationSaving = {
+        Enabled = false,
+        FolderName = nil,
+        FileName = "PetFarmConfig"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "",
+        RememberJoins = true
+    },
+    KeySystem = false,
+    KeySettings = {
+        Title = "",
+        Subtitle = "",
+        Note = "",
+        FileName = "",
+        SaveKey = false,
+        GrabKeyFromSite = false,
+        Key = {}
+    }
 })
 
+-- Create Main Tab
 local MainTab = Window:CreateTab("Main", nil)
-local TradingTab = Window:CreateTab("Trading", nil)
-local AutoTab = Window:CreateTab("Auto Features", nil)
 
--- Main Tab Elements
+-- Session Label
 local sessionLabel = MainTab:CreateLabel("💵 0 +0 | 🧪 0 +0 | ♻️ 0 | 🥚 0")
 
 -- Function to update session display
@@ -2189,172 +2271,122 @@ local function updateSessionDisplay()
     ))
 end
 
+-- Player Name Input
+local playerNameInput = MainTab:CreateInput({
+    Name = "Enter Player Name for Trade",
+    PlaceholderText = "Player Name",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        -- Optional: Send trade on enter if desired
+    end
+})
+
+-- Send Trade Button
+local tradeButton = MainTab:CreateButton({
+    Name = "Send Trade",
+    Callback = function()
+        sendTradeRequest(playerNameInput.CurrentText)
+    end
+})
+
+-- Add All Pets Button
+local addPetsButton = MainTab:CreateButton({
+    Name = "Add All Pets",
+    Callback = addAllPetsToTrade
+})
+
+-- Auto Trade Toggle
+local autoTradeToggle = MainTab:CreateToggle({
+    Name = "Auto Trade",
+    CurrentValue = false,
+    Callback = function(Value)
+        toggleContinuousMode()
+    end
+})
+
+-- Auto Potion Toggle
+local autoPotionToggle = MainTab:CreateToggle({
+    Name = "Auto Potion",
+    CurrentValue = false,
+    Callback = function(Value)
+        toggleAutoPotionMode()
+    end
+})
+
+-- Auto Accept Toggle
+local autoAcceptToggle = MainTab:CreateToggle({
+    Name = "Auto Accept",
+    CurrentValue = false,
+    Callback = function(Value)
+        toggleAutoAcceptMode()
+    end
+})
+
+-- Auto PetPen Toggle
+local autoPetPenToggle = MainTab:CreateToggle({
+    Name = "Auto PetPen",
+    CurrentValue = true, -- ON by default
+    Callback = function(Value)
+        toggleAutoPetPenMode()
+    end
+})
+
+-- PetFarm Toggle
+local petFarmToggle = MainTab:CreateToggle({
+    Name = "PetFarm",
+    CurrentValue = false,
+    Callback = function(Value)
+        togglePetFarmMode()
+    end
+})
+
 -- Pets Dropdown
-local petList = {}
 local petsDropdown = MainTab:CreateDropdown({
-   Name = "Select a Pet",
-   Options = {"Loading pets..."},
-   CurrentOption = {"Select a Pet"},
-   MultipleOptions = false,
-   Flag = "PetsDropdown",
-   Callback = function(Option)
-      local petKey = Option[1]
-      if PetsShow[petKey] and PetsShow[petKey].unique then
-         if PetID and PetID ~= PetsShow[petKey].unique then
-            pcall(function()
-               ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
+    Name = "Select Pet",
+    Options = {"Loading..."},
+    CurrentOption = "Select an option",
+    Callback = function(Option)
+        if PetsShow[Option] and PetsShow[Option].unique then
+            if PetID and PetID ~= PetsShow[Option].unique then
+                pcall(function()
+                    ReplicatedStorage.API["ToolAPI/Unequip"]:InvokeServer(PetID)
+                end)
+            end
+            PetID = PetsShow[Option].unique
+            lastValidPetID = PetID
+          
+            -- Safe equip with error handling
+            local equipSuccess, equipError = pcall(function()
+                Pet = ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
             end)
-         end
-         PetID = PetsShow[petKey].unique
-         lastValidPetID = PetID
-         local equipSuccess, equipError = pcall(function()
-            Pet = ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(PetID, {use_sound_delay = true, equip_as_last = false})
-         end)
-         if not equipSuccess then
-            debugPrint("Failed to equip pet: " .. tostring(equipError))
-         end
-         if PetFarmMode and petFarmPetID ~= PetID then
-            petFarmPetID = PetID
-            debugPrint("Updated PetFarm pet to current selection")
-         end
-         debugPrint("Selected pet: " .. petKey)
-      else
-         debugPrint("Error: Invalid pet data for selection: " .. petKey)
-      end
-   end,
-})
-
--- Updated updatePetsDropdown function for Rayfield
-local function updatePetsDropdown()
-    local List = {}
-    local currentSelection = petsDropdown.CurrentOption[1] or "Select a Pet"
-    local wasSelected = false
-    PetsShow = {}
-  
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.pets then
-            for i, v in pairs(playerData.inventory.pets) do
-                if v and v.id and v.properties then
-                    local neonStatus = v.properties.neon and "Neon" or ""
-                    local petAge = v.properties.age or 0
-                    local key = tostring(v.id) .. " - " .. tostring(petAge) .. " years old (" .. neonStatus .. ")"
-                    PetsShow[key] = v
-                    table.insert(List, key)
-                    if key == currentSelection then
-                        wasSelected = true
-                    end
-                else
-                    debugPrint("Skipping invalid pet data: " .. tostring(v))
-                end
+          
+            if not equipSuccess then
+                debugPrint("Failed to equip pet: " .. tostring(equipError))
             end
-            table.sort(List)
-        end
-    end)
-  
-    if not success then
-        debugPrint("Error updating pets dropdown: " .. tostring(errorMsg))
-    end
-  
-    if #List > 0 then
-        petsDropdown:Refresh(List)
-        if wasSelected then
-            petsDropdown:Set({currentSelection})
-            if PetsShow[currentSelection] then
-                PetID = PetsShow[currentSelection].unique
+          
+            if PetFarmMode and petFarmPetID ~= PetID then
                 petFarmPetID = PetID
+                debugPrint("Updated PetFarm pet to current selection")
             end
+            debugPrint("Selected pet: " .. Option)
         else
-            petsDropdown:Set({"Select a Pet (" .. #List .. ")"})
+            debugPrint("Error: Invalid pet data for selection: " .. Option)
         end
-    else
-        petsDropdown:Refresh({"No Pets Found"})
     end
-end
-
--- Trading Tab Elements
-local playerName = ""
-local playerNameInput = TradingTab:CreateInput({
-   Name = "Enter Player Name",
-   PlaceholderText = "Player name for trade",
-   RemoveTextAfterFocusLost = false,
-   Callback = function(Text)
-      playerName = Text
-   end,
 })
 
-TradingTab:CreateButton({
-   Name = "Send Trade",
-   Callback = function()
-      sendTradeRequest(playerName)
-   end,
-})
-
-TradingTab:CreateButton({
-   Name = "Add All Pets",
-   Callback = function()
-      addAllPetsToTrade()
-   end,
-})
-
--- Auto Features Tab
-AutoTab:CreateToggle({
-   Name = "Auto Trade",
-   CurrentValue = false,
-   Flag = "AutoTradeToggle",
-   Callback = function(Value)
-      toggleContinuousMode()
-   end,
-})
-
-AutoTab:CreateToggle({
-   Name = "Auto Potion",
-   CurrentValue = false,
-   Flag = "AutoPotionToggle",
-   Callback = function(Value)
-      toggleAutoPotionMode()
-   end,
-})
-
-AutoTab:CreateToggle({
-   Name = "Auto Accept",
-   CurrentValue = false,
-   Flag = "AutoAcceptToggle",
-   Callback = function(Value)
-      toggleAutoAcceptMode()
-   end,
-})
-
-AutoTab:CreateToggle({
-   Name = "Auto PetPen",
-   CurrentValue = true, -- ON by default
-   Flag = "AutoPetPenToggle",
-   Callback = function(Value)
-      toggleAutoPetPenMode()
-   end,
-})
-
-AutoTab:CreateToggle({
-   Name = "PetFarm",
-   CurrentValue = false,
-   Flag = "PetFarmToggle",
-   Callback = function(Value)
-      togglePetFarmMode()
-   end,
-})
-
-AutoTab:CreateButton({
-   Name = "Open Dev Console",
-   Callback = function()
-      game:GetService("StarterGui"):SetCore("DevConsoleVisible", true)
-   end,
+-- Developer Console Button
+local devConsoleButton = MainTab:CreateButton({
+    Name = "Open Dev Console",
+    Callback = function()
+        game:GetService("StarterGui"):SetCore("DevConsoleVisible", true)
+    end
 })
 
 -- Update pets dropdown periodically
 coroutine.wrap(function()
     while true do
-        updatePetsDropdown()
+        updatePetsDropdown(petsDropdown)
         task.wait(10)
     end
 end)()
@@ -2366,7 +2398,6 @@ local function mainLoop()
         task.wait(1)
     end
 end
-
 -- Initialize session tracking
 lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
 -- Debug the recycler data structure on startup
