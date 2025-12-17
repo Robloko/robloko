@@ -139,7 +139,7 @@ end
 gingerbreadLabel = WinterTab:CreateLabel("🍪 Current Gingerbread: " .. getCurrentGingerbread())
 WinterTab:CreateSection("")
 
--- Spawn House & Respawn Button (перенесено сюда)
+-- Spawn House & Respawn Button
 WinterTab:CreateButton({
     Name = "🏠 Spawn House & Respawn",
     Callback = function()
@@ -361,13 +361,33 @@ BuyTab:CreateButton({
 local giftType = "2d_tuesdays_2025_box"
 local isGivingGifts = false
 local isGivingPets = false
+local isGivingOut = false -- Новый флаг для тоггла "Give OUT"
 local giftInventory = {}
 local petInventory = {}
 local totalGiftAmount = 0
 local selectedPlayerName = "Gerranafa"
 local selectedPetType = nil
 
--- Toggle for Auto Give Pets (перенесено вверх)
+-- Список питомцев для раздачи через "Give OUT"
+local targetPets = {
+    "winter_2025_maine_coon",
+    "winter_2025_turtle_doves",
+    "winter_2025_xmas_tree_sasquatch",
+    "winter_2025_humbug",
+    "basic_egg_2022_ant",
+    "basic_egg_2022_mouse",
+    "basic_egg_2022_camel",
+    "basic_egg_2022_poodle",
+    "basic_egg_2022_donkey",
+    "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan",
+    "basic_egg_2022_parakeet",
+    "basic_egg_2022_swordfish",
+    "basic_egg_2022_robot",
+    "basic_egg_2022_corgi"
+}
+
+-- Toggle for Auto Give Pets
 local GivePetsToggle = GiveTab:CreateToggle({
     Name = "🐾 Auto Give Pets",
     CurrentValue = false,
@@ -375,29 +395,29 @@ local GivePetsToggle = GiveTab:CreateToggle({
     Callback = function(Value)
         isGivingPets = Value
         if Value then
-            if not selectedPlayerName or not selectedPetType then
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Please select a player and pet type!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                GivePetsToggle:Set(false)
-                return
-            end
-            local targetPlayer = Players:FindFirstChild(selectedPlayerName)
-            if not targetPlayer then
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Target player is offline!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                GivePetsToggle:Set(false)
-                return
-            end
             task.spawn(function()
                 while isGivingPets do
+                    if not selectedPlayerName or not selectedPetType then
+                        Rayfield:Notify({
+                            Title = "Error",
+                            Content = "Please select a player and pet type!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                        GivePetsToggle:Set(false)
+                        return
+                    end
+                    local targetPlayer = Players:FindFirstChild(selectedPlayerName)
+                    if not targetPlayer then
+                        Rayfield:Notify({
+                            Title = "Error",
+                            Content = "Target player is offline!",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                        GivePetsToggle:Set(false)
+                        return
+                    end
                     if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
                         giveNPetsToPlayer(targetPlayer, selectedPetType, 1)
                     else
@@ -414,6 +434,74 @@ local GivePetsToggle = GiveTab:CreateToggle({
                 end
             end)
         end
+    end,
+})
+
+-- Toggle for Give OUT
+local GiveOutToggle = GiveTab:CreateToggle({
+    Name = "🚀 Give OUT",
+    CurrentValue = false,
+    Flag = "GiveOutToggle",
+    Callback = function(Value)
+        isGivingOut = Value
+        if Value then
+            if not selectedPlayerName then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Please select a player!",
+                    Duration = 3,
+                    Image = 4483362458
+                })
+                GiveOutToggle:Set(false)
+                return
+            end
+            local targetPlayer = Players:FindFirstChild(selectedPlayerName)
+            if not targetPlayer then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Target player is offline!",
+                    Duration = 3,
+                    Image = 4483362458
+                })
+                GiveOutToggle:Set(false)
+                return
+            end
+            task.spawn(function()
+                while isGivingOut do
+                    for _, petType in ipairs(targetPets) do
+                        if petInventory[petType] and #petInventory[petType] > 0 then
+                            giveNPetsToPlayer(targetPlayer, petType, 1)
+                            task.wait(10) -- Пауза между раздачей разных типов питомцев
+                        end
+                    end
+                    task.wait(60) -- Пауза 60 секунд перед повторным циклом
+                end
+            end)
+        end
+    end,
+})
+
+-- Adaptive Input for Target Player Name
+local PlayerInput = GiveTab:CreateInput({
+    Name = "Target Player Name",
+    PlaceholderText = "Enter player name",
+    RemoveTextAfterFocusLost = false,
+    Flag = "PlayerInput",
+    Callback = function(Text)
+        selectedPlayerName = Text
+    end,
+})
+PlayerInput:Set("Gerranafa")
+
+-- Dropdown for Pet Types
+local PetDropdown = GiveTab:CreateDropdown({
+    Name = "Select Pet Type",
+    Options = {},
+    CurrentOption = "None",
+    MultipleOptions = false,
+    Flag = "PetDropdown",
+    Callback = function(Option)
+        selectedPetType = Option
     end,
 })
 
@@ -560,41 +648,6 @@ local function giveNPetsToPlayer(targetPlayer, petType, numPets)
     return true
 end
 
--- Adaptive Input for Target Player Name
-local PlayerInput = GiveTab:CreateInput({
-    Name = "Target Player Name",
-    PlaceholderText = "Enter player name",
-    RemoveTextAfterFocusLost = false,
-    Flag = "PlayerInput",
-    Callback = function(Text)
-        selectedPlayerName = Text
-    end,
-})
-PlayerInput:Set("Gerranafa")
-
--- Dropdown for Pet Types
-local PetDropdown = GiveTab:CreateDropdown({
-    Name = "Select Pet Type",
-    Options = {},
-    CurrentOption = "None",
-    MultipleOptions = false,
-    Flag = "PetDropdown",
-    Callback = function(Option)
-        selectedPetType = Option
-    end,
-})
-
--- Function to update pets dropdown
-local function updatePetsDropdown()
-    petInventory = updatePetInventory()
-    local petTypes = {}
-    for petType, _ in pairs(petInventory) do
-        table.insert(petTypes, petType)
-    end
-    table.sort(petTypes)
-    PetDropdown:Refresh(petTypes)
-end
-
 -- Toggle for Auto Give Gifts
 local GiveGiftsToggle = GiveTab:CreateToggle({
     Name = "🎁 Auto Give Gifts",
@@ -646,6 +699,17 @@ task.spawn(function()
         task.wait(10)
     end
 end)
+
+-- Function to update pets dropdown
+local function updatePetsDropdown()
+    petInventory = updatePetInventory()
+    local petTypes = {}
+    for petType, _ in pairs(petInventory) do
+        table.insert(petTypes, petType)
+    end
+    table.sort(petTypes)
+    PetDropdown:Refresh(petTypes)
+end
 
 -- Initial updates
 updateGiftCountLabel()
