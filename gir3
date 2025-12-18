@@ -519,7 +519,7 @@ BuyTab:CreateToggle({
 })
 
 -- ========================
--- PETS TAB
+-- PETS TAB (FIXED VERSION)
 -- ========================
 local isGivingPets = false
 local isGivingOut = false
@@ -558,55 +558,44 @@ local function getPlayersInServer()
     return players
 end
 
--- Function to get all available pets with counts
+-- Function to get all available pets
 local function getAvailablePets()
     local pets = {}
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then return pets end
-    
-    local success2, allData = pcall(clientData.get_data, clientData)
-    if not success2 or not allData[localPlayer.Name] then return pets end
-    
-    local playerData = allData[localPlayer.Name]
-    
-    if playerData.inventory and playerData.inventory.pets then
-        for petId, petData in pairs(playerData.inventory.pets) do
-            if petData.id then
-                local petName = petData.id
-                
-                if not pets[petName] then
-                    pets[petName] = {
-                        name = petName,
-                        totalCount = 0,
-                        petEntries = {}
-                    }
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
+            for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
+                if petData.id then
+                    local petType = petData.id
+                    if not pets[petType] then
+                        pets[petType] = {}
+                    end
+                    table.insert(pets[petType], uniqueId)
+                    petInventory[petType] = pets[petType]
                 end
-                
-                table.insert(pets[petName].petEntries, {
-                    uid = petId,
-                    petData = petData
-                })
-                pets[petName].totalCount = pets[petName].totalCount + 1
             end
         end
     end
-    
     return pets
 end
 
 -- Function to update pet inventory
 local function updatePetInventory()
-    local pets = getAvailablePets()
-    petInventory = {}
-    
-    for petName, petData in pairs(pets) do
-        petInventory[petName] = {}
-        for _, entry in ipairs(petData.petEntries) do
-            table.insert(petInventory[petName], entry.uid)
-        end
+    getAvailablePets()
+end
+
+-- Function to extract pet name from dropdown option (removes count)
+local function extractPetNameFromOption(option)
+    if type(option) ~= "string" then
+        option = tostring(option)
     end
-    
-    return petInventory
+    -- Remove the count in parentheses and any extra spaces
+    local petName = option:match("^(.+)%s*%(%d+%)$")
+    if petName then
+        return petName:gsub("%s+$", "") -- Trim trailing spaces
+    end
+    return option -- Return original if no parentheses found
 end
 
 -- Dropdown for Selected Players
@@ -629,34 +618,33 @@ task.spawn(function()
     end
 end)
 
--- Dropdown for Pet Types (with counts)
-local PetDropdown = PetsTab:CreateDropdown({
-    Name = "🐾 Select Pet Type",
-    Options = {"None"},
-    CurrentOption = "None",
-    MultipleOptions = false,
-    Flag = "PetDropdown",
-    Callback = function(Option)
-        selectedPetType = Option
-    end,
-})
-
 -- Function to refresh pet dropdown
 local function refreshPetDropdown()
     local pets = getAvailablePets()
-    local petOptions = {"None"}
+    local petOptions = {}
     
-    for petName, petData in pairs(pets) do
-        table.insert(petOptions, petName .. " (" .. petData.totalCount .. ")")
+    for petType, petList in pairs(pets) do
+        table.insert(petOptions, petType .. " (" .. #petList .. ")")
     end
     
     table.sort(petOptions)
-    
-    PetDropdown:Refresh(petOptions)
-    PetDropdown:Set("None") -- Set default selection
+    return petOptions
 end
 
--- Function to give N pets to a selected player
+-- Create pet dropdown
+local petOptions = refreshPetDropdown()
+local PetDropdown = PetsTab:CreateDropdown({
+    Name = "🐾 Select Pet Type",
+    Options = petOptions,
+    CurrentOption = nil,
+    MultipleOptions = false,
+    Flag = "PetDropdown",
+    Callback = function(Option)
+        selectedPetType = extractPetNameFromOption(Option)
+    end,
+})
+
+-- Function to give N pets to a selected player (FIXED VERSION)
 local function giveNPetsToSelectedPlayer(petType, numPets)
     if not selectedPlayerName then
         Rayfield:Notify({
@@ -696,8 +684,8 @@ local function giveNPetsToSelectedPlayer(petType, numPets)
 
     local successCount = 0
     for i, uniqueId in ipairs(petUniqueIds) do
-        -- FIXED: Pass player name as string instead of Player object
-        local args = {selectedPlayerName, uniqueId}
+        -- CORRECT FORMAT: Pass Player object as first argument, uniqueId as second
+        local args = {selectedPlayer, uniqueId}
         local success, result = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
@@ -707,9 +695,11 @@ local function giveNPetsToSelectedPlayer(petType, numPets)
             print("Gave pet " .. i .. "/" .. numPets .. " to " .. selectedPlayerName .. ": " .. uniqueId)
         else
             print("Failed to give pet: " .. tostring(result))
+            -- Put back remaining pets if failed
             for j = #petUniqueIds, i, -1 do
                 table.insert(petInventory[petType], petUniqueIds[j])
             end
+            return false
         end
 
         if i < numPets then
@@ -717,6 +707,9 @@ local function giveNPetsToSelectedPlayer(petType, numPets)
         end
     end
 
+    -- Refresh dropdown after giving pets
+    PetDropdown:Refresh(refreshPetDropdown())
+    
     return successCount > 0
 end
 
@@ -730,7 +723,7 @@ local GivePetsToggle = PetsTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while isGivingPets do
-                    if not selectedPlayerName or not selectedPetType or selectedPetType == "None" then
+                    if not selectedPlayerName or not selectedPetType then
                         Rayfield:Notify({
                             Title = "Error",
                             Content = "Please select a player and pet type!",
@@ -741,24 +734,12 @@ local GivePetsToggle = PetsTab:CreateToggle({
                         return
                     end
                     
-                    -- Extract pet name from dropdown option (remove count)
-                    -- FIXED: Check if selectedPetType is a string before using string.match
-                    local petName
-                    if type(selectedPetType) == "string" then
-                        petName = string.match(selectedPetType, "^(.-) %(") or selectedPetType
-                    else
-                        -- If it's a table or something else, convert to string
-                        petName = tostring(selectedPetType)
-                        -- Remove count if present
-                        petName = string.match(petName, "^(.-) %(") or petName
-                    end
-                    
-                    if petInventory[petName] and #petInventory[petName] > 0 then
-                        giveNPetsToSelectedPlayer(petName, 1)
+                    if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
+                        giveNPetsToSelectedPlayer(selectedPetType, 1)
                     else
                         Rayfield:Notify({
                             Title = "Error",
-                            Content = "No more " .. petName .. " pets!",
+                            Content = "No more " .. selectedPetType .. " pets!",
                             Duration = 3,
                             Image = 4483362458
                         })
@@ -796,10 +777,10 @@ local GiveOutToggle = PetsTab:CreateToggle({
                     for _, petType in ipairs(targetPets) do
                         if petInventory[petType] and #petInventory[petType] > 0 then
                             giveNPetsToSelectedPlayer(petType, 1)
-                            task.wait(10) -- Пауза между раздачей разных типов питомцев
+                            task.wait(10) -- Delay between different pet types
                         end
                     end
-                    task.wait(60) -- Пауза 60 секунд перед повторным циклом
+                    task.wait(60) -- Wait before next cycle
                 end
             end)
         end
@@ -807,7 +788,7 @@ local GiveOutToggle = PetsTab:CreateToggle({
 })
 
 -- ========================
--- GIFTS TAB
+-- GIFTS TAB (FIXED VERSION)
 -- ========================
 local isGivingGifts = false
 local giftInventory = {}
@@ -819,54 +800,41 @@ local selectedGiftPlayerName = nil
 local function getAvailableGifts()
     local gifts = {}
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then return gifts end
-    
-    local success2, allData = pcall(clientData.get_data, clientData)
-    if not success2 or not allData[localPlayer.Name] then return gifts end
-    
-    local playerData = allData[localPlayer.Name]
-    
-    if playerData.inventory and playerData.inventory.gifts then
-        for giftId, giftData in pairs(playerData.inventory.gifts) do
-            if giftData.id then
-                local giftName = giftData.id
-                local amount = giftData.amount or 1
-                
-                if not gifts[giftName] then
-                    gifts[giftName] = {
-                        name = giftName,
-                        totalAmount = 0,
-                        giftEntries = {}
-                    }
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+            for giftId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+                if giftData.id then
+                    local giftName = giftData.id
+                    local amount = giftData.amount or 1
+                    
+                    if not gifts[giftName] then
+                        gifts[giftName] = {
+                            totalAmount = 0,
+                            giftEntries = {}
+                        }
+                    end
+                    
+                    table.insert(gifts[giftName].giftEntries, {
+                        uid = giftId,
+                        amount = amount
+                    })
+                    gifts[giftName].totalAmount = gifts[giftName].totalAmount + amount
+                    giftInventory[giftName] = gifts[giftName].giftEntries
                 end
-                
-                table.insert(gifts[giftName].giftEntries, {
-                    uid = giftId,
-                    amount = amount
-                })
-                gifts[giftName].totalAmount = gifts[giftName].totalAmount + amount
             end
         end
     end
-    
     return gifts
 end
 
 -- Function to update gift inventory
 local function updateGiftInventory()
-    local gifts = getAvailableGifts()
-    giftInventory = {}
+    getAvailableGifts()
     totalGiftAmount = 0
     
-    for giftName, giftData in pairs(gifts) do
-        for _, entry in ipairs(giftData.giftEntries) do
-            table.insert(giftInventory, {
-                uid = entry.uid,
-                name = giftName,
-                amount = entry.amount
-            })
-            totalGiftAmount = totalGiftAmount + entry.amount
-        end
+    for _, giftData in pairs(giftInventory) do
+        totalGiftAmount = totalGiftAmount + #giftData
     end
     
     return totalGiftAmount
@@ -892,34 +860,33 @@ task.spawn(function()
     end
 end)
 
--- Dropdown for Gift Types
-local GiftDropdown = GiftsTab:CreateDropdown({
-    Name = "🎁 Select Gift Type",
-    Options = {"None"},
-    CurrentOption = "None",
-    MultipleOptions = false,
-    Flag = "GiftDropdown",
-    Callback = function(Option)
-        selectedGiftType = Option
-    end,
-})
-
 -- Function to refresh gift dropdown
 local function refreshGiftDropdown()
     local gifts = getAvailableGifts()
-    local giftOptions = {"None"}
+    local giftOptions = {}
     
     for giftName, giftData in pairs(gifts) do
         table.insert(giftOptions, giftName .. " (" .. giftData.totalAmount .. ")")
     end
     
     table.sort(giftOptions)
-    
-    GiftDropdown:Refresh(giftOptions)
-    GiftDropdown:Set("None") -- Set default selection
+    return giftOptions
 end
 
--- Function to give selected gifts to selected player
+-- Create gift dropdown
+local giftOptions = refreshGiftDropdown()
+local GiftDropdown = GiftsTab:CreateDropdown({
+    Name = "🎁 Select Gift Type",
+    Options = giftOptions,
+    CurrentOption = nil,
+    MultipleOptions = false,
+    Flag = "GiftDropdown",
+    Callback = function(Option)
+        selectedGiftType = extractPetNameFromOption(Option)
+    end,
+})
+
+-- Function to give selected gifts to selected player (FIXED VERSION)
 local function giveSelectedGiftsToSelectedPlayer()
     if not selectedGiftPlayerName then
         Rayfield:Notify({
@@ -942,7 +909,7 @@ local function giveSelectedGiftsToSelectedPlayer()
         return false
     end
 
-    if not selectedGiftType or selectedGiftType == "None" then
+    if not selectedGiftType then
         Rayfield:Notify({
             Title = "Error",
             Content = "Please select a gift type!",
@@ -952,23 +919,11 @@ local function giveSelectedGiftsToSelectedPlayer()
         return false
     end
 
-    -- Extract gift name from dropdown option (remove count)
-    -- FIXED: Check if selectedGiftType is a string before using string.match
-    local giftName
-    if type(selectedGiftType) == "string" then
-        giftName = string.match(selectedGiftType, "^(.-) %(") or selectedGiftType
-    else
-        -- If it's a table or something else, convert to string
-        giftName = tostring(selectedGiftType)
-        -- Remove count if present
-        giftName = string.match(giftName, "^(.-) %(") or giftName
-    end
-    
     local gifts = getAvailableGifts()
-    if not gifts[giftName] or #gifts[giftName].giftEntries == 0 then
+    if not gifts[selectedGiftType] or #gifts[selectedGiftType].giftEntries == 0 then
         Rayfield:Notify({
             Title = "Error",
-            Content = "No " .. giftName .. " gifts available!",
+            Content = "No " .. selectedGiftType .. " gifts available!",
             Duration = 3,
             Image = 4483362458
         })
@@ -978,9 +933,9 @@ local function giveSelectedGiftsToSelectedPlayer()
     local successCount = 0
     local failCount = 0
 
-    for i, giftEntry in ipairs(gifts[giftName].giftEntries) do
-        -- FIXED: Pass player name as string instead of Player object
-        local args = {selectedGiftPlayerName, giftEntry.uid}
+    for i, giftEntry in ipairs(gifts[selectedGiftType].giftEntries) do
+        -- CORRECT FORMAT: Pass Player object as first argument, gift UID as second
+        local args = {selectedPlayer, giftEntry.uid}
         local success, result = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
@@ -992,18 +947,18 @@ local function giveSelectedGiftsToSelectedPlayer()
             print("Failed to give gift: " .. tostring(result))
         end
 
-        if i < #gifts[giftName].giftEntries then
+        if i < #gifts[selectedGiftType].giftEntries then
             task.wait(9)
         end
     end
 
     -- Refresh dropdown after giving gifts
-    refreshGiftDropdown()
+    GiftDropdown:Refresh(refreshGiftDropdown())
 
     Rayfield:Notify({
         Title = "Gift Transfer Complete",
         Content = string.format("Gave %d %s gift(s) to %s. Success: %d, Failed: %d", 
-            #gifts[giftName].giftEntries, giftName, selectedGiftPlayerName, successCount, failCount),
+            #gifts[selectedGiftType].giftEntries, selectedGiftType, selectedGiftPlayerName, successCount, failCount),
         Duration = 5,
         Image = 4483362458
     })
@@ -1043,7 +998,7 @@ end)
 -- Auto-refresh pet dropdown every 30 seconds
 task.spawn(function()
     while true do
-        refreshPetDropdown()
+        PetDropdown:Refresh(refreshPetDropdown())
         task.wait(30)
     end
 end)
@@ -1051,14 +1006,14 @@ end)
 -- Auto-refresh gift dropdown every 30 seconds
 task.spawn(function()
     while true do
-        refreshGiftDropdown()
+        GiftDropdown:Refresh(refreshGiftDropdown())
         task.wait(30)
     end
 end)
 
 -- Initial refreshes
-refreshPetDropdown()
-refreshGiftDropdown()
+PetDropdown:Refresh(refreshPetDropdown())
+GiftDropdown:Refresh(refreshGiftDropdown())
 
 -- Delayed notification to confirm auto-start
 task.wait(3)
