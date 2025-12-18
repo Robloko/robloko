@@ -278,8 +278,7 @@ local Window = Rayfield:CreateWindow({
 -- Create tabs
 local WinterTab = Window:CreateTab("Winter Events", 4483362458)
 local BuyTab = Window:CreateTab("Buy", 6941542431)
-local PetsTab = Window:CreateTab("Pets", 123456789)
-local GiftsTab = Window:CreateTab("Gifts", 123456789)
+local GiveTab = Window:CreateTab("Give", 123456789)
 
 -- Variables for controls
 local isRunning = false
@@ -296,9 +295,7 @@ local function updateGingerbreadLabel()
     end
 end
 
--- ========================
--- WINTER EVENTS TAB
--- ========================
+-- Winter Events Tab
 gingerbreadLabel = WinterTab:CreateLabel("🍪 Current Gingerbread: " .. getCurrentGingerbread())
 WinterTab:CreateSection("")
 
@@ -449,64 +446,82 @@ local BucksToggle = WinterTab:CreateToggle({
     end,
 })
 
--- ========================
--- BUY TAB (Now with Toggles)
--- ========================
-local isBuyingHumbug = false
-local isBuyingTurtleDove = false
+-- Buy Tab
+local buyCount = 1
+local turtleDoveCount = 1
 
--- Humbug Auto Buy Toggle
-BuyTab:CreateToggle({
-    Name = "🦔 Auto Buy Humbug Pet",
-    CurrentValue = false,
-    Flag = "HumbugToggle",
-    Callback = function(Value)
-        isBuyingHumbug = Value
-        if Value then
-            task.spawn(function()
-                while isBuyingHumbug do
-                    local args = {
-                        "pets",
-                        "winter_2025_humbug",
-                        { buy_count = 1 }
-                    }
-                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-                    task.wait(60)
-                end
-            end)
+local HumbugCountInput = BuyTab:CreateInput({
+    Name = "Number of Humbug Pets",
+    PlaceholderText = "Enter amount",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text)
+        buyCount = num and num > 0 and math.floor(num) or 1
+    end,
+})
+HumbugCountInput:Set("1")
+
+BuyTab:CreateButton({
+    Name = "🦔 Buy Humbug Pet",
+    Callback = function()
+        if buyCount > 0 then
+            local args = {
+                "pets",
+                "winter_2025_humbug",
+                { buy_count = buyCount }
+            }
+            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+            Rayfield:Notify({
+                Title = "Purchase Complete",
+                Content = "Bought " .. buyCount .. " Humbug pet(s)",
+                Duration = 3,
+                Image = 4483362458
+            })
         end
     end,
 })
 
--- Turtle Dove Auto Buy Toggle
-BuyTab:CreateToggle({
-    Name = "🐦 Auto Buy Turtle Dove Pet",
-    CurrentValue = false,
-    Flag = "TurtleDoveToggle",
-    Callback = function(Value)
-        isBuyingTurtleDove = Value
-        if Value then
-            task.spawn(function()
-                while isBuyingTurtleDove do
-                    local args = {
-                        "pets",
-                        "winter_2025_turtle_doves",
-                        { buy_count = 1 }
-                    }
-                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-                    task.wait(60)
+local TurtleDoveCountInput = BuyTab:CreateInput({
+    Name = "Number of Turtle Dove Pets",
+    PlaceholderText = "Enter amount",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text)
+        turtleDoveCount = num and num > 0 and math.floor(num) or 1
+    end,
+})
+TurtleDoveCountInput:Set("1")
+
+BuyTab:CreateButton({
+    Name = "🐦 Buy Turtle Dove Pet",
+    Callback = function()
+        if turtleDoveCount > 0 then
+            for i = 1, turtleDoveCount do
+                local args = {
+                    "pets",
+                    "winter_2025_turtle_doves",
+                    { buy_count = 1 }
+                }
+                game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                if i < turtleDoveCount then
+                    task.wait(0.5)
                 end
-            end)
+            end
+            Rayfield:Notify({
+                Title = "Purchase Complete",
+                Content = "Bought " .. turtleDoveCount .. " Turtle Dove pet(s)",
+                Duration = 3,
+                Image = 4483362458
+            })
         end
     end,
 })
 
--- ========================
--- PETS TAB
--- ========================
-local isGivingPets = false
-local isGivingOut = false
+-- Give Tab
 local giftType = "2d_tuesdays_2025_box"
+local isGivingGifts = false
+local isGivingPets = false
+local isGivingOut = false -- Новый флаг для тоггла "Give OUT"
 local giftInventory = {}
 local petInventory = {}
 local totalGiftAmount = 0
@@ -532,32 +547,8 @@ local targetPets = {
     "basic_egg_2022_corgi"
 }
 
--- Adaptive Input for Target Player Name
-local PlayerInput = PetsTab:CreateInput({
-    Name = "Target Player Name",
-    PlaceholderText = "Enter player name",
-    RemoveTextAfterFocusLost = false,
-    Flag = "PlayerInput",
-    Callback = function(Text)
-        selectedPlayerName = Text
-    end,
-})
-PlayerInput:Set("Gerranafa")
-
--- Dropdown for Pet Types
-local PetDropdown = PetsTab:CreateDropdown({
-    Name = "Select Pet Type",
-    Options = {},
-    CurrentOption = "None",
-    MultipleOptions = false,
-    Flag = "PetDropdown",
-    Callback = function(Option)
-        selectedPetType = Option
-    end,
-})
-
 -- Toggle for Auto Give Pets
-local GivePetsToggle = PetsTab:CreateToggle({
+local GivePetsToggle = GiveTab:CreateToggle({
     Name = "🐾 Auto Give Pets",
     CurrentValue = false,
     Flag = "GivePetsToggle",
@@ -607,8 +598,8 @@ local GivePetsToggle = PetsTab:CreateToggle({
 })
 
 -- Toggle for Give OUT
-local GiveOutToggle = PetsTab:CreateToggle({
-    Name = "🚀 Give OUT (All Target Pets)",
+local GiveOutToggle = GiveTab:CreateToggle({
+    Name = "🚀 Give OUT",
     CurrentValue = false,
     Flag = "GiveOutToggle",
     Callback = function(Value)
@@ -644,4 +635,234 @@ local GiveOutToggle = PetsTab:CreateToggle({
                         end
                     end
                     task.wait(60) -- Пауза 60 секунд перед повторным циклом
-               
+                end
+            end)
+        end
+    end,
+})
+
+-- Adaptive Input for Target Player Name
+local PlayerInput = GiveTab:CreateInput({
+    Name = "Target Player Name",
+    PlaceholderText = "Enter player name",
+    RemoveTextAfterFocusLost = false,
+    Flag = "PlayerInput",
+    Callback = function(Text)
+        selectedPlayerName = Text
+    end,
+})
+PlayerInput:Set("Gerranafa")
+
+-- Dropdown for Pet Types
+local PetDropdown = GiveTab:CreateDropdown({
+    Name = "Select Pet Type",
+    Options = {},
+    CurrentOption = "None",
+    MultipleOptions = false,
+    Flag = "PetDropdown",
+    Callback = function(Option)
+        selectedPetType = Option
+    end,
+})
+
+-- Function to update gift inventory
+local function updateGiftInventory()
+    giftInventory = {}
+    totalGiftAmount = 0
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+            for uniqueId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+                if giftData.id == giftType then
+                    local amount = giftData.amount or 1
+                    table.insert(giftInventory, {uid = uniqueId, amount = amount})
+                    totalGiftAmount = totalGiftAmount + amount
+                end
+            end
+        end
+    end
+    return totalGiftAmount
+end
+
+-- Function to update pet inventory
+local function updatePetInventory()
+    petInventory = {}
+    local uniqueTypes = {}
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
+            for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
+                if petData.id then
+                    local petType = petData.id
+                    if not uniqueTypes[petType] then
+                        uniqueTypes[petType] = {}
+                    end
+                    table.insert(uniqueTypes[petType], uniqueId)
+                    petInventory[petType] = uniqueTypes[petType]
+                end
+            end
+        end
+    end
+    return petInventory
+end
+
+-- Function to give all gifts to target player
+local function giveAllGiftsToPlayer()
+    local targetPlayer = Players:FindFirstChild(selectedPlayerName)
+    if not targetPlayer then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Target player is offline!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
+    end
+
+    updateGiftInventory()
+    if #giftInventory == 0 then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "No gifts to give!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
+    end
+
+    local successCount = 0
+    local failCount = 0
+
+    for i, stack in ipairs(giftInventory) do
+        local args = {targetPlayer, stack.uid}
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            successCount = successCount + 1
+        else
+            failCount = failCount + 1
+        end
+
+        if i < #giftInventory then
+            task.wait(9)
+        end
+    end
+
+    updateGiftInventory()
+
+    Rayfield:Notify({
+        Title = "Gift Transfer Complete",
+        Content = string.format("Success: %d, Failed: %d, Remaining: %d", successCount, failCount, totalGiftAmount),
+        Duration = 5,
+        Image = 4483362458
+    })
+end
+
+-- Function to give N pets to a player
+local function giveNPetsToPlayer(targetPlayer, petType, numPets)
+    if not petInventory[petType] or #petInventory[petType] < numPets then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Not enough " .. petType .. " pets!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
+    local petUniqueIds = {}
+    for i = 1, numPets do
+        table.insert(petUniqueIds, table.remove(petInventory[petType], 1))
+    end
+
+    for i, uniqueId in ipairs(petUniqueIds) do
+        local args = {targetPlayer, uniqueId}
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Failed to give pet: " .. tostring(result),
+                Duration = 3,
+                Image = 4483362458
+            })
+            for j = #petUniqueIds, i, -1 do
+                table.insert(petInventory[petType], petUniqueIds[j])
+            end
+            return false
+        end
+
+        if i < numPets then
+            task.wait(9)
+        end
+    end
+
+    return true
+end
+
+-- Toggle for Auto Give Gifts
+local GiveGiftsToggle = GiveTab:CreateToggle({
+    Name = "🎁 Auto Give Gifts",
+    CurrentValue = false,
+    Flag = "GiveGiftsToggle",
+    Callback = function(Value)
+        isGivingGifts = Value
+        if Value then
+            task.spawn(function()
+                while isGivingGifts do
+                    giveAllGiftsToPlayer()
+                    task.wait(600)
+                end
+            end)
+        end
+    end,
+})
+
+-- Auto-update gingerbread label every 10 seconds
+task.spawn(function()
+    while true do
+        updateGingerbreadLabel()
+        task.wait(10)
+    end
+end)
+
+-- Function to update pets dropdown
+local function updatePetsDropdown()
+    petInventory = updatePetInventory()
+    local petTypes = {}
+    for petType, _ in pairs(petInventory) do
+        table.insert(petTypes, petType)
+    end
+    table.sort(petTypes)
+    PetDropdown:Refresh(petTypes)
+end
+
+-- Initial update of pets dropdown
+updatePetsDropdown()
+
+-- Periodic refresh for pets
+task.spawn(function()
+    while true do
+        task.wait(30)
+        updatePetsDropdown()
+    end
+end)
+
+-- Delayed notification to confirm auto-start
+task.wait(3)
+Rayfield:Notify({
+    Title = "Auto Farm Started",
+    Content = "Gingerbread farming is now running automatically!",
+    Duration = 5,
+    Image = 4483362458
+})
+
+print("COCOON Gingerbread Farm Loaded!")
