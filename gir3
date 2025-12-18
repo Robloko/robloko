@@ -6,14 +6,14 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local localPlayer = Players.LocalPlayer
 
--- Get the remote event references
+-- Remote event references
 local adoptmeNet = game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net")
 local iceSkatingEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:7")
 local collectEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.IceSkating.IceSkatingNet:16")
 local trainEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.Train.WinterTrainNet:7")
 local spawnAPI = game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn")
 
--- Store all gingerbread IDs (deduplicated)
+-- Gingerbread IDs
 local gingerbreadIds = {
     "{60E33537-47D5-4212-958D-307C17501331}",
     "{28F6FD49-55C2-4E45-88F3-E62344AEE010}",
@@ -22,17 +22,13 @@ local gingerbreadIds = {
     "{1F5105D1-7F27-4C3F-88F8-DAB5AC6F80A7}",
 }
 
--- Function to get current gingerbread_2025 value
+-- Get current gingerbread value
 local function getCurrentGingerbread()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then
-        return 0
-    end
+    if not success then return 0 end
 
     local success2, allData = pcall(clientData.get_data, clientData)
-    if not success2 or not allData[localPlayer.Name] then
-        return 0
-    end
+    if not success2 or not allData[localPlayer.Name] then return 0 end
 
     local playerData = allData[localPlayer.Name]
     local gingerbread = 0
@@ -54,46 +50,37 @@ local function getCurrentGingerbread()
     return gingerbread
 end
 
--- Function to call a single gingerbread ID
+-- Call gingerbread ID
 local function callGingerbreadId(gingerbreadId)
-    local args = {
-        {
-            interior_name = "MainMap!Christmas",
-            gingerbread_id = gingerbreadId
-        }
-    }
-    iceSkatingEvent:FireServer(unpack(args))
+    local args = { interior_name = "MainMap!Christmas", gingerbread_id = gingerbreadId }
+    iceSkatingEvent:FireServer(args)
 end
 
--- Function to collect rewards
+-- Collect gingerbreads
 local function collectGingerbreads()
     collectEvent:FireServer()
     return true
 end
 
--- Function to board the train
+-- Board train
 local function boardTrain()
-    local args = {
-        {
-            carriage = workspace:WaitForChild("WinterTrainSeats"):WaitForChild("Seat")
-        }
-    }
-    trainEvent:FireServer(unpack(args))
+    local args = { carriage = workspace:WaitForChild("WinterTrainSeats"):WaitForChild("Seat") }
+    trainEvent:FireServer(args)
 end
 
--- Function to respawn player
+-- Respawn player
 local function respawnPlayer()
     spawnAPI:InvokeServer()
 end
 
--- Function to get current minute
+-- Get current minute
 local function getCurrentMinute()
     return os.date("*t").min
 end
 
--- Main function to run the cycle
+-- Main cycle
 local function runCycle()
-    for i, gingerbreadId in ipairs(gingerbreadIds) do
+    for _, gingerbreadId in ipairs(gingerbreadIds) do
         pcall(callGingerbreadId, gingerbreadId)
         task.wait(0.5)
     end
@@ -106,14 +93,12 @@ local function runCycle()
     return true
 end
 
--- Create the window with COCOON title
+-- Create UI window
 local Window = Rayfield:CreateWindow({
     Name = "COCOON",
     LoadingTitle = "Winter 2025 Gingerbread Farm",
     LoadingSubtitle = "Auto Farming Script",
-    ConfigurationSaving = {
-        Enabled = false,
-    },
+    ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
 
@@ -123,19 +108,13 @@ local BuyTab = Window:CreateTab("Buy", 6941542458)
 local PetsTab = Window:CreateTab("Pets", 123456789)
 local GiftsTab = Window:CreateTab("Gifts", 123456789)
 
--- Variables for controls
-local isRunning = false
-local isMailCollecting = false
-local isBucksExchange = false
-local isTrainRunning = false
+-- Variables
+local isRunning, isMailCollecting, isBucksExchange, isTrainRunning = false, false, false, false
 local gingerbreadLabel
-local petInventory = {}
-local giftInventory = {}
-local selectedPlayerName = nil
-local selectedPetType = nil
-local selectedGiftType = nil
+local petInventory, giftInventory = {}, {}
+local selectedPlayerName, selectedPetType, selectedGiftType = nil, nil, nil
 
--- Function to update gingerbread label
+-- Update gingerbread label
 local function updateGingerbreadLabel()
     local currentGingerbread = getCurrentGingerbread()
     if gingerbreadLabel then
@@ -153,8 +132,7 @@ WinterTab:CreateSection("")
 WinterTab:CreateButton({
     Name = "🏠 Spawn House & Respawn",
     Callback = function()
-        local args = {1}
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/SpawnHouse"):FireServer(unpack(args))
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/SpawnHouse"):FireServer(1)
         task.wait(2)
         game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn"):InvokeServer()
         Rayfield:Notify({
@@ -167,7 +145,7 @@ WinterTab:CreateButton({
 })
 
 -- Auto Farm Gingerbread Toggle
-local GingerbreadToggle = WinterTab:CreateToggle({
+WinterTab:CreateToggle({
     Name = "🍪 Auto Farm Gingerbread",
     CurrentValue = true,
     Flag = "FarmToggle",
@@ -193,7 +171,7 @@ local GingerbreadToggle = WinterTab:CreateToggle({
 })
 
 -- Auto Xmas Train Toggle
-local TrainToggle = WinterTab:CreateToggle({
+WinterTab:CreateToggle({
     Name = "🚂 Auto Xmas Train",
     CurrentValue = false,
     Flag = "TrainToggle",
@@ -211,22 +189,13 @@ local TrainToggle = WinterTab:CreateToggle({
                         pcall(respawnPlayer)
                         task.wait(5)
                     else
-                        local minutesUntilNextTrain
-                        if currentMinute < 6 then
-                            minutesUntilNextTrain = 6 - currentMinute
-                        elseif currentMinute < 16 then
-                            minutesUntilNextTrain = 16 - currentMinute
-                        elseif currentMinute < 26 then
-                            minutesUntilNextTrain = 26 - currentMinute
-                        elseif currentMinute < 36 then
-                            minutesUntilNextTrain = 36 - currentMinute
-                        elseif currentMinute < 46 then
-                            minutesUntilNextTrain = 46 - currentMinute
-                        elseif currentMinute < 56 then
-                            minutesUntilNextTrain = 56 - currentMinute
-                        else
-                            minutesUntilNextTrain = (60 - currentMinute) + 6
-                        end
+                        local minutesUntilNextTrain = (currentMinute < 6 and 6 - currentMinute) or
+                                                      (currentMinute < 16 and 16 - currentMinute) or
+                                                      (currentMinute < 26 and 26 - currentMinute) or
+                                                      (currentMinute < 36 and 36 - currentMinute) or
+                                                      (currentMinute < 46 and 46 - currentMinute) or
+                                                      (currentMinute < 56 and 56 - currentMinute) or
+                                                      (60 - currentMinute + 6)
                         local waitSeconds = (minutesUntilNextTrain * 60) - currentSecond
                         if waitSeconds > 10 then
                             waitSeconds = waitSeconds - 5
@@ -251,7 +220,7 @@ local TrainToggle = WinterTab:CreateToggle({
 })
 
 -- Xmas Mail Collect Toggle
-local MailToggle = WinterTab:CreateToggle({
+WinterTab:CreateToggle({
     Name = "📮 Xmas Mail Collect",
     CurrentValue = false,
     Flag = "MailToggle",
@@ -272,7 +241,7 @@ local MailToggle = WinterTab:CreateToggle({
 })
 
 -- Auto Bucks Exchange Toggle
-local BucksToggle = WinterTab:CreateToggle({
+WinterTab:CreateToggle({
     Name = "💰 Auto Bucks Exchange",
     CurrentValue = false,
     Flag = "BucksToggle",
@@ -299,8 +268,7 @@ local BucksToggle = WinterTab:CreateToggle({
 -- ========================
 -- BUY TAB
 -- ========================
-local isBuyingHumbug = false
-local isBuyingTurtleDove = false
+local isBuyingHumbug, isBuyingTurtleDove = false, false
 
 -- Humbug Auto Buy Toggle
 BuyTab:CreateToggle({
@@ -312,12 +280,7 @@ BuyTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while isBuyingHumbug do
-                    local args = {
-                        "pets",
-                        "winter_2025_humbug",
-                        { buy_count = 1 }
-                    }
-                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer("pets", "winter_2025_humbug", { buy_count = 1 })
                     task.wait(60)
                 end
             end)
@@ -335,12 +298,7 @@ BuyTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while isBuyingTurtleDove do
-                    local args = {
-                        "pets",
-                        "winter_2025_turtle_doves",
-                        { buy_count = 1 }
-                    }
-                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+                    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer("pets", "winter_2025_turtle_doves", { buy_count = 1 })
                     task.wait(60)
                 end
             end)
@@ -349,9 +307,9 @@ BuyTab:CreateToggle({
 })
 
 -- ========================
--- PETS TAB (FIXED VERSION)
+-- PETS TAB
 -- ========================
--- Function to get all players in server
+-- Get all players in server
 local function getPlayersInServer()
     local players = {}
     for _, player in pairs(Players:GetPlayers()) do
@@ -363,7 +321,7 @@ local function getPlayersInServer()
     return players
 end
 
--- Function to get all available pets
+-- Get all available pets
 local function getAvailablePets()
     local pets = {}
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
@@ -385,15 +343,13 @@ local function getAvailablePets()
     return pets
 end
 
--- Function to refresh pet dropdown
+-- Refresh pet dropdown
 local function refreshPetDropdown()
     local pets = getAvailablePets()
     local petOptions = {}
-
     for petType, petList in pairs(pets) do
         table.insert(petOptions, string.format("%s (%d)", petType, #petList))
     end
-
     table.sort(petOptions)
     print("Available pet options:", table.concat(petOptions, ", "))
     return petOptions
@@ -408,15 +364,13 @@ local PlayerDropdown = PetsTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "PlayerDropdown",
     Callback = function(Option)
-        -- Option is a table; extract the name
-        if type(Option) == "table" and Option.Name then
-            selectedPlayerName = Option.Name
-        elseif type(Option) == "string" then
-            selectedPlayerName = Option
+        -- Extract the player's name from the option
+        if type(Option) == "table" then
+            selectedPlayerName = Option.Name or Option[1] or tostring(Option)
         else
-            selectedPlayerName = nil
+            selectedPlayerName = tostring(Option)
         end
-        print("Selected player:", selectedPlayerName)
+        print("Selected player:", selectedPlayerName, type(selectedPlayerName))
     end,
 })
 
@@ -430,19 +384,14 @@ local PetDropdown = PetsTab:CreateDropdown({
     Callback = function(Option)
         local optionString = tostring(Option)
         local petType = optionString:match("^(.-)%s+%(%d+%)$")
-        if petType then
-            selectedPetType = petType
-            print("Selected pet type:", selectedPetType)
-        else
-            selectedPetType = optionString
-            print("Selected pet type (no count):", selectedPetType)
-        end
+        selectedPetType = petType or optionString
+        print("Selected pet type:", selectedPetType)
     end,
 })
 
--- Function to give pet to player (FIXED VERSION)
+-- Give pet to player
 local function givePet()
-    if not selectedPlayerName or type(selectedPlayerName) ~= "string" then
+    if not selectedPlayerName or type(selectedPlayerName) ~= "string" or selectedPlayerName == "" then
         Rayfield:Notify({
             Title = "Error",
             Content = "Please select a valid player!",
@@ -452,14 +401,12 @@ local function givePet()
         return
     end
 
-    -- Debug: Print selected player and online players
     print("Selected player name:", selectedPlayerName)
     print("Online players:")
     for _, player in pairs(Players:GetPlayers()) do
         print(player.Name)
     end
 
-    -- Find the player (case-insensitive)
     local targetPlayer
     for _, player in pairs(Players:GetPlayers()) do
         if type(player.Name) == "string" and player.Name:lower() == selectedPlayerName:lower() then
@@ -499,7 +446,6 @@ local function givePet()
     end
 
     local petUid = table.remove(petInventory[selectedPetType], 1)
-
     local args = {targetPlayer, petUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
@@ -528,7 +474,7 @@ local function givePet()
     end
 end
 
--- Add Give Pet button
+-- Give Pet button
 PetsTab:CreateButton({
     Name = "🎁 Give Selected Pet",
     Callback = function()
@@ -538,7 +484,7 @@ PetsTab:CreateButton({
 
 -- Auto give toggle
 local autoGivePets = false
-local AutoGiveToggle = PetsTab:CreateToggle({
+PetsTab:CreateToggle({
     Name = "🚀 Auto Give Selected Pet",
     CurrentValue = false,
     Flag = "AutoGiveToggle",
@@ -556,9 +502,9 @@ local AutoGiveToggle = PetsTab:CreateToggle({
 })
 
 -- ========================
--- GIFTS TAB (FIXED VERSION)
+-- GIFTS TAB
 -- ========================
--- Function to get all available gifts
+-- Get all available gifts
 local function getAvailableGifts()
     local gifts = {}
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
@@ -580,15 +526,13 @@ local function getAvailableGifts()
     return gifts
 end
 
--- Function to refresh gift dropdown
+-- Refresh gift dropdown
 local function refreshGiftDropdown()
     local gifts = getAvailableGifts()
     local giftOptions = {}
-
     for giftName, giftList in pairs(gifts) do
         table.insert(giftOptions, string.format("%s (%d)", giftName, #giftList))
     end
-
     table.sort(giftOptions)
     print("Available gift options:", table.concat(giftOptions, ", "))
     return giftOptions
@@ -603,15 +547,13 @@ local GiftsPlayerDropdown = GiftsTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "GiftsPlayerDropdown",
     Callback = function(Option)
-        -- Option is a table; extract the name
-        if type(Option) == "table" and Option.Name then
-            selectedPlayerName = Option.Name
-        elseif type(Option) == "string" then
-            selectedPlayerName = Option
+        -- Extract the player's name from the option
+        if type(Option) == "table" then
+            selectedPlayerName = Option.Name or Option[1] or tostring(Option)
         else
-            selectedPlayerName = nil
+            selectedPlayerName = tostring(Option)
         end
-        print("Selected player:", selectedPlayerName)
+        print("Selected player:", selectedPlayerName, type(selectedPlayerName))
     end,
 })
 
@@ -625,19 +567,14 @@ local GiftDropdown = GiftsTab:CreateDropdown({
     Callback = function(Option)
         local optionString = tostring(Option)
         local giftType = optionString:match("^(.-)%s+%(%d+%)$")
-        if giftType then
-            selectedGiftType = giftType
-            print("Selected gift type:", selectedGiftType)
-        else
-            selectedGiftType = optionString
-            print("Selected gift type (no count):", selectedGiftType)
-        end
+        selectedGiftType = giftType or optionString
+        print("Selected gift type:", selectedGiftType)
     end,
 })
 
--- Function to give gift to player (FIXED VERSION)
+-- Give gift to player
 local function giveGift()
-    if not selectedPlayerName or type(selectedPlayerName) ~= "string" then
+    if not selectedPlayerName or type(selectedPlayerName) ~= "string" or selectedPlayerName == "" then
         Rayfield:Notify({
             Title = "Error",
             Content = "Please select a valid player!",
@@ -647,14 +584,12 @@ local function giveGift()
         return
     end
 
-    -- Debug: Print selected player and online players
     print("Selected player name:", selectedPlayerName)
     print("Online players:")
     for _, player in pairs(Players:GetPlayers()) do
         print(player.Name)
     end
 
-    -- Find the player (case-insensitive)
     local targetPlayer
     for _, player in pairs(Players:GetPlayers()) do
         if type(player.Name) == "string" and player.Name:lower() == selectedPlayerName:lower() then
@@ -694,7 +629,6 @@ local function giveGift()
     end
 
     local giftUid = table.remove(giftInventory[selectedGiftType], 1)
-
     local args = {targetPlayer, giftUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
@@ -723,7 +657,7 @@ local function giveGift()
     end
 end
 
--- Add Give Gift button
+-- Give Gift button
 GiftsTab:CreateButton({
     Name = "🎁 Give Selected Gift",
     Callback = function()
@@ -733,7 +667,7 @@ GiftsTab:CreateButton({
 
 -- Auto give toggle for gifts
 local autoGiveGifts = false
-local AutoGiveGiftsToggle = GiftsTab:CreateToggle({
+GiftsTab:CreateToggle({
     Name = "🚀 Auto Give Selected Gift",
     CurrentValue = false,
     Flag = "AutoGiveGiftsToggle",
@@ -753,7 +687,7 @@ local AutoGiveGiftsToggle = GiftsTab:CreateToggle({
 -- ========================
 -- INITIALIZATION
 -- ========================
--- Auto-update gingerbread label every 10 seconds
+-- Auto-update gingerbread label
 task.spawn(function()
     while true do
         updateGingerbreadLabel()
@@ -761,7 +695,7 @@ task.spawn(function()
     end
 end)
 
--- Auto-refresh dropdowns every 10 seconds
+-- Auto-refresh dropdowns
 task.spawn(function()
     while true do
         task.wait(10)
@@ -772,7 +706,7 @@ task.spawn(function()
     end
 end)
 
--- Delayed notification to confirm auto-start
+-- Startup notification
 task.wait(3)
 Rayfield:Notify({
     Title = "COCOON Auto Farm Started",
