@@ -529,6 +529,57 @@ local targetPets = {
     "basic_egg_2022_corgi"
 }
 
+-- Function to get all available pets with counts
+local function getAvailablePets()
+    local pets = {}
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then return pets end
+    
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData[localPlayer.Name] then return pets end
+    
+    local playerData = allData[localPlayer.Name]
+    
+    if playerData.inventory and playerData.inventory.pets then
+        for petId, petData in pairs(playerData.inventory.pets) do
+            if petData.id then
+                local petName = petData.id
+                
+                if not pets[petName] then
+                    pets[petName] = {
+                        name = petName,
+                        totalCount = 0,
+                        petEntries = {}
+                    }
+                end
+                
+                table.insert(pets[petName].petEntries, {
+                    uid = petId,
+                    petData = petData
+                })
+                pets[petName].totalCount = pets[petName].totalCount + 1
+            end
+        end
+    end
+    
+    return pets
+end
+
+-- Function to update pet inventory
+local function updatePetInventory()
+    local pets = getAvailablePets()
+    petInventory = {}
+    
+    for petName, petData in pairs(pets) do
+        petInventory[petName] = {}
+        for _, entry in ipairs(petData.petEntries) do
+            table.insert(petInventory[petName], entry.uid)
+        end
+    end
+    
+    return petInventory
+end
+
 -- Adaptive Input for Target Player Name
 local PlayerInput = PetsTab:CreateInput({
     Name = "Target Player Name",
@@ -541,10 +592,10 @@ local PlayerInput = PetsTab:CreateInput({
 })
 PlayerInput:Set("Gerranafa")
 
--- Dropdown for Pet Types
+-- Dropdown for Pet Types (with counts)
 local PetDropdown = PetsTab:CreateDropdown({
     Name = "Select Pet Type",
-    Options = {},
+    Options = {"None"},
     CurrentOption = "None",
     MultipleOptions = false,
     Flag = "PetDropdown",
@@ -553,9 +604,27 @@ local PetDropdown = PetsTab:CreateDropdown({
     end,
 })
 
+-- Function to refresh pet dropdown
+local function refreshPetDropdown()
+    local pets = getAvailablePets()
+    local petOptions = {}
+    
+    for petName, petData in pairs(pets) do
+        table.insert(petOptions, petName .. " (" .. petData.totalCount .. ")")
+    end
+    
+    if #petOptions == 0 then
+        petOptions = {"No pets available"}
+    else
+        table.sort(petOptions)
+    end
+    
+    PetDropdown:Refresh(petOptions)
+end
+
 -- Toggle for Auto Give Pets
 local GivePetsToggle = PetsTab:CreateToggle({
-    Name = "🐾 Auto Give Pets",
+    Name = "🐾 Auto Give Selected Pets",
     CurrentValue = false,
     Flag = "GivePetsToggle",
     Callback = function(Value)
@@ -563,7 +632,7 @@ local GivePetsToggle = PetsTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while isGivingPets do
-                    if not selectedPlayerName or not selectedPetType then
+                    if not selectedPlayerName or not selectedPetType or selectedPetType == "None" then
                         Rayfield:Notify({
                             Title = "Error",
                             Content = "Please select a player and pet type!",
@@ -573,6 +642,7 @@ local GivePetsToggle = PetsTab:CreateToggle({
                         GivePetsToggle:Set(false)
                         return
                     end
+                    
                     local targetPlayer = Players:FindFirstChild(selectedPlayerName)
                     if not targetPlayer then
                         Rayfield:Notify({
@@ -584,12 +654,16 @@ local GivePetsToggle = PetsTab:CreateToggle({
                         GivePetsToggle:Set(false)
                         return
                     end
-                    if petInventory[selectedPetType] and #petInventory[selectedPetType] > 0 then
-                        giveNPetsToPlayer(targetPlayer, selectedPetType, 1)
+                    
+                    -- Extract pet name from dropdown option (remove count)
+                    local petName = string.match(selectedPetType, "^(.-) %(") or selectedPetType
+                    
+                    if petInventory[petName] and #petInventory[petName] > 0 then
+                        giveNPetsToPlayer(targetPlayer, petName, 1)
                     else
                         Rayfield:Notify({
                             Title = "Error",
-                            Content = "No more " .. selectedPetType .. " pets!",
+                            Content = "No more " .. petName .. " pets!",
                             Duration = 3,
                             Image = 4483362458
                         })
@@ -710,29 +784,6 @@ local function updateGiftInventory()
     end
     
     return totalGiftAmount
-end
-
--- Function to update pet inventory
-local function updatePetInventory()
-    petInventory = {}
-    local uniqueTypes = {}
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if success then
-        local success2, allData = pcall(clientData.get_data, clientData)
-        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
-            for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
-                if petData.id then
-                    local petType = petData.id
-                    if not uniqueTypes[petType] then
-                        uniqueTypes[petType] = {}
-                    end
-                    table.insert(uniqueTypes[petType], uniqueId)
-                    petInventory[petType] = uniqueTypes[petType]
-                end
-            end
-        end
-    end
-    return petInventory
 end
 
 -- Adaptive Input for Target Player Name (Gifts)
@@ -923,19 +974,13 @@ task.spawn(function()
     end
 end)
 
--- Function to update pets dropdown
-local function updatePetsDropdown()
-    petInventory = updatePetInventory()
-    local petTypes = {}
-    for petType, _ in pairs(petInventory) do
-        table.insert(petTypes, petType)
+-- Auto-refresh pet dropdown every 30 seconds
+task.spawn(function()
+    while true do
+        refreshPetDropdown()
+        task.wait(30)
     end
-    table.sort(petTypes)
-    PetDropdown:Refresh(petTypes)
-end
-
--- Initial update of pets dropdown
-updatePetsDropdown()
+end)
 
 -- Auto-refresh gift dropdown every 30 seconds
 task.spawn(function()
@@ -945,15 +990,8 @@ task.spawn(function()
     end
 end)
 
--- Periodic refresh for pets
-task.spawn(function()
-    while true do
-        task.wait(30)
-        updatePetsDropdown()
-    end
-end)
-
--- Initial refresh of gift dropdown
+-- Initial refreshes
+refreshPetDropdown()
 refreshGiftDropdown()
 
 -- Delayed notification to confirm auto-start
