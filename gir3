@@ -609,9 +609,9 @@ local function updatePetInventory()
     return petInventory
 end
 
--- Dropdown for Target Players
+-- Dropdown for Selected Players
 local PlayerDropdown = PetsTab:CreateDropdown({
-    Name = "🎯 Select Target Player",
+    Name = "🎯 Select Player",
     Options = getPlayersInServer(),
     CurrentOption = nil,
     MultipleOptions = false,
@@ -659,8 +659,29 @@ local function refreshPetDropdown()
     PetDropdown:Refresh(petOptions)
 end
 
--- Function to give N pets to a player
-local function giveNPetsToPlayer(targetPlayer, petType, numPets)
+-- Function to give N pets to a selected player
+local function giveNPetsToSelectedPlayer(petType, numPets)
+    if not selectedPlayerName then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Please select a player!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
+    local selectedPlayer = Players:FindFirstChild(selectedPlayerName)
+    if not selectedPlayer then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Selected player is offline!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
     if not petInventory[petType] or #petInventory[petType] < numPets then
         Rayfield:Notify({
             Title = "Error",
@@ -678,14 +699,14 @@ local function giveNPetsToPlayer(targetPlayer, petType, numPets)
 
     local successCount = 0
     for i, uniqueId in ipairs(petUniqueIds) do
-        local args = {targetPlayer, uniqueId}
+        local args = {selectedPlayer, uniqueId}
         local success, result = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
 
         if success then
             successCount = successCount + 1
-            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
+            print("Gave pet " .. i .. "/" .. numPets .. " to " .. selectedPlayer.Name .. ": " .. uniqueId)
         else
             print("Failed to give pet: " .. tostring(result))
             for j = #petUniqueIds, i, -1 do
@@ -722,23 +743,11 @@ local GivePetsToggle = PetsTab:CreateToggle({
                         return
                     end
                     
-                    local targetPlayer = Players:FindFirstChild(selectedPlayerName)
-                    if not targetPlayer then
-                        Rayfield:Notify({
-                            Title = "Error",
-                            Content = "Target player is offline!",
-                            Duration = 3,
-                            Image = 4483362458
-                        })
-                        GivePetsToggle:Set(false)
-                        return
-                    end
-                    
                     -- Extract pet name from dropdown option (remove count)
                     local petName = string.match(selectedPetType, "^(.-) %(") or selectedPetType
                     
                     if petInventory[petName] and #petInventory[petName] > 0 then
-                        giveNPetsToPlayer(targetPlayer, petName, 1)
+                        giveNPetsToSelectedPlayer(petName, 1)
                     else
                         Rayfield:Notify({
                             Title = "Error",
@@ -774,22 +783,12 @@ local GiveOutToggle = PetsTab:CreateToggle({
                 GiveOutToggle:Set(false)
                 return
             end
-            local targetPlayer = Players:FindFirstChild(selectedPlayerName)
-            if not targetPlayer then
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Target player is offline!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-                GiveOutToggle:Set(false)
-                return
-            end
+            
             task.spawn(function()
                 while isGivingOut do
                     for _, petType in ipairs(targetPets) do
                         if petInventory[petType] and #petInventory[petType] > 0 then
-                            giveNPetsToPlayer(targetPlayer, petType, 1)
+                            giveNPetsToSelectedPlayer(petType, 1)
                             task.wait(10) -- Пауза между раздачей разных типов питомцев
                         end
                     end
@@ -807,7 +806,7 @@ local isGivingGifts = false
 local giftInventory = {}
 local totalGiftAmount = 0
 local selectedGiftType = nil
-local selectedGiftPlayerName = nil
+local selectedPlayerName = nil
 
 -- Function to get all available gifts
 local function getAvailableGifts()
@@ -866,15 +865,15 @@ local function updateGiftInventory()
     return totalGiftAmount
 end
 
--- Dropdown for Target Players (Gifts)
+-- Dropdown for Selected Players
 local GiftsPlayerDropdown = GiftsTab:CreateDropdown({
-    Name = "🎯 Select Target Player",
+    Name = "🎯 Select Player",
     Options = getPlayersInServer(),
     CurrentOption = nil,
     MultipleOptions = false,
     Flag = "GiftsPlayerDropdown",
     Callback = function(Option)
-        selectedGiftPlayerName = Option
+        selectedPlayerName = Option
     end,
 })
 
@@ -916,13 +915,23 @@ local function refreshGiftDropdown()
     GiftDropdown:Refresh(giftOptions)
 end
 
--- Function to give selected gifts to target player
-local function giveSelectedGiftsToPlayer()
-    local targetPlayer = Players:FindFirstChild(selectedGiftPlayerName)
-    if not targetPlayer then
+-- Function to give selected gifts to selected player
+local function giveSelectedGiftsToSelectedPlayer()
+    if not selectedPlayerName then
         Rayfield:Notify({
             Title = "Error",
-            Content = "Target player is offline!",
+            Content = "Please select a player!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
+    local selectedPlayer = Players:FindFirstChild(selectedPlayerName)
+    if not selectedPlayer then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Selected player is offline!",
             Duration = 3,
             Image = 4483362458
         })
@@ -957,7 +966,7 @@ local function giveSelectedGiftsToPlayer()
     local failCount = 0
 
     for i, giftEntry in ipairs(gifts[giftName].giftEntries) do
-        local args = {targetPlayer, giftEntry.uid}
+        local args = {selectedPlayer, giftEntry.uid}
         local success, result = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
@@ -978,8 +987,8 @@ local function giveSelectedGiftsToPlayer()
 
     Rayfield:Notify({
         Title = "Gift Transfer Complete",
-        Content = string.format("Gave %d %s gift(s). Success: %d, Failed: %d", 
-            #gifts[giftName].giftEntries, giftName, successCount, failCount),
+        Content = string.format("Gave %d %s gift(s) to %s. Success: %d, Failed: %d", 
+            #gifts[giftName].giftEntries, giftName, selectedPlayerName, successCount, failCount),
         Duration = 5,
         Image = 4483362458
     })
@@ -997,7 +1006,7 @@ local GiveGiftsToggle = GiftsTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while isGivingGifts do
-                    giveSelectedGiftsToPlayer()
+                    giveSelectedGiftsToSelectedPlayer()
                     task.wait(600)
                 end
             end)
