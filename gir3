@@ -13,11 +13,8 @@ local collectEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks
 local trainEvent = adoptmeNet:WaitForChild("adoptme_legacy_shared.ContentPacks.Winter2025.Game.Train.WinterTrainNet:7")
 local spawnAPI = game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TeamAPI/Spawn")
 
--- Store all gingerbread IDs
+-- Store all gingerbread IDs (deduplicated)
 local gingerbreadIds = {
-    "{60E33537-47D5-4212-958D-307C17501331}",
-    "{60E33537-47D5-4212-958D-307C17501331}",
-    "{60E33537-47D5-4212-958D-307C17501331}",
     "{60E33537-47D5-4212-958D-307C17501331}",
     "{28F6FD49-55C2-4E45-88F3-E62344AEE010}",
     "{96EB009D-84A2-464B-925E-41E269B5D7E4}",
@@ -253,7 +250,7 @@ end
 local function runCycle()
     for i, gingerbreadId in ipairs(gingerbreadIds) do
         pcall(callGingerbreadId, gingerbreadId)
-        task.wait(0.1)
+        task.wait(0.5) -- Increased delay
     end
 
     local success, err = pcall(collectGingerbreads)
@@ -277,7 +274,7 @@ local Window = Rayfield:CreateWindow({
 
 -- Create tabs
 local WinterTab = Window:CreateTab("Winter Events", 4483362458)
-local BuyTab = Window:CreateTab("Buy", 6941542431)
+local BuyTab = Window:CreateTab("Buy", 6941542458)
 local PetsTab = Window:CreateTab("Pets", 123456789)
 local GiftsTab = Window:CreateTab("Gifts", 123456789)
 
@@ -287,6 +284,11 @@ local isMailCollecting = false
 local isBucksExchange = false
 local isTrainRunning = false
 local gingerbreadLabel
+local petInventory = {}
+local giftInventory = {}
+local selectedPlayerName = nil
+local selectedPetType = nil
+local selectedGiftType = nil
 
 -- Function to update gingerbread label
 local function updateGingerbreadLabel()
@@ -319,7 +321,7 @@ WinterTab:CreateButton({
     end,
 })
 
--- Auto Farm Gingerbread Toggle - SET TO TRUE ON STARTUP
+-- Auto Farm Gingerbread Toggle
 local GingerbreadToggle = WinterTab:CreateToggle({
     Name = "🍪 Auto Farm Gingerbread",
     CurrentValue = true,
@@ -344,23 +346,6 @@ local GingerbreadToggle = WinterTab:CreateToggle({
         end
     end,
 })
-
--- Immediately start the farming when script loads
-isRunning = true
-task.spawn(function()
-    while isRunning do
-        if runCycle() then
-            task.wait(2)
-            updateGingerbreadLabel()
-            for i = 600, 1, -1 do
-                if not isRunning then break end
-                task.wait(1)
-            end
-        else
-            task.wait(30)
-        end
-    end
-end)
 
 -- Auto Xmas Train Toggle
 local TrainToggle = WinterTab:CreateToggle({
@@ -519,12 +504,8 @@ BuyTab:CreateToggle({
 })
 
 -- ========================
--- PETS TAB (SIMPLE WORKING VERSION)
+-- PETS TAB (FIXED VERSION)
 -- ========================
-local petInventory = {}
-local selectedPlayerName = nil
-local selectedPetType = nil
-
 -- Function to get all players in server
 local function getPlayersInServer()
     local players = {}
@@ -563,11 +544,11 @@ end
 local function refreshPetDropdown()
     local pets = getAvailablePets()
     local petOptions = {}
-    
+
     for petType, petList in pairs(pets) do
         table.insert(petOptions, petType .. " (" .. #petList .. ")")
     end
-    
+
     table.sort(petOptions)
     return petOptions
 end
@@ -597,7 +578,7 @@ local PetDropdown = PetsTab:CreateDropdown({
     end,
 })
 
--- Function to give pet to player (SIMPLE VERSION)
+-- Function to give pet to player (FIXED VERSION)
 local function givePet()
     if not selectedPlayerName then
         Rayfield:Notify({
@@ -608,7 +589,7 @@ local function givePet()
         })
         return
     end
-    
+
     if not selectedPetType then
         Rayfield:Notify({
             Title = "Error",
@@ -618,10 +599,9 @@ local function givePet()
         })
         return
     end
-    
-    -- Extract just the pet type name without count
+
     local petTypeName = selectedPetType:match("^(.+)%s*%(%d+%)$") or selectedPetType
-    
+
     local targetPlayer = Players:FindFirstChild(selectedPlayerName)
     if not targetPlayer then
         Rayfield:Notify({
@@ -632,7 +612,7 @@ local function givePet()
         })
         return
     end
-    
+
     if not petInventory[petTypeName] or #petInventory[petTypeName] == 0 then
         Rayfield:Notify({
             Title = "Error",
@@ -642,14 +622,14 @@ local function givePet()
         })
         return
     end
-    
+
     local petUid = table.remove(petInventory[petTypeName], 1)
-    
+
     local args = {targetPlayer, petUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
     end)
-    
+
     if success then
         Rayfield:Notify({
             Title = "Success",
@@ -662,6 +642,7 @@ local function givePet()
         if #petOptions > 0 then
             PetDropdown:Set(petOptions[1])
         end
+        task.wait(9) -- Delay to prevent rate-limiting
     else
         Rayfield:Notify({
             Title = "Error",
@@ -702,12 +683,8 @@ local AutoGiveToggle = PetsTab:CreateToggle({
 })
 
 -- ========================
--- GIFTS TAB (SIMPLE WORKING VERSION)
+-- GIFTS TAB (FIXED VERSION)
 -- ========================
-local giftInventory = {}
-local selectedGiftPlayerName = nil
-local selectedGiftType = nil
-
 -- Function to get all available gifts
 local function getAvailableGifts()
     local gifts = {}
@@ -734,11 +711,11 @@ end
 local function refreshGiftDropdown()
     local gifts = getAvailableGifts()
     local giftOptions = {}
-    
+
     for giftName, giftList in pairs(gifts) do
         table.insert(giftOptions, giftName .. " (" .. #giftList .. ")")
     end
-    
+
     table.sort(giftOptions)
     return giftOptions
 end
@@ -752,7 +729,7 @@ local GiftsPlayerDropdown = GiftsTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "GiftsPlayerDropdown",
     Callback = function(Option)
-        selectedGiftPlayerName = Option
+        selectedPlayerName = Option
     end,
 })
 
@@ -768,9 +745,9 @@ local GiftDropdown = GiftsTab:CreateDropdown({
     end,
 })
 
--- Function to give gift to player (SIMPLE VERSION)
+-- Function to give gift to player (FIXED VERSION)
 local function giveGift()
-    if not selectedGiftPlayerName then
+    if not selectedPlayerName then
         Rayfield:Notify({
             Title = "Error",
             Content = "Please select a player!",
@@ -779,7 +756,7 @@ local function giveGift()
         })
         return
     end
-    
+
     if not selectedGiftType then
         Rayfield:Notify({
             Title = "Error",
@@ -789,11 +766,10 @@ local function giveGift()
         })
         return
     end
-    
-    -- Extract just the gift type name without count
+
     local giftTypeName = selectedGiftType:match("^(.+)%s*%(%d+%)$") or selectedGiftType
-    
-    local targetPlayer = Players:FindFirstChild(selectedGiftPlayerName)
+
+    local targetPlayer = Players:FindFirstChild(selectedPlayerName)
     if not targetPlayer then
         Rayfield:Notify({
             Title = "Error",
@@ -803,7 +779,7 @@ local function giveGift()
         })
         return
     end
-    
+
     if not giftInventory[giftTypeName] or #giftInventory[giftTypeName] == 0 then
         Rayfield:Notify({
             Title = "Error",
@@ -813,18 +789,18 @@ local function giveGift()
         })
         return
     end
-    
+
     local giftUid = table.remove(giftInventory[giftTypeName], 1)
-    
+
     local args = {targetPlayer, giftUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
     end)
-    
+
     if success then
         Rayfield:Notify({
             Title = "Success",
-            Content = "Gave " .. giftTypeName .. " to " .. selectedGiftPlayerName,
+            Content = "Gave " .. giftTypeName .. " to " .. selectedPlayerName,
             Duration = 3,
             Image = 4483362458
         })
@@ -833,6 +809,7 @@ local function giveGift()
         if #giftTypeOptions > 0 then
             GiftDropdown:Set(giftTypeOptions[1])
         end
+        task.wait(9) -- Delay to prevent rate-limiting
     else
         Rayfield:Notify({
             Title = "Error",
