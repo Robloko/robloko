@@ -322,7 +322,7 @@ WinterTab:CreateButton({
 -- Auto Farm Gingerbread Toggle - SET TO TRUE ON STARTUP
 local GingerbreadToggle = WinterTab:CreateToggle({
     Name = "🍪 Auto Farm Gingerbread",
-    CurrentValue = true, -- Changed from false to true
+    CurrentValue = true,
     Flag = "FarmToggle",
     Callback = function(Value)
         isRunning = Value
@@ -524,7 +524,7 @@ BuyTab:CreateToggle({
 local isGivingPets = false
 local isGivingOut = false
 local petInventory = {}
-local selectedPlayerName = "Gerranafa"
+local selectedPlayerName = nil
 local selectedPetType = nil
 
 -- Список питомцев для раздачи через "Give OUT"
@@ -545,6 +545,18 @@ local targetPets = {
     "basic_egg_2022_robot",
     "basic_egg_2022_corgi"
 }
+
+-- Function to get all players in server
+local function getPlayersInServer()
+    local players = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer then
+            table.insert(players, player.Name)
+        end
+    end
+    table.sort(players)
+    return players
+end
 
 -- Function to get all available pets with counts
 local function getAvailablePets()
@@ -597,21 +609,29 @@ local function updatePetInventory()
     return petInventory
 end
 
--- Adaptive Input for Target Player Name
-local PlayerInput = PetsTab:CreateInput({
-    Name = "Target Player Name",
-    PlaceholderText = "Enter player name",
-    RemoveTextAfterFocusLost = false,
-    Flag = "PlayerInput",
-    Callback = function(Text)
-        selectedPlayerName = Text
+-- Dropdown for Target Players
+local PlayerDropdown = PetsTab:CreateDropdown({
+    Name = "🎯 Select Target Player",
+    Options = getPlayersInServer(),
+    CurrentOption = nil,
+    MultipleOptions = false,
+    Flag = "PlayerDropdown",
+    Callback = function(Option)
+        selectedPlayerName = Option
     end,
 })
-PlayerInput:Set("Gerranafa")
+
+-- Refresh players dropdown every 10 seconds
+task.spawn(function()
+    while true do
+        PlayerDropdown:Refresh(getPlayersInServer())
+        task.wait(10)
+    end
+end)
 
 -- Dropdown for Pet Types (with counts)
 local PetDropdown = PetsTab:CreateDropdown({
-    Name = "Select Pet Type",
+    Name = "🐾 Select Pet Type",
     Options = {"None"},
     CurrentOption = "None",
     MultipleOptions = false,
@@ -639,9 +659,51 @@ local function refreshPetDropdown()
     PetDropdown:Refresh(petOptions)
 end
 
+-- Function to give N pets to a player
+local function giveNPetsToPlayer(targetPlayer, petType, numPets)
+    if not petInventory[petType] or #petInventory[petType] < numPets then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Not enough " .. petType .. " pets!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+
+    local petUniqueIds = {}
+    for i = 1, numPets do
+        table.insert(petUniqueIds, table.remove(petInventory[petType], 1))
+    end
+
+    local successCount = 0
+    for i, uniqueId in ipairs(petUniqueIds) do
+        local args = {targetPlayer, uniqueId}
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            successCount = successCount + 1
+            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
+        else
+            print("Failed to give pet: " .. tostring(result))
+            for j = #petUniqueIds, i, -1 do
+                table.insert(petInventory[petType], petUniqueIds[j])
+            end
+        end
+
+        if i < numPets then
+            task.wait(9)
+        end
+    end
+
+    return successCount > 0
+end
+
 -- Toggle for Auto Give Pets
 local GivePetsToggle = PetsTab:CreateToggle({
-    Name = "🐾 Auto Give Selected Pets",
+    Name = "🚀 Auto Give Selected Pets",
     CurrentValue = false,
     Flag = "GivePetsToggle",
     Callback = function(Value)
@@ -696,7 +758,7 @@ local GivePetsToggle = PetsTab:CreateToggle({
 
 -- Toggle for Give OUT
 local GiveOutToggle = PetsTab:CreateToggle({
-    Name = "🚀 Give OUT (All Target Pets)",
+    Name = "🎁 Give OUT (All Target Pets)",
     CurrentValue = false,
     Flag = "GiveOutToggle",
     Callback = function(Value)
@@ -745,6 +807,7 @@ local isGivingGifts = false
 local giftInventory = {}
 local totalGiftAmount = 0
 local selectedGiftType = nil
+local selectedGiftPlayerName = nil
 
 -- Function to get all available gifts
 local function getAvailableGifts()
@@ -803,21 +866,29 @@ local function updateGiftInventory()
     return totalGiftAmount
 end
 
--- Adaptive Input for Target Player Name (Gifts)
-local GiftsPlayerInput = GiftsTab:CreateInput({
-    Name = "Target Player Name",
-    PlaceholderText = "Enter player name",
-    RemoveTextAfterFocusLost = false,
-    Flag = "GiftsPlayerInput",
-    Callback = function(Text)
-        selectedPlayerName = Text
+-- Dropdown for Target Players (Gifts)
+local GiftsPlayerDropdown = GiftsTab:CreateDropdown({
+    Name = "🎯 Select Target Player",
+    Options = getPlayersInServer(),
+    CurrentOption = nil,
+    MultipleOptions = false,
+    Flag = "GiftsPlayerDropdown",
+    Callback = function(Option)
+        selectedGiftPlayerName = Option
     end,
 })
-GiftsPlayerInput:Set("Gerranafa")
+
+-- Refresh players dropdown every 10 seconds
+task.spawn(function()
+    while true do
+        GiftsPlayerDropdown:Refresh(getPlayersInServer())
+        task.wait(10)
+    end
+end)
 
 -- Dropdown for Gift Types
 local GiftDropdown = GiftsTab:CreateDropdown({
-    Name = "Select Gift Type",
+    Name = "🎁 Select Gift Type",
     Options = {"None"},
     CurrentOption = "None",
     MultipleOptions = false,
@@ -847,7 +918,7 @@ end
 
 -- Function to give selected gifts to target player
 local function giveSelectedGiftsToPlayer()
-    local targetPlayer = Players:FindFirstChild(selectedPlayerName)
+    local targetPlayer = Players:FindFirstChild(selectedGiftPlayerName)
     if not targetPlayer then
         Rayfield:Notify({
             Title = "Error",
@@ -916,55 +987,9 @@ local function giveSelectedGiftsToPlayer()
     return successCount > 0
 end
 
--- Function to give N pets to a player
-local function giveNPetsToPlayer(targetPlayer, petType, numPets)
-    if not petInventory[petType] or #petInventory[petType] < numPets then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Not enough " .. petType .. " pets!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return false
-    end
-
-    local petUniqueIds = {}
-    for i = 1, numPets do
-        table.insert(petUniqueIds, table.remove(petInventory[petType], 1))
-    end
-
-    for i, uniqueId in ipairs(petUniqueIds) do
-        local args = {targetPlayer, uniqueId}
-        local success, result = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
-        end)
-
-        if success then
-            print("Gave pet " .. i .. "/" .. numPets .. " to " .. targetPlayer.Name .. ": " .. uniqueId)
-        else
-            Rayfield:Notify({
-                Title = "Error",
-                Content = "Failed to give pet: " .. tostring(result),
-                Duration = 3,
-                Image = 4483362458
-            })
-            for j = #petUniqueIds, i, -1 do
-                table.insert(petInventory[petType], petUniqueIds[j])
-            end
-            return false
-        end
-
-        if i < numPets then
-            task.wait(9)
-        end
-    end
-
-    return true
-end
-
 -- Toggle for Auto Give Gifts
 local GiveGiftsToggle = GiftsTab:CreateToggle({
-    Name = "🎁 Auto Give Selected Gifts",
+    Name = "🚀 Auto Give Selected Gifts",
     CurrentValue = false,
     Flag = "GiveGiftsToggle",
     Callback = function(Value)
