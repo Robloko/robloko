@@ -324,11 +324,14 @@ end
 -- Get all available pets
 local function getAvailablePets()
     local pets = {}
+    petInventory = {} -- Reset pet inventory
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if success then
         local success2, allData = pcall(clientData.get_data, clientData)
         if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.pets then
+            print("=== PET INVENTORY ===")
             for uniqueId, petData in pairs(allData[localPlayer.Name].inventory.pets) do
+                print("Pet ID:", uniqueId, "Pet Data:", petData.id)
                 if petData.id then
                     local petType = petData.id
                     if not pets[petType] then
@@ -338,7 +341,12 @@ local function getAvailablePets()
                     petInventory[petType] = pets[petType]
                 end
             end
+            print("=== PET INVENTORY END ===")
+        else
+            print("Failed to get pet inventory data.")
         end
+    else
+        print("Failed to load ClientData.")
     end
     return pets
 end
@@ -364,7 +372,6 @@ local PlayerDropdown = PetsTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "PlayerDropdown",
     Callback = function(Option)
-        -- Extract the player's name from the option
         if type(Option) == "table" then
             selectedPlayerName = Option.Name or Option[1] or tostring(Option)
         else
@@ -386,6 +393,7 @@ local PetDropdown = PetsTab:CreateDropdown({
         local petType = optionString:match("^(.-)%s+%(%d+%)$")
         selectedPetType = petType or optionString
         print("Selected pet type:", selectedPetType)
+        print("Available pets for this type:", petInventory[selectedPetType])
     end,
 })
 
@@ -401,12 +409,31 @@ local function givePet()
         return
     end
 
-    print("Selected player name:", selectedPlayerName)
-    print("Online players:")
-    for _, player in pairs(Players:GetPlayers()) do
-        print(player.Name)
+    if not selectedPetType then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Please select a pet type!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
     end
 
+    -- Refresh pet inventory before giving
+    getAvailablePets()
+    print("Available pets for", selectedPetType, ":", petInventory[selectedPetType])
+
+    if not petInventory[selectedPetType] or #petInventory[selectedPetType] == 0 then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "No " .. selectedPetType .. " pets available!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
+    end
+
+    local petUid = table.remove(petInventory[selectedPetType], 1)
     local targetPlayer
     for _, player in pairs(Players:GetPlayers()) do
         if type(player.Name) == "string" and player.Name:lower() == selectedPlayerName:lower() then
@@ -425,27 +452,6 @@ local function givePet()
         return
     end
 
-    if not selectedPetType then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Please select a pet type!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return
-    end
-
-    if not petInventory[selectedPetType] or #petInventory[selectedPetType] == 0 then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "No " .. selectedPetType .. " pets available!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return
-    end
-
-    local petUid = table.remove(petInventory[selectedPetType], 1)
     local args = {targetPlayer, petUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
@@ -507,11 +513,14 @@ PetsTab:CreateToggle({
 -- Get all available gifts
 local function getAvailableGifts()
     local gifts = {}
+    giftInventory = {} -- Reset gift inventory
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if success then
         local success2, allData = pcall(clientData.get_data, clientData)
         if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+            print("=== GIFT INVENTORY ===")
             for giftId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+                print("Gift ID:", giftId, "Gift Data:", giftData.id)
                 if giftData.id then
                     local giftName = giftData.id
                     if not gifts[giftName] then
@@ -521,7 +530,12 @@ local function getAvailableGifts()
                     giftInventory[giftName] = gifts[giftName]
                 end
             end
+            print("=== GIFT INVENTORY END ===")
+        else
+            print("Failed to get gift inventory data.")
         end
+    else
+        print("Failed to load ClientData.")
     end
     return gifts
 end
@@ -547,7 +561,6 @@ local GiftsPlayerDropdown = GiftsTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "GiftsPlayerDropdown",
     Callback = function(Option)
-        -- Extract the player's name from the option
         if type(Option) == "table" then
             selectedPlayerName = Option.Name or Option[1] or tostring(Option)
         else
@@ -569,6 +582,7 @@ local GiftDropdown = GiftsTab:CreateDropdown({
         local giftType = optionString:match("^(.-)%s+%(%d+%)$")
         selectedGiftType = giftType or optionString
         print("Selected gift type:", selectedGiftType)
+        print("Available gifts for this type:", giftInventory[selectedGiftType])
     end,
 })
 
@@ -584,12 +598,31 @@ local function giveGift()
         return
     end
 
-    print("Selected player name:", selectedPlayerName)
-    print("Online players:")
-    for _, player in pairs(Players:GetPlayers()) do
-        print(player.Name)
+    if not selectedGiftType then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Please select a gift type!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
     end
 
+    -- Refresh gift inventory before giving
+    getAvailableGifts()
+    print("Available gifts for", selectedGiftType, ":", giftInventory[selectedGiftType])
+
+    if not giftInventory[selectedGiftType] or #giftInventory[selectedGiftType] == 0 then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "No " .. selectedGiftType .. " gifts available!",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return
+    end
+
+    local giftUid = table.remove(giftInventory[selectedGiftType], 1)
     local targetPlayer
     for _, player in pairs(Players:GetPlayers()) do
         if type(player.Name) == "string" and player.Name:lower() == selectedPlayerName:lower() then
@@ -608,27 +641,6 @@ local function giveGift()
         return
     end
 
-    if not selectedGiftType then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Please select a gift type!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return
-    end
-
-    if not giftInventory[selectedGiftType] or #giftInventory[selectedGiftType] == 0 then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "No " .. selectedGiftType .. " gifts available!",
-            Duration = 3,
-            Image = 4483362458
-        })
-        return
-    end
-
-    local giftUid = table.remove(giftInventory[selectedGiftType], 1)
     local args = {targetPlayer, giftUid}
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
