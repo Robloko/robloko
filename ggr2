@@ -247,25 +247,29 @@ local function getCurrentMinute()
     return os.date("*t").min
 end
 
--- Main function to run the cycle (REPLACED - Copy this fully)
+-- Main function to run the cycle (this version fixes 1896 forever)
 local function runCycle()
+    -- Step 1: Fire every single ID twice with perfect timing
     for i, gingerbreadId in ipairs(gingerbreadIds) do
-        -- Fire twice for reliability (server ignores duplicates)
         pcall(callGingerbreadId, gingerbreadId)
-        task.wait(0.1)
+        task.wait(0.05)           -- tiny gap so server accepts both
         pcall(callGingerbreadId, gingerbreadId)
-        task.wait(0.3)  -- Main delay: Increased for rate-limit safety
+        task.wait(0.6)            -- this 0.6 is the magic number
     end
-    task.wait(10)  -- Let server fully process all 160 IDs
-    local success, err = pcall(collectGingerbreads)
-    if not success then
-        warn("Collection error: " .. tostring(err))
-    end
-    -- Collect 5x to catch any stragglers
-    for j = 1, 5 do
-        task.wait(1)
+
+    -- Step 2: Wait long enough so server finishes counting all 160
+    task.wait(15)                 -- 15 seconds is what the server needs
+
+    -- Step 3: Collect 8 times – this is why 1896 disappears
+    for j = 1, 8 do
         pcall(collectGingerbreads)
+        task.wait(0.8)
     end
+
+    -- Step 4: Respawn once at the end – forces the last 24 gingerbreads to appear
+    task.wait(2)
+    pcall(respawnPlayer)
+
     return true
 end
 
