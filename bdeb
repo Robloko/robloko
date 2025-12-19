@@ -1,68 +1,91 @@
-task.wait(5)
+task.wait(5)  -- Wait for game to load
 
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
 
+-- Wait for player GUI to load
 repeat task.wait() until localPlayer.PlayerGui
 
--- First, let's see what's in the DialogApp
-local dialogApp = localPlayer.PlayerGui:FindFirstChild("DialogApp")
-if not dialogApp then
-    warn("DialogApp not found!")
-    return
-end
+-- Target the specific button path
+local buttonContainer = localPlayer.PlayerGui:FindFirstChild("DialogApp") 
+    and localPlayer.PlayerGui.DialogApp:FindFirstChild("Dialog")
+    and localPlayer.PlayerGui.DialogApp.Dialog:FindFirstChild("CheckboxDialog")
+    and localPlayer.PlayerGui.DialogApp.Dialog.CheckboxDialog:FindFirstChild("Buttons")
 
-print("=== DialogApp Structure ===")
-local function printGuiTree(gui, indent)
-    if not gui then return end
+if buttonContainer then
+    -- Get the third button (index 3 in the array)
+    local buttons = buttonContainer:GetChildren()
     
-    for _, child in ipairs(gui:GetChildren()) do
-        local info = indent .. child.Name .. " (" .. child.ClassName .. ")"
-        
-        if child:IsA("TextButton") or child:IsA("TextLabel") then
-            info = info .. " Text: '" .. tostring(child.Text) .. "'"
-        end
-        
-        if child:IsA("GuiObject") then
-            info = info .. " Visible: " .. tostring(child.Visible)
-            info = info .. " Active: " .. tostring(child.Active)
-        end
-        
-        print(info)
-        
-        -- Only go deeper if it's likely a container
-        if child:IsA("Frame") or child:IsA("ScrollingFrame") or child:IsA("CanvasGroup") then
-            printGuiTree(child, indent .. "  ")
+    -- Find the third button (you might need to adjust if there are other UI elements in the container)
+    local targetButton = nil
+    local buttonCount = 0
+    
+    for _, child in ipairs(buttons) do
+        if child:IsA("GuiButton") or child:IsA("TextButton") or child:IsA("ImageButton") then
+            buttonCount = buttonCount + 1
+            if buttonCount == 3 then
+                targetButton = child
+                break
+            end
         end
     end
-end
-
-printGuiTree(dialogApp, "")
-
--- Now try to click the specific button
-local buttons = localPlayer.PlayerGui.DialogApp.Dialog.CheckboxDialog.Buttons:GetChildren()
-print("\n=== All Buttons in Container ===")
-for i, button in ipairs(buttons) do
-    print(i, button.Name, button.ClassName, 
-          button:IsA("TextButton") and "Text: '" .. button.Text .. "'" or "")
-end
-
--- Click the third button (index 3)
-if #buttons >= 3 then
-    local targetButton = buttons[3]
     
-    if targetButton:IsA("GuiButton") then
-        print("\nAttempting to click button #3:", targetButton.Name)
-        
-        -- Click with error handling
-        local success, errorMsg = pcall(function()
-            firesignal(targetButton.MouseButton1Click)
-        end)
-        
-        if success then
-            print("Click successful!")
+    if targetButton then
+        -- Check if button is visible and interactable
+        if targetButton.Visible 
+            and targetButton.Active 
+            and (targetButton:IsA("GuiButton") or targetButton:IsA("TextButton") or targetButton:IsA("ImageButton"))
+        then
+            print("Found target button:", targetButton.Name)
+            
+            -- Click the button using multiple methods for reliability
+            -- Method 1: Direct click event
+            if targetButton:IsA("TextButton") or targetButton:IsA("ImageButton") then
+                firesignal(targetButton.MouseButton1Down)
+                task.wait(0.05)
+                firesignal(targetButton.MouseButton1Up)
+                firesignal(targetButton.MouseButton1Click)
+            end
+            
+            -- Method 2: Fire the Activated event (if it exists)
+            if targetButton.Activated then
+                firesignal(targetButton.Activated)
+            end
+            
+            -- Method 3: If it's a TextButton with a Click event
+            if targetButton:FindFirstChild("Click") then
+                firesignal(targetButton.Click)
+            end
+            
+            print("Successfully clicked button:", targetButton.Name)
         else
-            warn("Click failed:", errorMsg)
+            warn("Button found but not interactive:", 
+                  "Visible:", targetButton.Visible, 
+                  "Active:", targetButton.Active, 
+                  "Class:", targetButton.ClassName)
         end
+    else
+        warn("Could not find third button in Buttons container")
+        print("All children in Buttons container:")
+        for i, child in ipairs(buttons) do
+            print(i, child.Name, child.ClassName)
+        end
+    end
+else
+    warn("Button container not found in GUI hierarchy")
+    
+    -- Debug: Print the current GUI structure
+    print("Current PlayerGui structure:")
+    local function printChildren(parent, indent)
+        for _, child in ipairs(parent:GetChildren()) do
+            print(indent .. child.Name .. " (" .. child.ClassName .. ")")
+            if #child:GetChildren() > 0 then
+                printChildren(child, indent .. "  ")
+            end
+        end
+    end
+    
+    if localPlayer.PlayerGui then
+        printChildren(localPlayer.PlayerGui, "")
     end
 end
