@@ -1,0 +1,389 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+-- Local player
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+-- Create ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GiftGiverUI"
+screenGui.Parent = playerGui
+screenGui.ResetOnSpawn = false
+
+-- Make UI draggable
+local dragging
+local dragInput
+local dragStart
+local startPos
+
+local function updateInput(input)
+    local delta = input.Position - dragStart
+    local newPosition = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    TweenService:Create(mainFrame, TweenInfo.new(0.15), {Position = newPosition}):Play()
+end
+
+-- Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 190) -- Increased height for new button
+mainFrame.Position = UDim2.new(0.5, -150, 0, 20)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.Parent = screenGui
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+-- Make frame draggable
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+mainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateInput(input)
+    end
+end)
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 24)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Text = "🎁 Gift Giver"
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 22
+title.Parent = mainFrame
+
+-- Target Player Label
+local targetLabel = Instance.new("TextLabel")
+targetLabel.Size = UDim2.new(1, -10, 0, 28)
+targetLabel.Position = UDim2.new(0, 5, 0, 30)
+targetLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+targetLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+targetLabel.Text = "Target: Gerranafa"
+targetLabel.Font = Enum.Font.SourceSansBold
+targetLabel.TextSize = 16
+targetLabel.Parent = mainFrame
+local targetCorner = Instance.new("UICorner")
+targetCorner.CornerRadius = UDim.new(0, 8)
+targetCorner.Parent = targetLabel
+
+-- Give All Button
+local giveAllButton = Instance.new("TextButton")
+giveAllButton.Size = UDim2.new(1, -10, 0, 32)
+giveAllButton.Position = UDim2.new(0, 5, 0, 64)
+giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+giveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+giveAllButton.Text = "Give All Box"
+giveAllButton.Font = Enum.Font.SourceSansBold
+giveAllButton.TextSize = 16
+giveAllButton.Parent = mainFrame
+local giveAllCorner = Instance.new("UICorner")
+giveAllCorner.CornerRadius = UDim.new(0, 8)
+giveAllCorner.Parent = giveAllButton
+
+-- Auto Open Gifts Button
+local autoOpenButton = Instance.new("TextButton")
+autoOpenButton.Size = UDim2.new(1, -10, 0, 32)
+autoOpenButton.Position = UDim2.new(0, 5, 0, 102)
+autoOpenButton.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+autoOpenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoOpenButton.Text = "Auto Open Gifts"
+autoOpenButton.Font = Enum.Font.SourceSansBold
+autoOpenButton.TextSize = 16
+autoOpenButton.Parent = mainFrame
+local autoOpenCorner = Instance.new("UICorner")
+autoOpenCorner.CornerRadius = UDim.new(0, 8)
+autoOpenCorner.Parent = autoOpenButton
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 0, 32)
+statusLabel.Position = UDim2.new(0, 5, 0, 140)
+statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+statusLabel.Text = "Ready"
+statusLabel.Font = Enum.Font.SourceSansBold
+statusLabel.TextSize = 14
+statusLabel.Parent = mainFrame
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 8)
+statusCorner.Parent = statusLabel
+
+-- Variables
+local giftType = "winter_2025_angus_box"
+local targetPlayerName = "Gerranafa"
+local targetPlayer = nil
+local giftInventory = {}
+local totalGiftAmount = 0
+local isGiving = false
+local isAutoOpening = false
+local autoOpenConnection = nil
+
+-- Auto-click functions (for your exploit)
+local mouse1press, mouse1release
+if mousemoverel then
+    -- Synapse X functions
+    mouse1press = click
+    mouse1release = release
+elseif Click then
+    -- Krnl functions
+    mouse1press = Click
+    mouse1release = Release
+else
+    -- Try to find mouse functions from the exploit
+    for _, v in pairs(getgenv()) do
+        if type(v) == "function" then
+            local info = debug.getinfo(v)
+            if info.name == "mouse1press" or info.name == "click" then
+                mouse1press = v
+            elseif info.name == "mouse1release" or info.name == "release" then
+                mouse1release = v
+            end
+        end
+    end
+end
+
+-- Function to start auto clicking
+local function startAutoClick(clickDelay, releaseDelay)
+    if not mouse1press or not mouse1release then
+        statusLabel.Text = "Error: Auto-click not supported"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return false
+    end
+    
+    if isAutoOpening then
+        return true
+    end
+    
+    isAutoOpening = true
+    autoOpenButton.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+    autoOpenButton.Text = "Stop Auto Open"
+    
+    -- Set up stop hotkey
+    if autoOpenConnection then
+        autoOpenConnection:Disconnect()
+    end
+    
+    autoOpenConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+        if not gameProcessedEvent then
+            if input.KeyCode == Enum.KeyCode.Backspace then
+                isAutoOpening = false
+                if autoOpenConnection then
+                    autoOpenConnection:Disconnect()
+                    autoOpenConnection = nil
+                end
+                autoOpenButton.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+                autoOpenButton.Text = "Auto Open Gifts"
+                statusLabel.Text = "Auto-open stopped"
+                statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end
+        end
+    end)
+    
+    statusLabel.Text = "Auto-opening (Press BACKSPACE to stop)"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+    
+    -- Start auto-clicking thread
+    spawn(function()
+        local clickDelay = clickDelay or 0.1
+        local releaseDelay = releaseDelay or 0.1
+        
+        while isAutoOpening do
+            mouse1press()
+            wait(releaseDelay)
+            mouse1release()
+            wait(clickDelay)
+        end
+    end)
+    
+    return true
+end
+
+-- Function to stop auto clicking
+local function stopAutoClick()
+    isAutoOpening = false
+    if autoOpenConnection then
+        autoOpenConnection:Disconnect()
+        autoOpenConnection = nil
+    end
+    autoOpenButton.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+    autoOpenButton.Text = "Auto Open Gifts"
+    statusLabel.Text = "Auto-open stopped"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+end
+
+-- Function to update gift inventory
+local function updateGiftInventory()
+    giftInventory = {}
+    totalGiftAmount = 0
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+            for uniqueId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+                if giftData.id == giftType then
+                    local amount = giftData.amount or 1
+                    table.insert(giftInventory, {uid = uniqueId, amount = amount})
+                    totalGiftAmount = totalGiftAmount + amount
+                end
+            end
+        end
+    end
+    statusLabel.Text = "Gifts: " .. totalGiftAmount .. " (Stacks: " .. #giftInventory .. ")"
+    return totalGiftAmount
+end
+
+-- Function to find target player
+local function findTargetPlayer()
+    targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if targetPlayer then
+        targetLabel.Text = "Target: Gerranafa ✓"
+        targetLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+        return true
+    else
+        targetLabel.Text = "Target: Gerranafa (Offline)"
+        targetLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return false
+    end
+end
+
+-- Function to give all gifts to target player
+local function giveAllGiftsToPlayer()
+    if isGiving then return end
+
+    if not findTargetPlayer() then
+        statusLabel.Text = "ERROR: Gerranafa not found!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    updateGiftInventory()
+
+    if #giftInventory == 0 then
+        statusLabel.Text = "No gifts to give!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    isGiving = true
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    giveAllButton.Text = "Giving..."
+
+    print("Giving " .. #giftInventory .. " stacks of " .. giftType .. " to " .. targetPlayer.Name)
+
+    local successCount = 0
+    local failCount = 0
+
+    for i, stack in ipairs(giftInventory) do
+        local args = {
+            targetPlayer,
+            stack.uid
+        }
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            successCount = successCount + 1
+            print("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayer.Name .. ": " .. stack.uid .. " (Amount: " .. stack.amount .. ")")
+            statusLabel.Text = "Giving: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else
+            failCount = failCount + 1
+            print("Failed to give stack " .. i .. " to " .. targetPlayer.Name .. ": " .. tostring(result))
+            statusLabel.Text = "Failed: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+
+        if i < #giftInventory then
+            task.wait(9)
+        end
+    end
+
+    isGiving = false
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    giveAllButton.Text = "Give All Box"
+
+    local remaining = updateGiftInventory()
+
+    if failCount == 0 then
+        statusLabel.Text = "Success! Gave " .. successCount .. " stacks"
+        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    else
+        statusLabel.Text = "Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+    end
+
+    print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
+end
+
+-- Button Clicks
+giveAllButton.MouseButton1Click:Connect(function()
+    if not isGiving then
+        giveAllGiftsToPlayer()
+    end
+end)
+
+autoOpenButton.MouseButton1Click:Connect(function()
+    if isAutoOpening then
+        stopAutoClick()
+    else
+        -- First check if mouse functions are available
+        if not mouse1press or not mouse1release then
+            statusLabel.Text = "Error: Auto-click not available"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            warn("Auto-click functions not found. Make sure your exploit supports mouse1press/mouse1release functions.")
+            return
+        end
+        
+        -- Instructions for user
+        statusLabel.Text = "Equip gift first, then click to open"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+        
+        -- Start auto-clicking after a short delay
+        wait(2)
+        if startAutoClick(0.1, 0.1) then
+            statusLabel.Text = "Auto-opening gifts (Press BACKSPACE to stop)"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+        end
+    end
+end)
+
+-- Initial updates
+findTargetPlayer()
+updateGiftInventory()
+
+-- Periodic refresh
+spawn(function()
+    while true do
+        task.wait(5)
+        findTargetPlayer()
+        updateGiftInventory()
+    end
+end)
+
+print("Gift Giver UI Loaded! Targets " .. giftType .. " gifts for Gerranafa.")
+print("Auto-open feature: Press BACKSPACE to stop auto-clicking")
