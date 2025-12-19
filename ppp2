@@ -8,19 +8,6 @@ local VirtualUser = game:GetService("VirtualUser")
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- Custom mouse click simulation
-local mouse1press, mouse1release
-local autoclicking = false
-
--- Define mouse1press and mouse1release
-mouse1press = function()
-    VirtualUser:ClickButton1(Vector2.new(520, 495), true) -- Press at (520, 495)
-end
-
-mouse1release = function()
-    VirtualUser:ClickButton1(Vector2.new(520, 495), false) -- Release at (520, 495)
-end
-
 -- Create ScreenGui
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GiftGiverUI"
@@ -219,7 +206,7 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift with custom mouse click simulation
+-- Function to open the gift with equip, click, and 1-second delays
 local function openGift()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
@@ -248,15 +235,47 @@ local function openGift()
             pcall(function()
                 ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
             end)
-            task.wait(0.5) -- Wait for the equip to process
+            task.wait(1) -- Wait 1 second for the equip to process
 
-            -- Simulate mouse press and release at (520, 495)
-            mouse1press()
-            task.wait(0.1) -- Small delay between press and release
-            mouse1release()
+            -- Simulate a click at the center of the screen
+            VirtualUser:ClickButton1(Vector2.new(9e9, 9e9))
+            task.wait(1) -- Wait 1 second for the click to process
 
-            statusLabel.Text = "Opened " .. giftType .. "!"
-            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            -- START opening the gift
+            local argsStart = {uniqueId, "START"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsStart))
+            task.wait(1) -- 1-second delay
+
+            -- Indicate opening the gift
+            local argsIndicate = {uniqueId}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/IndicateOpenGift"):FireServer(unpack(argsIndicate))
+            task.wait(1) -- 1-second delay
+
+            -- END opening the gift
+            local argsEnd = {uniqueId, "END"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
+
+            -- Simulate click on the third button in CheckboxDialog
+            local button = localPlayer.PlayerGui:FindFirstChild("DialogApp")
+                and localPlayer.PlayerGui.DialogApp:FindFirstChild("Dialog")
+                and localPlayer.PlayerGui.DialogApp.Dialog:FindFirstChild("CheckboxDialog")
+                and localPlayer.PlayerGui.DialogApp.Dialog.CheckboxDialog:FindFirstChild("Buttons")
+                and localPlayer.PlayerGui.DialogApp.Dialog.CheckboxDialog.Buttons:GetChildren()[3]
+
+            if button then
+                -- Check if button is visible and interactable
+                if button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
+                    -- Simulate mouse click
+                    button.MouseButton1Down:Fire()
+                    task.wait(0.1) -- Small delay for realistic click
+                    button.MouseButton1Up:Fire()
+                    print("Successfully clicked button: " .. button.Name)
+                else
+                    warn("Button exists but is not visible/active:", button.Visible, button.Active)
+                end
+            else
+                warn("Button not found in GUI hierarchy")
+            end
 
             break -- Open only one gift
         end
