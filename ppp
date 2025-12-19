@@ -138,7 +138,72 @@ end
 
 -- Function to give all gifts to target player
 local function giveAllGiftsToPlayer()
-    -- (Previous code remains unchanged)
+    if isGiving then return end
+
+    if not findTargetPlayer() then
+        statusLabel.Text = "ERROR: Gerranafa not found!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    updateGiftInventory()
+
+    if #giftInventory == 0 then
+        statusLabel.Text = "No gifts to give!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    isGiving = true
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    giveAllButton.Text = "Giving..."
+
+    print("Giving " .. #giftInventory .. " stacks of " .. giftType .. " to " .. targetPlayer.Name)
+
+    local successCount = 0
+    local failCount = 0
+
+    for i, stack in ipairs(giftInventory) do
+        local args = {
+            targetPlayer,
+            stack.uid
+        }
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            successCount = successCount + 1
+            print("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayer.Name .. ": " .. stack.uid .. " (Amount: " .. stack.amount .. ")")
+            statusLabel.Text = "Giving: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else
+            failCount = failCount + 1
+            print("Failed to give stack " .. i .. " to " .. targetPlayer.Name .. ": " .. tostring(result))
+            statusLabel.Text = "Failed: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+
+        if i < #giftInventory then
+            task.wait(9)
+        end
+    end
+
+    isGiving = false
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    giveAllButton.Text = "Give All Box"
+
+    local remaining = updateGiftInventory()
+
+    if failCount == 0 then
+        statusLabel.Text = "Success! Gave " .. successCount .. " stacks"
+        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    else
+        statusLabel.Text = "Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+    end
+
+    print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
 -- Function to open the gift with equip, click, and 1-second delays
@@ -190,25 +255,17 @@ local function openGift()
             local argsEnd = {uniqueId, "END"}
             ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
 
-            -- Click the third button in the dialog twice with a 1-second delay
-            local dialogButton = localPlayer.PlayerGui:FindFirstChild("DialogApp")
-            if dialogButton then
-                dialogButton = dialogButton:FindFirstChild("Dialog")
-                if dialogButton then
-                    dialogButton = dialogButton:FindFirstChild("CheckboxDialog")
-                    if dialogButton then
-                        dialogButton = dialogButton:FindFirstChild("Buttons")
-                        if dialogButton then
-                            local buttons = dialogButton:GetChildren()
-                            if #buttons >= 3 then
-                                local thirdButton = buttons[3]
-                                if thirdButton then
-                                    thirdButton:FindFirstChildWhichIsA("TextButton").FireClickDetector()
-                                    task.wait(1)
-                                    thirdButton:FindFirstChildWhichIsA("TextButton").FireClickDetector()
-                                end
-                            end
-                        end
+            -- Simulate click on the third button in CheckboxDialog
+            local dialogGui = localPlayer.PlayerGui:FindFirstChild("DialogApp")
+            if dialogGui then
+                local checkboxDialog = dialogGui:FindFirstChild("Dialog"):FindFirstChild("CheckboxDialog")
+                if checkboxDialog then
+                    local buttons = checkboxDialog.Buttons:GetChildren()
+                    if #buttons >= 3 then
+                        local thirdButton = buttons[3]
+                        thirdButton.MouseButton1Down:Fire()
+                        thirdButton.MouseButton1Up:Fire()
+                        print("Simulated click on the third button in CheckboxDialog")
                     end
                 end
             end
