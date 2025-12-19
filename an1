@@ -1,87 +1,311 @@
--- Quick test script to find button positions
-local function createCoordinateHelper()
-    local helperGui = Instance.new("ScreenGui")
-    helperGui.Name = "CoordinateHelper"
-    helperGui.Parent = playerGui
+-- Mouse Coordinate Tracker
+-- Put this in a separate LocalScript
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+-- Create the tracker GUI
+local trackerGui = Instance.new("ScreenGui")
+trackerGui.Name = "MouseCoordinateTracker"
+trackerGui.Parent = playerGui
+trackerGui.ResetOnSpawn = false
+trackerGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- Main tracking window
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 150)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = trackerGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8, 0, 0)
+titleCorner.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 1, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Text = "🖱️ Mouse Coordinate Tracker"
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.TextSize = 16
+titleLabel.Parent = titleBar
+
+-- Close button
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -28, 0, 3)
+closeButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.Text = "X"
+closeButton.Font = Enum.Font.SourceSansBold
+closeButton.TextSize = 14
+closeButton.Parent = titleBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 12)
+closeCorner.Parent = closeButton
+
+-- Coordinates display
+local coordsFrame = Instance.new("Frame")
+coordsFrame.Size = UDim2.new(1, -20, 0, 70)
+coordsFrame.Position = UDim2.new(0, 10, 0, 40)
+coordsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+coordsFrame.Parent = mainFrame
+
+local coordsCorner = Instance.new("UICorner")
+coordsCorner.CornerRadius = UDim.new(0, 6)
+coordsCorner.Parent = coordsFrame
+
+-- X Coordinate
+local xLabel = Instance.new("TextLabel")
+xLabel.Size = UDim2.new(1, 0, 0, 24)
+xLabel.Position = UDim2.new(0, 10, 0, 10)
+xLabel.BackgroundTransparency = 1
+xLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+xLabel.Text = "X: 0000"
+xLabel.Font = Enum.Font.SourceSansSemibold
+xLabel.TextSize = 18
+xLabel.TextXAlignment = Enum.TextXAlignment.Left
+xLabel.Parent = coordsFrame
+
+-- Y Coordinate
+local yLabel = Instance.new("TextLabel")
+yLabel.Size = UDim2.new(1, 0, 0, 24)
+yLabel.Position = UDim2.new(0, 10, 0, 40)
+yLabel.BackgroundTransparency = 1
+yLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+yLabel.Text = "Y: 0000"
+yLabel.Font = Enum.Font.SourceSansSemibold
+yLabel.TextSize = 18
+yLabel.TextXAlignment = Enum.TextXAlignment.Left
+yLabel.Parent = coordsFrame
+
+-- Click coordinates
+local clickFrame = Instance.new("Frame")
+clickFrame.Size = UDim2.new(1, -20, 0, 40)
+clickFrame.Position = UDim2.new(0, 10, 0, 120)
+clickFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+clickFrame.Parent = mainFrame
+
+local clickCorner = Instance.new("UICorner")
+clickCorner.CornerRadius = UDim.new(0, 6)
+clickCorner.Parent = clickFrame
+
+local clickLabel = Instance.new("TextLabel")
+clickLabel.Size = UDim2.new(1, 0, 1, 0)
+clickLabel.BackgroundTransparency = 1
+clickLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+clickLabel.Text = "Last Click: None"
+clickLabel.Font = Enum.Font.SourceSans
+clickLabel.TextSize = 14
+clickLabel.Parent = clickFrame
+
+-- Crosshair for visual reference (optional)
+local crosshairGui = Instance.new("ScreenGui")
+crosshairGui.Name = "CrosshairOverlay"
+crosshairGui.Parent = playerGui
+crosshairGui.ResetOnSpawn = false
+crosshairGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- Horizontal line
+local horizontalLine = Instance.new("Frame")
+horizontalLine.Size = UDim2.new(1, 0, 0, 1)
+horizontalLine.Position = UDim2.new(0, 0, 0.5, 0)
+horizontalLine.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+horizontalLine.BackgroundTransparency = 0.5
+horizontalLine.BorderSizePixel = 0
+horizontalLine.Parent = crosshairGui
+
+-- Vertical line
+local verticalLine = Instance.new("Frame")
+verticalLine.Size = UDim2.new(0, 1, 1, 0)
+verticalLine.Position = UDim2.new(0.5, 0, 0, 0)
+verticalLine.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+verticalLine.BackgroundTransparency = 0.5
+verticalLine.BorderSizePixel = 0
+verticalLine.Parent = crosshairGui
+
+-- Crosshair center dot
+local centerDot = Instance.new("Frame")
+centerDot.Size = UDim2.new(0, 4, 0, 4)
+centerDot.Position = UDim2.new(0.5, -2, 0.5, -2)
+centerDot.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+centerDot.BorderSizePixel = 0
+centerDot.Parent = crosshairGui
+
+-- Toggle crosshair button
+local toggleCrosshairButton = Instance.new("TextButton")
+toggleCrosshairButton.Size = UDim2.new(0, 24, 0, 24)
+toggleCrosshairButton.Position = UDim2.new(0, 3, 0, 3)
+toggleCrosshairButton.BackgroundColor3 = Color3.fromRGB(50, 50, 200)
+toggleCrosshairButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleCrosshairButton.Text = "+"
+toggleCrosshairButton.Font = Enum.Font.SourceSansBold
+toggleCrosshairButton.TextSize = 16
+toggleCrosshairButton.Parent = titleBar
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 12)
+toggleCorner.Parent = toggleCrosshairButton
+
+-- Variables
+local lastClickPosition = nil
+local crosshairVisible = true
+local isDragging = false
+local dragStartPosition = nil
+local frameStartPosition = nil
+
+-- Function to update coordinates
+local function updateCoordinates()
+    local mousePosition = UserInputService:GetMouseLocation()
     
-    -- Create a draggable frame
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 50, 0, 50)
-    frame.Position = UDim2.new(0.5, -25, 0.5, -25)
-    frame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-    frame.BackgroundTransparency = 0.3
-    frame.Parent = helperGui
+    -- Update real-time coordinates
+    xLabel.Text = string.format("X: %d", mousePosition.X)
+    yLabel.Text = string.format("Y: %d", mousePosition.Y)
     
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(2, 0, 1, 0)
-    label.Position = UDim2.new(1, 5, 0, 0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.Text = "Drag me to button\nRight-click to save pos"
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 12
-    label.Parent = frame
-    
-    -- Make draggable
-    local dragging = false
-    local dragInput
-    local dragStart
-    local startPos
-    
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-            -- Right-click to save position
-            local absolutePos = frame.AbsolutePosition
-            local absoluteSize = frame.AbsoluteSize
-            local centerX = absolutePos.X + (absoluteSize.X / 2)
-            local centerY = absolutePos.Y + (absoluteSize.Y / 2)
-            
-            print("=== SAVED POSITION ===")
-            print("Center: " .. centerX .. ", " .. centerY)
-            print("Vector2.new(" .. centerX .. ", " .. centerY .. ")")
-            print("=== END ===")
-            
-            -- Flash green to confirm
-            frame.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-            task.wait(0.3)
-            frame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-        end
-    end)
-    
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale, 
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale, 
-                startPos.Y.Offset + delta.Y
-            )
-            
-            -- Update label with coordinates
-            local absolutePos = frame.AbsolutePosition
-            label.Text = string.format("X: %d\nY: %d", 
-                absolutePos.X, 
-                absolutePos.Y
-            )
-        end
-    end)
+    -- Update crosshair position
+    if crosshairVisible then
+        local screenSize = workspace.CurrentCamera.ViewportSize
+        horizontalLine.Position = UDim2.new(0, 0, 0, mousePosition.Y)
+        verticalLine.Position = UDim2.new(0, mousePosition.X, 0, 0)
+        centerDot.Position = UDim2.new(0, mousePosition.X - 2, 0, mousePosition.Y - 2)
+    end
 end
 
--- Run this once to create the helper
-createCoordinateHelper()
+-- Function to record click
+local function recordClick(position)
+    lastClickPosition = position
+    clickLabel.Text = string.format("Last Click: %d, %d", position.X, position.Y)
+    
+    -- Flash the click frame
+    clickFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 150)
+    task.wait(0.1)
+    clickFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    
+    -- Print to output
+    print("=== CLICK RECORDED ===")
+    print(string.format("Position: Vector2.new(%d, %d)", position.X, position.Y))
+    print(string.format("Code: VirtualUser:ClickButton1(Vector2.new(%d, %d))", position.X, position.Y))
+    print("====================")
+end
+
+-- Function to copy coordinates to clipboard (using setclipboard if available)
+local function copyToClipboard(text)
+    if setclipboard then
+        setclipboard(text)
+        clickLabel.Text = "Copied to clipboard!"
+        task.wait(1)
+        clickLabel.Text = string.format("Last Click: %d, %d", lastClickPosition.X, lastClickPosition.Y)
+    end
+end
+
+-- Toggle crosshair visibility
+local function toggleCrosshair()
+    crosshairVisible = not crosshairVisible
+    crosshairGui.Enabled = crosshairVisible
+    toggleCrosshairButton.Text = crosshairVisible and "-" or "+"
+    toggleCrosshairButton.BackgroundColor3 = crosshairVisible and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(50, 50, 200)
+end
+
+-- Make window draggable
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = true
+        dragStartPosition = input.Position
+        frameStartPosition = mainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                isDragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStartPosition
+        mainFrame.Position = UDim2.new(
+            frameStartPosition.X.Scale,
+            frameStartPosition.X.Offset + delta.X,
+            frameStartPosition.Y.Scale,
+            frameStartPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Mouse click detection
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local mousePosition = UserInputService:GetMouseLocation()
+        recordClick(mousePosition)
+        
+        -- If clicking on coordinates, copy them
+        local absolutePos = coordsFrame.AbsolutePosition
+        local absoluteSize = coordsFrame.AbsoluteSize
+        if mousePosition.X >= absolutePos.X and mousePosition.X <= absolutePos.X + absoluteSize.X and
+           mousePosition.Y >= absolutePos.Y and mousePosition.Y <= absolutePos.Y + absoluteSize.Y then
+            local copyText = string.format("Vector2.new(%d, %d)", mousePosition.X, mousePosition.Y)
+            copyToClipboard(copyText)
+        end
+    elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+        -- Right click to copy current coordinates
+        local mousePosition = UserInputService:GetMouseLocation()
+        local copyText = string.format("Vector2.new(%d, %d)", mousePosition.X, mousePosition.Y)
+        copyToClipboard(copyText)
+    end
+end)
+
+-- Button events
+closeButton.MouseButton1Click:Connect(function()
+    trackerGui:Destroy()
+    crosshairGui:Destroy()
+    print("Mouse Coordinate Tracker closed")
+end)
+
+toggleCrosshairButton.MouseButton1Click:Connect(function()
+    toggleCrosshair()
+end)
+
+-- Update coordinates every frame
+RunService.RenderStepped:Connect(function()
+    updateCoordinates()
+end)
+
+-- Instructions
+print("=======================================")
+print("Mouse Coordinate Tracker Loaded!")
+print("")
+print("Features:")
+print("• Real-time X/Y coordinate display")
+print("• Records last click position")
+print("• Visual crosshair overlay")
+print("• Draggable window")
+print("")
+print("Usage:")
+print("• Left-click: Record position")
+print("• Right-click: Copy current coordinates")
+print("• Click coordinates display: Copy to clipboard")
+print("• +/- button: Toggle crosshair")
+print("• X button: Close tracker")
+print("=======================================")
+
+-- Initial crosshair state
+toggleCrosshair()
