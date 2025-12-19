@@ -1,0 +1,214 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+-- Local player
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+-- Create ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GiftGiverUI"
+screenGui.Parent = playerGui
+screenGui.ResetOnSpawn = false
+
+-- Main Frame (compact, top center)
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 150)
+mainFrame.Position = UDim2.new(0.5, -150, 0, 20)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.Parent = screenGui
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 24)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Text = "🎁 Gift Giver"
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 22
+title.Parent = mainFrame
+
+-- Target Player Label (shows "Gerranafa")
+local targetLabel = Instance.new("TextLabel")
+targetLabel.Size = UDim2.new(1, -10, 0, 28)
+targetLabel.Position = UDim2.new(0, 5, 0, 30)
+targetLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+targetLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+targetLabel.Text = "Target: Gerranafa"
+targetLabel.Font = Enum.Font.SourceSansBold
+targetLabel.TextSize = 16
+targetLabel.Parent = mainFrame
+local targetCorner = Instance.new("UICorner")
+targetCorner.CornerRadius = UDim.new(0, 8)
+targetCorner.Parent = targetLabel
+
+-- Give All Button
+local giveAllButton = Instance.new("TextButton")
+giveAllButton.Size = UDim2.new(1, -10, 0, 32)
+giveAllButton.Position = UDim2.new(0, 5, 0, 64)
+giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+giveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+giveAllButton.Text = "Give All 2d_tuesdays_2025_box"
+giveAllButton.Font = Enum.Font.SourceSansBold
+giveAllButton.TextSize = 16
+giveAllButton.Parent = mainFrame
+local giveAllCorner = Instance.new("UICorner")
+giveAllCorner.CornerRadius = UDim.new(0, 8)
+giveAllCorner.Parent = giveAllButton
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 0, 32)
+statusLabel.Position = UDim2.new(0, 5, 0, 102)
+statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+statusLabel.Text = "Ready"
+statusLabel.Font = Enum.Font.SourceSansBold
+statusLabel.TextSize = 14
+statusLabel.Parent = mainFrame
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 8)
+statusCorner.Parent = statusLabel
+
+-- Variables
+local giftType = "winter_2025_angus_box"
+local targetPlayerName = "Gerranafa"
+local targetPlayer = nil
+local giftInventory = {} -- {uid = uniqueId, amount = num}
+local totalGiftAmount = 0
+local isGiving = false
+
+-- Function to update gift inventory
+local function updateGiftInventory()
+    giftInventory = {}
+    totalGiftAmount = 0
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+            for uniqueId, giftData in pairs(allData[localPlayer.Name].inventory.gifts) do
+                if giftData.id == giftType then
+                    local amount = giftData.amount or 1
+                    table.insert(giftInventory, {uid = uniqueId, amount = amount})
+                    totalGiftAmount = totalGiftAmount + amount
+                end
+            end
+        end
+    end
+    statusLabel.Text = "Gifts: " .. totalGiftAmount .. " (Stacks: " .. #giftInventory .. ")"
+    return totalGiftAmount
+end
+
+-- Function to find target player
+local function findTargetPlayer()
+    targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if targetPlayer then
+        targetLabel.Text = "Target: Gerranafa ✓"
+        targetLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+        return true
+    else
+        targetLabel.Text = "Target: Gerranafa (Offline)"
+        targetLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return false
+    end
+end
+
+-- Function to give all gifts to target player
+local function giveAllGiftsToPlayer()
+    if isGiving then return end
+    
+    if not findTargetPlayer() then
+        statusLabel.Text = "ERROR: Gerranafa not found!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    updateGiftInventory()
+    
+    if #giftInventory == 0 then
+        statusLabel.Text = "No gifts to give!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    isGiving = true
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    giveAllButton.Text = "Giving..."
+    
+    print("Giving " .. #giftInventory .. " stacks of " .. giftType .. " to " .. targetPlayer.Name)
+    
+    local successCount = 0
+    local failCount = 0
+    
+    for i, stack in ipairs(giftInventory) do
+        local args = {
+            targetPlayer,
+            stack.uid
+        }
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+        
+        if success then
+            successCount = successCount + 1
+            print("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayer.Name .. ": " .. stack.uid .. " (Amount: " .. stack.amount .. ")")
+            statusLabel.Text = "Giving: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else
+            failCount = failCount + 1
+            print("Failed to give stack " .. i .. " to " .. targetPlayer.Name .. ": " .. tostring(result))
+            statusLabel.Text = "Failed: " .. i .. "/" .. #giftInventory
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+        
+        if i < #giftInventory then
+            task.wait(9)
+        end
+    end
+    
+    isGiving = false
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    giveAllButton.Text = "Give All Box"
+    
+    local remaining = updateGiftInventory()
+    
+    if failCount == 0 then
+        statusLabel.Text = "Success! Gave " .. successCount .. " stacks"
+        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    else
+        statusLabel.Text = "Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+    end
+    
+    print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
+end
+
+-- Give All Button Click
+giveAllButton.MouseButton1Click:Connect(function()
+    if not isGiving then
+        giveAllGiftsToPlayer()
+    end
+end)
+
+-- Initial updates
+findTargetPlayer()
+updateGiftInventory()
+
+-- Periodic refresh
+spawn(function()
+    while true do
+        task.wait(5)  -- More frequent updates
+        findTargetPlayer()
+        updateGiftInventory()
+    end
+end)
+
+print("Gift Giver UI Loaded! Targets 2d_tuesdays_2025_box gifts for Gerranafa.")
