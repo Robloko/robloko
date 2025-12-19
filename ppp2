@@ -8,6 +8,19 @@ local VirtualUser = game:GetService("VirtualUser")
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
+-- Custom mouse click simulation
+local mouse1press, mouse1release
+local autoclicking = false
+
+-- Define mouse1press and mouse1release
+mouse1press = function()
+    VirtualUser:ClickButton1(Vector2.new(520, 495), true) -- Press at (520, 495)
+end
+
+mouse1release = function()
+    VirtualUser:ClickButton1(Vector2.new(520, 495), false) -- Release at (520, 495)
+end
+
 -- Create ScreenGui
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GiftGiverUI"
@@ -206,7 +219,7 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift with equip, click, and 1-second delays
+-- Function to open the gift with custom mouse click simulation
 local function openGift()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
@@ -235,40 +248,15 @@ local function openGift()
             pcall(function()
                 ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
             end)
-            task.wait(1) -- Wait 1 second for the equip to process
+            task.wait(0.5) -- Wait for the equip to process
 
-            -- Simulate a click at the center of the screen
-            VirtualUser:ClickButton1(Vector2.new(9e9, 9e9))
-            task.wait(1) -- Wait 1 second for the click to process
+            -- Simulate mouse press and release at (520, 495)
+            mouse1press()
+            task.wait(0.1) -- Small delay between press and release
+            mouse1release()
 
-            -- START opening the gift
-            local argsStart = {uniqueId, "START"}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsStart))
-            task.wait(1) -- 1-second delay
-
-            -- Indicate opening the gift
-            local argsIndicate = {uniqueId}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/IndicateOpenGift"):FireServer(unpack(argsIndicate))
-            task.wait(1) -- 1-second delay
-
-            -- END opening the gift
-            local argsEnd = {uniqueId, "END"}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
-
-            -- Simulate click on the third button in CheckboxDialog
-            local dialogGui = localPlayer.PlayerGui:FindFirstChild("DialogApp")
-            if dialogGui then
-                local checkboxDialog = dialogGui:FindFirstChild("Dialog"):FindFirstChild("CheckboxDialog")
-                if checkboxDialog then
-                    local buttons = checkboxDialog.Buttons:GetChildren()
-                    if #buttons >= 3 then
-                        local thirdButton = buttons[3]
-                        thirdButton.MouseButton1Down:Fire()
-                        thirdButton.MouseButton1Up:Fire()
-                        print("Simulated click on the third button in CheckboxDialog")
-                    end
-                end
-            end
+            statusLabel.Text = "Opened " .. giftType .. "!"
+            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
 
             break -- Open only one gift
         end
