@@ -2,7 +2,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
 
 -- Local player
 local localPlayer = Players.LocalPlayer
@@ -14,9 +13,9 @@ screenGui.Name = "GiftGiverUI"
 screenGui.Parent = playerGui
 screenGui.ResetOnSpawn = false
 
--- Main Frame (compact, top center)
+-- Main Frame
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 180) -- Increased height for the new button
+mainFrame.Size = UDim2.new(0, 300, 0, 180)
 mainFrame.Position = UDim2.new(0.5, -150, 0, 20)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
@@ -37,7 +36,7 @@ title.Font = Enum.Font.SourceSansBold
 title.TextSize = 22
 title.Parent = mainFrame
 
--- Target Player Label (shows "Gerranafa")
+-- Target Player Label
 local targetLabel = Instance.new("TextLabel")
 targetLabel.Size = UDim2.new(1, -10, 0, 28)
 targetLabel.Position = UDim2.new(0, 5, 0, 30)
@@ -68,7 +67,7 @@ giveAllCorner.Parent = giveAllButton
 -- Open Button
 local openButton = Instance.new("TextButton")
 openButton.Size = UDim2.new(1, -10, 0, 32)
-openButton.Position = UDim2.new(0, 5, 0, 100) -- Positioned below "Give All"
+openButton.Position = UDim2.new(0, 5, 0, 100)
 openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
 openButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 openButton.Text = "Open Gift"
@@ -82,7 +81,7 @@ openCorner.Parent = openButton
 -- Status Label
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -10, 0, 32)
-statusLabel.Position = UDim2.new(0, 5, 0, 136) -- Adjusted position
+statusLabel.Position = UDim2.new(0, 5, 0, 136)
 statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 statusLabel.Text = "Ready"
@@ -206,7 +205,7 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift
+-- Function to open the gift with 1-second delays
 local function openGift()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
@@ -228,14 +227,23 @@ local function openGift()
     for uniqueId, giftData in pairs(gifts) do
         if giftData.id == giftType then
             giftFound = true
-            pcall(function()
-                ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
-                -- Click at the bottom center of the screen
-                local viewportSize = workspace.CurrentCamera.ViewportSize
-                VirtualUser:ClickButton1(Vector2.new(viewportSize.X / 2, viewportSize.Y))
-                statusLabel.Text = "Opening " .. giftType .. "..."
-                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-            end)
+            statusLabel.Text = "Opening " .. giftType .. "..."
+            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+
+            -- START
+            local argsStart = {uniqueId, "START"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsStart))
+            task.wait(1) -- 1-second delay
+
+            -- Indicate Open
+            local argsIndicate = {uniqueId}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/IndicateOpenGift"):FireServer(unpack(argsIndicate))
+            task.wait(1) -- 1-second delay
+
+            -- END
+            local argsEnd = {uniqueId, "END"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
+
             break -- Open only one gift
         end
     end
