@@ -100,6 +100,94 @@ local targetPlayer = nil
 local giftInventory = {}
 local totalGiftAmount = 0
 local isGiving = false
+local autoclicking = false
+local cancelAutoClick = nil
+
+-- Mouse click functions (if available in your exploit)
+local mouse1press, mouse1release
+if mousemoverel then
+    mouse1press = mouse1press or (function()
+        VirtualUser:ClickButton1(Vector2.new(0, 0))
+    end)
+    mouse1release = mouse1release or (function()
+        -- Some exploits may have mouse1release, if not we'll just use a delay
+    end)
+end
+
+-- Function to simulate a click at bottom center of screen
+local function clickBottomCenter()
+    local screenSize = workspace.CurrentCamera.ViewportSize
+    local bottomCenter = Vector2.new(screenSize.X / 2, screenSize.Y - 50) -- 50 pixels from bottom
+    
+    -- Try to use exploit functions first
+    if mouse1press and mouse1release then
+        mouse1press()
+        task.wait(0.1)
+        mouse1release()
+    else
+        -- Fallback to VirtualUser
+        VirtualUser:ClickButton1(bottomCenter)
+    end
+    
+    print("Clicked at bottom center:", bottomCenter)
+end
+
+-- Auto-click function based on your example
+local function startAutoClicking(clickDelay, releaseDelay)
+    if not mouse1press or not mouse1release then
+        statusLabel.Text = "Auto-click not supported"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return false
+    end
+    
+    if autoclicking then return true end
+    
+    autoclicking = true
+    statusLabel.Text = "Auto-clicking active"
+    statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    
+    -- Set up stop condition
+    cancelAutoClick = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+        if not gameProcessedEvent then
+            if (input.KeyCode == Enum.KeyCode.Backspace and UserInputService:IsKeyDown(Enum.KeyCode.Equals)) or 
+               (input.KeyCode == Enum.KeyCode.Equals and UserInputService:IsKeyDown(Enum.KeyCode.Backspace)) then
+                autoclicking = false
+                if cancelAutoClick then
+                    cancelAutoClick:Disconnect()
+                    cancelAutoClick = nil
+                end
+                statusLabel.Text = "Auto-click stopped"
+                statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+            end
+        end
+    end)
+    
+    -- Start auto-clicking loop
+    spawn(function()
+        repeat 
+            clickBottomCenter()
+            task.wait(clickDelay or 0.5) -- Default 0.5 second delay between clicks
+        until not autoclicking
+        
+        if cancelAutoClick then
+            cancelAutoClick:Disconnect()
+            cancelAutoClick = nil
+        end
+    end)
+    
+    return true
+end
+
+-- Function to stop auto-clicking
+local function stopAutoClicking()
+    autoclicking = false
+    if cancelAutoClick then
+        cancelAutoClick:Disconnect()
+        cancelAutoClick = nil
+    end
+    statusLabel.Text = "Auto-click stopped"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+end
 
 -- Function to update gift inventory
 local function updateGiftInventory()
@@ -206,69 +294,62 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift by clicking the third dialog button
+-- Function to open the gift with equip and auto-click
 local function openGift()
-    -- Check for the dialog GUI
-    local dialogApp = playerGui:FindFirstChild("DialogApp")
-    if not dialogApp then
-        statusLabel.Text = "No dialog found"
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        statusLabel.Text = "Error: Could not access client data"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-    
-    local dialog = dialogApp:FindFirstChild("Dialog")
-    if not dialog then
-        statusLabel.Text = "No dialog window found"
+
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData[localPlayer.Name] or not allData[localPlayer.Name].inventory or not allData[localPlayer.Name].inventory.gifts then
+        statusLabel.Text = "Error: No gifts found"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-    
-    local checkboxDialog = dialog:FindFirstChild("CheckboxDialog")
-    if not checkboxDialog then
-        statusLabel.Text = "No checkbox dialog found"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
+
+    local gifts = allData[localPlayer.Name].inventory.gifts
+    local giftFound = false
+
+    for uniqueId, giftData in pairs(gifts) do
+        if giftData.id == giftType then
+            giftFound = true
+            statusLabel.Text = "Equipping gift..."
+            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+
+            -- Equip the gift
+            pcall(function()
+                ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
+            end)
+            
+            task.wait(1) -- Wait 1 second for the equip to process
+            
+            statusLabel.Text = "Starting auto-click at bottom center"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+            
+            -- Start auto-clicking at bottom center
+            if startAutoClicking(0.5, 0.1) then
+                -- Auto-clicking will continue until user presses Backspace + Equals
+                statusLabel.Text = "Auto-clicking! Stop with [Backspace]+[=]"
+                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            else
+                -- If auto-click not supported, do a single click
+                statusLabel.Text = "Clicking bottom center..."
+                clickBottomCenter()
+                statusLabel.Text = "Clicked bottom center"
+                statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+            end
+            
+            break -- Process only one gift
+        end
     end
-    
-    local buttons = checkboxDialog:FindFirstChild("Buttons")
-    if not buttons then
-        statusLabel.Text = "No dialog buttons found"
+
+    if not giftFound then
+        statusLabel.Text = "No " .. giftType .. " found to open"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
     end
-    
-    -- Get the third button (index 3)
-    local buttonChildren = buttons:GetChildren()
-    if #buttonChildren < 3 then
-        statusLabel.Text = "Not enough dialog buttons"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-    
-    local thirdButton = buttonChildren[3]
-    if not thirdButton:IsA("TextButton") then
-        statusLabel.Text = "Third button not a TextButton"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-    
-    -- Click the third button
-    statusLabel.Text = "Clicking dialog button..."
-    statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-    
-    -- Fire both mouse events to simulate a click
-    pcall(function()
-        thirdButton.MouseButton1Down:Fire()
-    end)
-    task.wait(0.1)
-    pcall(function()
-        thirdButton.MouseButton1Up:Fire()
-    end)
-    
-    statusLabel.Text = "Dialog button clicked!"
-    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-    
-    print("Successfully clicked third dialog button")
 end
 
 -- Button Clicks
@@ -280,6 +361,15 @@ end)
 
 openButton.MouseButton1Click:Connect(function()
     openGift()
+end)
+
+-- Add a key listener to stop auto-clicking if needed
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if not gameProcessedEvent and autoclicking then
+        if input.KeyCode == Enum.KeyCode.Escape then
+            stopAutoClicking()
+        end
+    end
 end)
 
 -- Initial updates
@@ -296,3 +386,5 @@ spawn(function()
 end)
 
 print("Gift Giver UI Loaded! Targets " .. giftType .. " gifts for Gerranafa.")
+print("Auto-click feature: Click at bottom center after equipping gift")
+print("Stop auto-click with: Backspace + Equals keys together")
