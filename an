@@ -15,7 +15,7 @@ screenGui.ResetOnSpawn = false
 
 -- Main Frame (compact, top center)
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 150)
+mainFrame.Size = UDim2.new(0, 300, 0, 180) -- Increased height for the new button
 mainFrame.Position = UDim2.new(0.5, -150, 0, 20)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
@@ -64,10 +64,24 @@ local giveAllCorner = Instance.new("UICorner")
 giveAllCorner.CornerRadius = UDim.new(0, 8)
 giveAllCorner.Parent = giveAllButton
 
+-- Open Button
+local openButton = Instance.new("TextButton")
+openButton.Size = UDim2.new(1, -10, 0, 32)
+openButton.Position = UDim2.new(0, 5, 0, 100) -- Positioned below the "Give All" button
+openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255) -- Blue color for distinction
+openButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+openButton.Text = "Open Gift"
+openButton.Font = Enum.Font.SourceSansBold
+openButton.TextSize = 16
+openButton.Parent = mainFrame
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(0, 8)
+openCorner.Parent = openButton
+
 -- Status Label
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -10, 0, 32)
-statusLabel.Position = UDim2.new(0, 5, 0, 102)
+statusLabel.Position = UDim2.new(0, 5, 0, 136) -- Adjusted position
 statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 statusLabel.Text = "Ready"
@@ -124,30 +138,30 @@ end
 -- Function to give all gifts to target player
 local function giveAllGiftsToPlayer()
     if isGiving then return end
-    
+
     if not findTargetPlayer() then
         statusLabel.Text = "ERROR: Gerranafa not found!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-    
+
     updateGiftInventory()
-    
+
     if #giftInventory == 0 then
         statusLabel.Text = "No gifts to give!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-    
+
     isGiving = true
     giveAllButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
     giveAllButton.Text = "Giving..."
-    
+
     print("Giving " .. #giftInventory .. " stacks of " .. giftType .. " to " .. targetPlayer.Name)
-    
+
     local successCount = 0
     local failCount = 0
-    
+
     for i, stack in ipairs(giftInventory) do
         local args = {
             targetPlayer,
@@ -156,7 +170,7 @@ local function giveAllGiftsToPlayer()
         local success, result = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
         end)
-        
+
         if success then
             successCount = successCount + 1
             print("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayer.Name .. ": " .. stack.uid .. " (Amount: " .. stack.amount .. ")")
@@ -168,18 +182,18 @@ local function giveAllGiftsToPlayer()
             statusLabel.Text = "Failed: " .. i .. "/" .. #giftInventory
             statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         end
-        
+
         if i < #giftInventory then
             task.wait(9)
         end
     end
-    
+
     isGiving = false
     giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     giveAllButton.Text = "Give All Box"
-    
+
     local remaining = updateGiftInventory()
-    
+
     if failCount == 0 then
         statusLabel.Text = "Success! Gave " .. successCount .. " stacks"
         statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
@@ -187,15 +201,57 @@ local function giveAllGiftsToPlayer()
         statusLabel.Text = "Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)"
         statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
-    
+
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Give All Button Click
+-- Function to open the gift
+local function openGift()
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        statusLabel.Text = "Error: Could not access client data"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData[localPlayer.Name] or not allData[localPlayer.Name].inventory or not allData[localPlayer.Name].inventory.gifts then
+        statusLabel.Text = "Error: No gifts found"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    local gifts = allData[localPlayer.Name].inventory.gifts
+    local giftFound = false
+
+    for uniqueId, giftData in pairs(gifts) do
+        if giftData.id == giftType then
+            giftFound = true
+            pcall(function()
+                ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
+                game:GetService("VirtualUser"):ClickButton1(Vector2.new(9e9, 9e9))
+                statusLabel.Text = "Opening " .. giftType .. "..."
+                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            end)
+            break -- Open only one gift
+        end
+    end
+
+    if not giftFound then
+        statusLabel.Text = "No " .. giftType .. " found to open"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
+
+-- Button Click Events
 giveAllButton.MouseButton1Click:Connect(function()
     if not isGiving then
         giveAllGiftsToPlayer()
     end
+end)
+
+openButton.MouseButton1Click:Connect(function()
+    openGift()
 end)
 
 -- Initial updates
