@@ -206,84 +206,69 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift with equip, click, and 1-second delays
+-- Function to open the gift by clicking the third dialog button
 local function openGift()
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success then
-        statusLabel.Text = "Error: Could not access client data"
+    -- Check for the dialog GUI
+    local dialogApp = playerGui:FindFirstChild("DialogApp")
+    if not dialogApp then
+        statusLabel.Text = "No dialog found"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-
-    local success2, allData = pcall(clientData.get_data, clientData)
-    if not success2 or not allData[localPlayer.Name] or not allData[localPlayer.Name].inventory or not allData[localPlayer.Name].inventory.gifts then
-        statusLabel.Text = "Error: No gifts found"
+    
+    local dialog = dialogApp:FindFirstChild("Dialog")
+    if not dialog then
+        statusLabel.Text = "No dialog window found"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-
-    local gifts = allData[localPlayer.Name].inventory.gifts
-    local giftFound = false
-
-    for uniqueId, giftData in pairs(gifts) do
-        if giftData.id == giftType then
-            giftFound = true
-            statusLabel.Text = "Equipping and opening " .. giftType .. "..."
-            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-
-            -- Equip the gift
-            pcall(function()
-                ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
-            end)
-            task.wait(1) -- Wait 1 second for the equip to process
-
-            -- Simulate a click at the center of the screen
-            VirtualUser:ClickButton1(Vector2.new(9e9, 9e9))
-            task.wait(1) -- Wait 1 second for the click to process
-
-            -- START opening the gift
-            local argsStart = {uniqueId, "START"}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsStart))
-            task.wait(1) -- 1-second delay
-
-            -- Indicate opening the gift
-            local argsIndicate = {uniqueId}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/IndicateOpenGift"):FireServer(unpack(argsIndicate))
-            task.wait(1) -- 1-second delay
-
-            -- END opening the gift
-            local argsEnd = {uniqueId, "END"}
-            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
-
-            -- Simulate a click on the third button in the DialogApp.Dialog.CheckboxDialog.Buttons
-            local dialogApp = localPlayer.PlayerGui:FindFirstChild("DialogApp")
-            if dialogApp then
-                local dialog = dialogApp:FindFirstChild("Dialog")
-                if dialog then
-                    local checkboxDialog = dialog:FindFirstChild("CheckboxDialog")
-                    if checkboxDialog then
-                        local buttons = checkboxDialog:FindFirstChild("Buttons")
-                        if buttons and #buttons:GetChildren() >= 3 then
-                            local thirdButton = buttons:GetChildren()[3]
-                            if thirdButton and thirdButton:IsA("TextButton") then
-                                thirdButton:FireServer("MouseButton1Click")
-                                -- Or, if it's a local click simulation:
-                                thirdButton.MouseButton1Down:Fire()
-                                thirdButton.MouseButton1Up:Fire()
-                            end
-                        end
-                    end
-                end
-            end
-
-            break -- Open only one gift
-        end
-    end
-
-    if not giftFound then
-        statusLabel.Text = "No " .. giftType .. " found to open"
+    
+    local checkboxDialog = dialog:FindFirstChild("CheckboxDialog")
+    if not checkboxDialog then
+        statusLabel.Text = "No checkbox dialog found"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
     end
+    
+    local buttons = checkboxDialog:FindFirstChild("Buttons")
+    if not buttons then
+        statusLabel.Text = "No dialog buttons found"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    -- Get the third button (index 3)
+    local buttonChildren = buttons:GetChildren()
+    if #buttonChildren < 3 then
+        statusLabel.Text = "Not enough dialog buttons"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    local thirdButton = buttonChildren[3]
+    if not thirdButton:IsA("TextButton") then
+        statusLabel.Text = "Third button not a TextButton"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    -- Click the third button
+    statusLabel.Text = "Clicking dialog button..."
+    statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    
+    -- Fire both mouse events to simulate a click
+    pcall(function()
+        thirdButton.MouseButton1Down:Fire()
+    end)
+    task.wait(0.1)
+    pcall(function()
+        thirdButton.MouseButton1Up:Fire()
+    end)
+    
+    statusLabel.Text = "Dialog button clicked!"
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    
+    print("Successfully clicked third dialog button")
 end
 
 -- Button Clicks
