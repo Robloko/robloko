@@ -206,7 +206,22 @@ local function giveAllGiftsToPlayer()
     print("Transfer complete. Success: " .. successCount .. ", Failed: " .. failCount .. ", Remaining: " .. remaining)
 end
 
--- Function to open the gift with a single click at (520, 495)
+-- Function to simulate a mouse click on a button
+local function simulateButtonClick(button)
+    if button and button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
+        firesignal(button.MouseButton1Down)
+        task.wait(0.05)
+        firesignal(button.MouseButton1Up)
+        firesignal(button.MouseButton1Click)
+        print("Successfully clicked the equipped gift box")
+        return true
+    else
+        warn("Button is not visible/active or not a button:", button and button.Visible, button and button.Active)
+        return false
+    end
+end
+
+-- Function to open the gift with equip, simulated click, and 1-second delays
 local function openGift()
     local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not success then
@@ -235,13 +250,34 @@ local function openGift()
             pcall(function()
                 ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
             end)
-            task.wait(0.5) -- Wait for the equip to process
+            task.wait(1) -- Wait 1 second for the equip to process
 
-            -- Simulate a click at (520, 495)
-            VirtualUser:ClickButton1(Vector2.new(520, 495))
+            -- Find the equipped gift box button in the player's GUI
+            local equippedBox = localPlayer.PlayerGui:FindFirstChild("EquippedBox") or
+                                localPlayer.PlayerGui:FindFirstChildWhichIsA("Tool") or
+                                localPlayer.PlayerGui:FindFirstChild(uniqueId)
 
-            statusLabel.Text = "Opened " .. giftType .. "!"
-            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            -- Simulate a mouse click on the equipped gift box
+            if equippedBox then
+                simulateButtonClick(equippedBox)
+            else
+                warn("Equipped gift box not found in GUI hierarchy")
+            end
+            task.wait(1) -- Wait 1 second for the click to process
+
+            -- START opening the gift
+            local argsStart = {uniqueId, "START"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsStart))
+            task.wait(1) -- 1-second delay
+
+            -- Indicate opening the gift
+            local argsIndicate = {uniqueId}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/IndicateOpenGift"):FireServer(unpack(argsIndicate))
+            task.wait(1) -- 1-second delay
+
+            -- END opening the gift
+            local argsEnd = {uniqueId, "END"}
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(argsEnd))
 
             break -- Open only one gift
         end
