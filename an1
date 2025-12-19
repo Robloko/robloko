@@ -124,6 +124,8 @@ local isPaused = false
 local recordingStartTime = 0
 local playStartTime = 0
 local currentPlayIndex = 1
+local mouseClickConnection = nil
+local playThread = nil
 
 -- Function to get current mouse position
 local function getMousePosition()
@@ -135,6 +137,16 @@ end
 
 -- Function to simulate click at position
 local function clickAtPosition(position)
+    print("Clicking at position:", position.X, position.Y)
+    
+    -- First move mouse to position (if mousemoverel is available)
+    if mousemoverel then
+        local currentPos = getMousePosition()
+        mousemoverel(position.X - currentPos.X, position.Y - currentPos.Y)
+        task.wait(0.01)
+    end
+    
+    -- Then click
     if mouse1press and mouse1release then
         mouse1press()
         task.wait(0.05)
@@ -155,10 +167,10 @@ local function updateStatus()
         statusColor = Color3.fromRGB(255, 100, 100)
     elseif isPlaying then
         if isPaused then
-            status = "Paused"
+            status = string.format("Paused (%d/%d)", currentPlayIndex - 1, #recordedClicks)
             statusColor = Color3.fromRGB(255, 200, 0)
         else
-            status = "Playing..."
+            status = string.format("Playing (%d/%d)", currentPlayIndex - 1, #recordedClicks)
             statusColor = Color3.fromRGB(100, 255, 100)
         end
     end
@@ -172,14 +184,22 @@ end
 
 -- Function to start recording
 local function startRecording()
-    if isPlaying then return end
+    if isPlaying then 
+        stopPlayback()
+        task.wait(0.1)
+    end
     
     recordedClicks = {}
     isRecording = true
     recordingStartTime = tick()
     
+    -- Disconnect previous connection if exists
+    if mouseClickConnection then
+        mouseClickConnection:Disconnect()
+        mouseClickConnection = nil
+    end
+    
     -- Connect mouse click listener
-    local mouseClickConnection
     mouseClickConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed and input.UserInputType == Enum.UserInputType.MouseButton1 then
             local currentTime = tick() - recordingStartTime
@@ -197,66 +217,95 @@ local function startRecording()
         end
     end)
     
-    -- Disconnect when recording stops
-    recordButton.MouseButton1Click:Connect(function()
-        if isRecording then
-            isRecording = false
-            if mouseClickConnection then
-                mouseClickConnection:Disconnect()
-            end
-            print("Recording stopped. Total clicks: " .. #recordedClicks)
-            updateStatus()
-        end
-    end)
-    
     print("Recording started...")
     updateStatus()
 end
 
+-- Function to stop recording
+local function stopRecording()
+    if isRecording then
+        isRecording = false
+        if mouseClickConnection then
+            mouseClickConnection:Disconnect()
+            mouseClickConnection = nil
+        end
+        print("Recording stopped. Total clicks: " .. #recordedClicks)
+        updateStatus()
+    end
+end
+
 -- Function to play recorded clicks
 local function playRecording()
-    if isRecording or #recordedClicks == 0 then return end
+    if isRecording or #recordedClicks == 0 then 
+        if #recordedClicks == 0 then
+            print("No clicks recorded!")
+        end
+        return 
+    end
+    
+    if isPlaying and not isPaused then
+        print("Already playing!")
+        return
+    end
+    
+    -- If paused, resume from current position
+    if not isPaused then
+        currentPlayIndex = 1
+        playStartTime = tick()
+    end
     
     isPlaying = true
     isPaused = false
-    currentPlayIndex = 1
-    playStartTime = tick()
     
-    local function playNextClick()
-        if not isPlaying or isPaused then return end
+    -- Kill previous play thread if exists
+    if playThread then
+        coroutine.close(playThread)
+        playThread = nil
+    end
+    
+    -- Create new play thread
+    playThread = coroutine.create(function()
+        print("Starting playback of " .. #recordedClicks .. " clicks...")
         
-        while currentPlayIndex <= #recordedClicks do
+        while currentPlayIndex <= #recordedClicks and isPlaying do
             local click = recordedClicks[currentPlayIndex]
             local currentTime = tick() - playStartTime
             
-            -- Wait until it's time to play this click
-            if currentTime >= click.time then
-                -- Click at the recorded position
-                local clickedPos = clickAtPosition(click.position)
-                print(string.format("Playing click %d/%d at (%.2fs): (%d, %d)", 
-                    currentPlayIndex, #recordedClicks, click.time, clickedPos.X, clickedPos.Y))
-                
-                currentPlayIndex += 1
-                updateStatus()
-                
-                if currentPlayIndex > #recordedClicks then
-                    -- Finished playing
-                    isPlaying = false
-                    print("Playback completed!")
-                    updateStatus()
-                    return
-                end
-            else
-                -- Wait a bit and check again
-                task.wait(0.01)
+            -- Check if we need to wait
+            if currentTime < click.time then
+                local waitTime = click.time - currentTime
+                task.wait(waitTime)
             end
+            
+            -- Check again if still playing after waiting
+            if not isPlaying or isPaused then
+                if isPaused then
+                    print("Playback paused at click " .. currentPlayIndex)
+                end
+                break
+            end
+            
+            -- Click at the recorded position
+            local clickedPos = clickAtPosition(click.position)
+            print(string.format("Playing click %d/%d at (%.2fs): (%d, %d)", 
+                currentPlayIndex, #recordedClicks, click.time, clickedPos.X, clickedPos.Y))
+            
+            currentPlayIndex += 1
+            updateStatus()
         end
-    end
+        
+        -- Check if we finished normally
+        if currentPlayIndex > #recordedClicks and isPlaying then
+            print("Playback completed!")
+            isPlaying = false
+            currentPlayIndex = 1
+        end
+        
+        updateStatus()
+    end)
     
-    -- Start playing in a separate thread
-    spawn(playNextClick)
-    
-    print("Playing " .. #recordedClicks .. " clicks...")
+    -- Start the play thread
+    coroutine.resume(playThread)
     updateStatus()
 end
 
@@ -266,6 +315,18 @@ local function stopPlayback()
     isPlaying = false
     isPaused = false
     currentPlayIndex = 1
+    
+    -- Disconnect recording connection
+    if mouseClickConnection then
+        mouseClickConnection:Disconnect()
+        mouseClickConnection = nil
+    end
+    
+    -- Kill play thread
+    if playThread then
+        coroutine.close(playThread)
+        playThread = nil
+    end
     
     print("Stopped")
     updateStatus()
@@ -281,6 +342,8 @@ local function togglePause()
         print("Playback paused")
     else
         print("Playback resumed")
+        playStartTime = tick() - recordedClicks[currentPlayIndex - 1].time
+        playRecording()  -- Resume playback
     end
     
     updateStatus()
@@ -291,15 +354,17 @@ recordButton.MouseButton1Click:Connect(function()
     if not isRecording then
         startRecording()
     else
-        stopPlayback()
+        stopRecording()
     end
 end)
 
 playButton.MouseButton1Click:Connect(function()
     if not isPlaying then
         playRecording()
+    elseif isPaused then
+        togglePause()  -- This will resume
     else
-        stopPlayback()
+        print("Already playing!")
     end
 end)
 
@@ -333,11 +398,31 @@ print("⏸ PAUSE - Pause/Resume playback")
 
 -- Function to export recorded clicks
 local function exportClicks()
-    local exportStr = "local recordedClicks = {\n"
+    if #recordedClicks == 0 then
+        print("No clicks to export!")
+        return ""
+    end
+    
+    local exportStr = "-- Recorded Mouse Clicks\n"
+    exportStr = exportStr .. "local recordedClicks = {\n"
     for i, click in ipairs(recordedClicks) do
         exportStr = exportStr .. string.format("    {time = %.3f, x = %d, y = %d},\n", click.time, click.x, click.y)
     end
-    exportStr = exportStr .. "}\n"
+    exportStr = exportStr .. "}\n\n"
+    exportStr = exportStr .. "-- Function to play clicks\n"
+    exportStr = exportStr .. "local function playClicks()\n"
+    exportStr = exportStr .. "    for i, click in ipairs(recordedClicks) do\n"
+    exportStr = exportStr .. "        if i > 1 then\n"
+    exportStr = exportStr .. "            local waitTime = click.time - recordedClicks[i-1].time\n"
+    exportStr = exportStr .. "            if waitTime > 0 then\n"
+    exportStr = exportStr .. "                wait(waitTime)\n"
+    exportStr = exportStr .. "            end\n"
+    exportStr = exportStr .. "        else\n"
+    exportStr = exportStr .. "            wait(click.time)\n"
+    exportStr = exportStr .. "        end\n"
+    exportStr = exportStr .. "        clickAtPosition(Vector2.new(click.x, click.y))\n"
+    exportStr = exportStr .. "    end\n"
+    exportStr = exportStr .. "end\n"
     
     print("\n=== EXPORTED CLICKS ===")
     print(exportStr)
@@ -374,3 +459,18 @@ exportButton.MouseButton1Click:Connect(function()
         updateStatus()
     end
 end)
+
+-- Test function to add some sample clicks
+local function addTestClicks()
+    recordedClicks = {
+        {time = 0.5, x = 100, y = 100, position = Vector2.new(100, 100)},
+        {time = 1.0, x = 200, y = 200, position = Vector2.new(200, 200)},
+        {time = 1.5, x = 300, y = 300, position = Vector2.new(300, 300)},
+        {time = 2.0, x = 400, y = 400, position = Vector2.new(400, 400)},
+    }
+    updateStatus()
+    print("Added 4 test clicks for debugging")
+end
+
+-- Uncomment to add test clicks for debugging
+-- addTestClicks()
