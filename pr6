@@ -1,5 +1,5 @@
 -- ==================================================================
--- COMPACT POTION RELEASER SCRIPT (MODIFIED FOR NEON PETS)
+-- COMPACT POTION RELEASER & BOX OPENER SCRIPT (MODIFIED FOR NEON PETS)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,15 +17,20 @@ local TARGET_PETS_FOR_POTIONS = {
     "winter_2025_xmas_tree_sasquatch"
 }
 
--- Box opening variables
-local boxOpeningMode = false
-local boxOpeningCoroutine = nil
-local BOX_TYPE = "winter_2025_angus_box"
+-- Box Opener variables
+local BoxOpenerMode = false
+local boxOpenerCoroutine = nil
+local BOX_ID = "winter_2025_angus_box"
 
 -- Debug print function
-local function debugPrint(msg)
-    print("[PotionRelease] " .. msg)
+local function debugPrint(msg, prefix)
+    prefix = prefix or "PotionRelease"
+    print("[" .. prefix .. "] " .. msg)
 end
+
+-- ==================================================================
+-- POTION RELEASER FUNCTIONS
+-- ==================================================================
 
 -- Function to find pet age potion in inventory
 local function findPetAgePotion()
@@ -41,32 +46,6 @@ local function findPetAgePotion()
         end
     end)
     return success and result or nil
-end
-
--- Function to find boxes in inventory
-local function findBoxesInInventory()
-    local boxes = {}
-    local totalAmount = 0
-    
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.gifts then
-            for uid, gift in pairs(playerData.inventory.gifts) do
-                if gift.id == BOX_TYPE then
-                    local amount = gift.amount or 1
-                    table.insert(boxes, {uid = uid, amount = amount})
-                    totalAmount = totalAmount + amount
-                end
-            end
-        end
-    end)
-    
-    if not success then
-        debugPrint("Error finding boxes: " .. tostring(errorMsg))
-    end
-    
-    return boxes, totalAmount
 end
 
 -- Function to safely unequip items
@@ -101,7 +80,7 @@ local function findPetsNeedingPotions()
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.pets do
+        if playerData and playerData.inventory and playerData.inventory.pets then
             for petUniqueId, petData in pairs(playerData.inventory.pets) do
                 if petData.id and petData.properties then
                     local petName = string.lower(petData.id)
@@ -126,7 +105,7 @@ local function findPetsNeedingPotions()
     end)
 
     if not success then
-        debugPrint("Error finding pets: " .. tostring(errorMsg))
+        debugPrint("Error finding pets: " .. tostring(errorMsg), "PotionRelease")
     end
 
     -- Sort by age (youngest first)
@@ -169,10 +148,10 @@ local function usePotionOnPet(petUniqueID)
     -- Equip the target pet before aging
     local equipSuccess = equipPet(petUniqueID)
     if not equipSuccess then
-        debugPrint("Failed to equip pet: " .. petName)
+        debugPrint("Failed to equip pet: " .. petName, "PotionRelease")
         return false
     end
-    debugPrint("Equipped pet: " .. petName)
+    debugPrint("Equipped pet: " .. petName, "PotionRelease")
     task.wait(1)
 
     local potionID = findPetAgePotion()
@@ -235,104 +214,8 @@ local function usePotionOnPet(petUniqueID)
     task.wait(9)
     safelyUnequipFood(potionID)
 
-    debugPrint("Used potion on " .. petName .. " (Age: " .. currentPetAge .. ")")
+    debugPrint("Used potion on " .. petName .. " (Age: " .. currentPetAge .. ")", "PotionRelease")
     return true
-end
-
--- Direct coordinate click function for box opening
-local function clickAtPosition(x, y)
-    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
-    task.wait(0.06)
-    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
-    return true
-end
-
--- Function to open a single box
-local function openSingleBox()
-    if boxOpeningMode then return end
-    
-    debugPrint("Starting box opening process...")
-    
-    -- Step 1: Find a box in inventory
-    local boxes, totalAmount = findBoxesInInventory()
-    
-    if #boxes == 0 then
-        debugPrint("ERROR: No boxes found!")
-        return false
-    end
-    
-    debugPrint("Found " .. totalAmount .. " boxes to open")
-    
-    -- Step 2: Equip the box
-    local boxUID = boxes[1].uid
-    
-    local equipSuccess = pcall(function()
-        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(boxUID)
-    end)
-    
-    if not equipSuccess then
-        debugPrint("ERROR: Failed to equip box!")
-        return false
-    end
-    
-    debugPrint("Box equipped! Waiting 1 second...")
-    task.wait(1)  -- Wait 1 second after equipping
-    
-    -- Step 3: Click at first coordinates (slot 13)
-    debugPrint("Clicking at 520,485...")
-    clickAtPosition(520, 485)  -- First click
-    
-    debugPrint("First click done! Waiting 1 second...")
-    task.wait(1)  -- Wait 1 second after first click
-    
-    -- Step 4: Click at second coordinates (Open button)
-    debugPrint("Clicking at 570,333...")
-    clickAtPosition(570, 333)  -- Second click (Open button)
-    
-    debugPrint("Both clicks completed!")
-    task.wait(2)  -- Wait to see if box opened
-    
-    -- Verify if box was opened by checking inventory
-    local oldCount = totalAmount
-    local _, newTotalAmount = findBoxesInInventory()
-    
-    if newTotalAmount < oldCount then
-        debugPrint("SUCCESS: Box opened! 🎁")
-        return true
-    else
-        debugPrint("Result: Unknown (check inventory)")
-        return false
-    end
-end
-
--- Box opening loop function
-local function startBoxOpeningLoop()
-    while boxOpeningMode do
-        local boxes, totalAmount = findBoxesInInventory()
-        
-        if #boxes == 0 then
-            debugPrint("No boxes left to open")
-            boxOpeningMode = false
-            break
-        end
-        
-        debugPrint("Opening box " .. (#boxes - #boxes + 1) .. "/" .. #boxes)
-        
-        local success = openSingleBox()
-        
-        if not success then
-            debugPrint("Failed to open box, retrying in 5 seconds...")
-            task.wait(5)
-        else
-            task.wait(3)  -- Wait between successful openings
-        end
-        
-        -- Update box count
-        boxes, totalAmount = findBoxesInInventory()
-        debugPrint("Boxes remaining: " .. totalAmount)
-    end
-    
-    debugPrint("Box opening stopped")
 end
 
 -- Main potion releaser loop
@@ -347,12 +230,12 @@ local function startPotionReleaser()
 
         local potionID = findPetAgePotion()
         if not potionID then
-            debugPrint("No potions available")
+            debugPrint("No potions available", "PotionRelease")
             task.wait(30)
             continue
         end
 
-        debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions")
+        debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions", "PotionRelease")
 
         local potionsUsed = 0
         for _, petData in ipairs(petsNeedingPotions) do
@@ -384,7 +267,7 @@ local function startPotionReleaser()
                 task.wait(3)
 
                 if not findPetAgePotion() then
-                    debugPrint("Out of potions")
+                    debugPrint("Out of potions", "PotionRelease")
                     break
                 end
             else
@@ -393,7 +276,7 @@ local function startPotionReleaser()
         end
 
         if potionsUsed > 0 then
-            debugPrint("Cycle complete: " .. potionsUsed .. " potions used")
+            debugPrint("Cycle complete: " .. potionsUsed .. " potions used", "PotionRelease")
         end
 
         task.wait(10)
@@ -404,45 +287,162 @@ end
 local function togglePotionReleaserMode()
     PotionReleaserMode = not PotionReleaserMode
     if PotionReleaserMode then
-        debugPrint("POTION RELEASER STARTED - Targeting pets until age 6 (including neon)")
+        debugPrint("STARTED - Targeting pets until age 6 (including neon)", "PotionRelease")
         potionReleaserCoroutine = coroutine.wrap(startPotionReleaser)()
     else
-        debugPrint("POTION RELEASER STOPPED")
+        debugPrint("STOPPED", "PotionRelease")
         potionReleaserCoroutine = nil
     end
 end
 
--- Function to toggle box opening mode
-local function toggleBoxOpeningMode()
-    boxOpeningMode = not boxOpeningMode
-    if boxOpeningMode then
-        debugPrint("BOX OPENING STARTED - Opening winter_2025_angus_box")
-        boxOpeningCoroutine = coroutine.wrap(startBoxOpeningLoop)()
+-- ==================================================================
+-- BOX OPENER FUNCTIONS
+-- ==================================================================
+
+-- Simple click function for box opening
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
+
+-- Function to count boxes
+local function countBoxes()
+    local boxCount = 0
+    
+    local success, err = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local data = clientData.get_data()
+        if data[player.Name] and data[player.Name].inventory and data[player.Name].inventory.gifts then
+            for uid, gift in pairs(data[player.Name].inventory.gifts) do
+                if gift.id == BOX_ID then
+                    boxCount = boxCount + (gift.amount or 1)
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        debugPrint("Count error: " .. tostring(err), "BoxOpener")
+        return 0
+    end
+    
+    return boxCount
+end
+
+-- Function to find and get a box ID
+local function getBoxId()
+    local boxId = nil
+    
+    local success, err = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local data = clientData.get_data()
+        if data[player.Name] and data[player.Name].inventory and data[player.Name].inventory.gifts then
+            for uid, gift in pairs(data[player.Name].inventory.gifts) do
+                if gift.id == BOX_ID then
+                    boxId = uid
+                    break
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        debugPrint("Error: " .. tostring(err), "BoxOpener")
+        return nil
+    end
+    
+    return boxId
+end
+
+-- Function to open one box
+local function openOneBox()
+    local boxId = getBoxId()
+    
+    if not boxId then
+        return false
+    end
+    
+    -- Equip the box
+    local equipSuccess = pcall(function()
+        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(boxId)
+    end)
+    
+    if not equipSuccess then
+        return false
+    end
+    
+    task.wait(1)
+    
+    -- Click first spot
+    clickAt(520, 485)
+    
+    task.wait(1)
+    
+    -- Click second spot
+    clickAt(570, 333)
+    
+    task.wait(2)
+    
+    return true
+end
+
+-- Function to open all boxes
+local function openAllBoxes()
+    while BoxOpenerMode do
+        local boxCount = countBoxes()
+        
+        if boxCount == 0 then
+            BoxOpenerMode = false
+            debugPrint("All boxes opened!", "BoxOpener")
+            break
+        end
+        
+        debugPrint("Opening box (" .. boxCount .. " remaining)", "BoxOpener")
+        
+        local success = openOneBox()
+        
+        if not success then
+            task.wait(2)
+        else
+            task.wait(3) -- Wait between boxes
+        end
+    end
+end
+
+-- Function to toggle box opener mode
+local function toggleBoxOpenerMode()
+    BoxOpenerMode = not BoxOpenerMode
+    if BoxOpenerMode then
+        debugPrint("Starting to open all boxes", "BoxOpener")
+        boxOpenerCoroutine = coroutine.wrap(function()
+            openAllBoxes()
+        end)()
     else
-        debugPrint("BOX OPENING STOPPED")
-        boxOpeningCoroutine = nil
+        debugPrint("Stopped opening boxes", "BoxOpener")
+        boxOpenerCoroutine = nil
     end
 end
 
 -- ==================================================================
--- COMPACT UI CREATION
+-- COMBINED UI CREATION
 -- ==================================================================
-local function createCompactPotionReleaserUI()
+local function createCombinedUI()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PotionReleaseUI"
-    screenGui.ResetOnSpawn = false
+    screenGui.Name = "PotionReleaseBoxOpenerUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 180, 0, 110)
-    mainFrame.Position = UDim2.new(0, 10, 1, -120)
+    mainFrame.Size = UDim2.new(0, 200, 0, 140)
+    mainFrame.Position = UDim2.new(0, 10, 1, -150)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.Parent = screenGui
 
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = mainFrame
 
     -- Draggable functionality
@@ -478,128 +478,141 @@ local function createCompactPotionReleaserUI()
 
     -- Title
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Size = UDim2.new(1, 0, 0, 25)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Auto Tools"
+    title.Text = "Potion Releaser & Box Opener"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 14
     title.Parent = mainFrame
 
-    -- Status label
-    local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 5, 0, 20)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    statusLabel.Text = "Loading..."
-    statusLabel.Font = Enum.Font.SourceSans
-    statusLabel.TextSize = 10
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.Parent = mainFrame
+    -- Box counter
+    local boxCounterLabel = Instance.new("TextLabel")
+    boxCounterLabel.Size = UDim2.new(1, 0, 0, 20)
+    boxCounterLabel.Position = UDim2.new(0, 5, 0, 25)
+    boxCounterLabel.BackgroundTransparency = 1
+    boxCounterLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+    boxCounterLabel.Text = "Boxes: 0"
+    boxCounterLabel.Font = Enum.Font.SourceSansBold
+    boxCounterLabel.TextSize = 12
+    boxCounterLabel.TextXAlignment = Enum.TextXAlignment.Left
+    boxCounterLabel.Parent = mainFrame
 
-    -- Potion releaser toggle button
+    -- Potion status label
+    local potionStatusLabel = Instance.new("TextLabel")
+    potionStatusLabel.Size = UDim2.new(1, 0, 0, 15)
+    potionStatusLabel.Position = UDim2.new(0, 5, 0, 45)
+    potionStatusLabel.BackgroundTransparency = 1
+    potionStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    potionStatusLabel.Text = "Ready"
+    potionStatusLabel.Font = Enum.Font.SourceSans
+    potionStatusLabel.TextSize = 10
+    potionStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    potionStatusLabel.Parent = mainFrame
+
+    -- Potion Release button
     local potionButton = Instance.new("TextButton")
-    potionButton.Size = UDim2.new(0.45, -5, 0, 25)
-    potionButton.Position = UDim2.new(0, 5, 0, 45)
+    potionButton.Size = UDim2.new(0.9, 0, 0, 25)
+    potionButton.Position = UDim2.new(0.05, 0, 0.5, 0)
     potionButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
     potionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    potionButton.Text = "Potion [OFF]"
+    potionButton.Text = "PotionRelease [OFF]"
     potionButton.Font = Enum.Font.SourceSansBold
-    potionButton.TextSize = 10
+    potionButton.TextSize = 12
     potionButton.Parent = mainFrame
 
-    local potionCorner = Instance.new("UICorner")
-    potionCorner.CornerRadius = UDim.new(0, 4)
-    potionCorner.Parent = potionButton
+    local potionButtonCorner = Instance.new("UICorner")
+    potionButtonCorner.CornerRadius = UDim.new(0, 4)
+    potionButtonCorner.Parent = potionButton
 
-    -- Box opener toggle button
-    local boxButton = Instance.new("TextButton")
-    boxButton.Size = UDim2.new(0.45, -5, 0, 25)
-    boxButton.Position = UDim2.new(0.55, 0, 0, 45)
-    boxButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
-    boxButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    boxButton.Text = "Box [OFF]"
-    boxButton.Font = Enum.Font.SourceSansBold
-    boxButton.TextSize = 10
-    boxButton.Parent = mainFrame
+    -- Open One Box button
+    local openOneBoxButton = Instance.new("TextButton")
+    openOneBoxButton.Size = UDim2.new(0.4, 0, 0, 25)
+    openOneBoxButton.Position = UDim2.new(0.05, 0, 0.75, 0)
+    openOneBoxButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
+    openOneBoxButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    openOneBoxButton.Text = "OPEN ONE"
+    openOneBoxButton.Font = Enum.Font.SourceSansBold
+    openOneBoxButton.TextSize = 10
+    openOneBoxButton.Parent = mainFrame
 
-    local boxCorner = Instance.new("UICorner")
-    boxCorner.CornerRadius = UDim.new(0, 4)
-    boxCorner.Parent = boxButton
+    local openOneCorner = Instance.new("UICorner")
+    openOneCorner.CornerRadius = UDim.new(0, 4)
+    openOneCorner.Parent = openOneBoxButton
 
-    -- Open single box button
-    local singleBoxButton = Instance.new("TextButton")
-    singleBoxButton.Size = UDim2.new(1, -10, 0, 25)
-    singleBoxButton.Position = UDim2.new(0, 5, 0, 75)
-    singleBoxButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-    singleBoxButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    singleBoxButton.Text = "Open One Box"
-    singleBoxButton.Font = Enum.Font.SourceSansBold
-    singleBoxButton.TextSize = 10
-    singleBoxButton.Parent = mainFrame
+    -- Open All Boxes button
+    local openAllBoxesButton = Instance.new("TextButton")
+    openAllBoxesButton.Size = UDim2.new(0.4, 0, 0, 25)
+    openAllBoxesButton.Position = UDim2.new(0.55, 0, 0.75, 0)
+    openAllBoxesButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+    openAllBoxesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    openAllBoxesButton.Text = "OPEN ALL [OFF]"
+    openAllBoxesButton.Font = Enum.Font.SourceSansBold
+    openAllBoxesButton.TextSize = 10
+    openAllBoxesButton.Parent = mainFrame
 
-    local singleBoxCorner = Instance.new("UICorner")
-    singleBoxCorner.CornerRadius = UDim.new(0, 4)
-    singleBoxCorner.Parent = singleBoxButton
+    local openAllCorner = Instance.new("UICorner")
+    openAllCorner.CornerRadius = UDim.new(0, 4)
+    openAllCorner.Parent = openAllBoxesButton
 
-    -- Update status function
-    local function updateStatus()
+    -- Update potion status function
+    local function updatePotionStatus()
         local pets = findPetsNeedingPotions()
         local potions = findPetAgePotion() and "Yes" or "No"
-        local boxes, boxCount = findBoxesInInventory()
-        statusLabel.Text = "P:" .. #pets .. " | Pot:" .. potions .. " | B:" .. boxCount
+        potionStatusLabel.Text = #pets .. " pets | Potions: " .. potions
+    end
+
+    -- Update box counter function
+    local function updateBoxCounter()
+        local boxCount = countBoxes()
+        boxCounterLabel.Text = "Boxes: " .. boxCount
+        return boxCount
     end
 
     -- Connect potion button click
     potionButton.MouseButton1Click:Connect(function()
         togglePotionReleaserMode()
-        potionButton.Text = PotionReleaserMode and "Potion [ON]" or "Potion [OFF]"
+        potionButton.Text = PotionReleaserMode and "PotionRelease [ON]" or "PotionRelease [OFF]"
         potionButton.BackgroundColor3 = PotionReleaserMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
-        updateStatus()
+        updatePotionStatus()
     end)
 
-    -- Connect box button click
-    boxButton.MouseButton1Click:Connect(function()
-        toggleBoxOpeningMode()
-        boxButton.Text = boxOpeningMode and "Box [ON]" or "Box [OFF]"
-        boxButton.BackgroundColor3 = boxOpeningMode and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(0, 100, 200)
-        updateStatus()
-    end)
-
-    -- Connect single box button click
-    singleBoxButton.MouseButton1Click:Connect(function()
-        if not boxOpeningMode then
-            openSingleBox()
-            task.wait(1)
-            updateStatus()
+    -- Connect open one box button
+    openOneBoxButton.MouseButton1Click:Connect(function()
+        debugPrint("Opening one box...", "BoxOpener")
+        if openOneBox() then
+            updateBoxCounter()
+            debugPrint("Box opened successfully!", "BoxOpener")
+        else
+            debugPrint("Failed to open box", "BoxOpener")
         end
     end)
 
-    -- Right-click for coordinate test
-    singleBoxButton.MouseButton2Click:Connect(function()
-        debugPrint("Testing coordinates...")
-        clickAtPosition(520, 485)
-        task.wait(1)
-        clickAtPosition(570, 333)
-        debugPrint("Coordinate test complete!")
+    -- Connect open all boxes button
+    openAllBoxesButton.MouseButton1Click:Connect(function()
+        toggleBoxOpenerMode()
+        openAllBoxesButton.Text = BoxOpenerMode and "OPEN ALL [ON]" or "OPEN ALL [OFF]"
+        openAllBoxesButton.BackgroundColor3 = BoxOpenerMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
+        updateBoxCounter()
     end)
 
     -- Auto-update status
     coroutine.wrap(function()
         while true do
-            updateStatus()
+            updatePotionStatus()
+            updateBoxCounter()
             task.wait(5)
         end
     end)()
 
     return {
         mainFrame = mainFrame,
-        statusLabel = statusLabel,
+        potionStatusLabel = potionStatusLabel,
+        boxCounterLabel = boxCounterLabel,
         potionButton = potionButton,
-        boxButton = boxButton,
-        singleBoxButton = singleBoxButton
+        openOneBoxButton = openOneBoxButton,
+        openAllBoxesButton = openAllBoxesButton
     }
 end
 
@@ -607,16 +620,7 @@ end
 -- INITIALIZATION
 -- ==================================================================
 -- Create the UI
-local ui = createCompactPotionReleaserUI()
-debugPrint("Compact Auto Tools loaded successfully!")
-debugPrint("Potion Releaser: Targets pets until age 6 (including neon)")
-debugPrint("Box Opener: Opens winter_2025_angus_box")
-debugPrint("Instructions:")
-debugPrint("- Left-click 'Open One Box': Open single box")
-debugPrint("- Right-click 'Open One Box': Test coordinates")
-
--- Initial status update
-task.wait(2)
-local pets = findPetsNeedingPotions()
-local boxes, boxCount = findBoxesInInventory()
-debugPrint("Initial scan: " .. #pets .. " pets need potions, " .. boxCount .. " boxes available")
+local ui = createCombinedUI()
+debugPrint("Compact Potion Releaser & Box Opener loaded successfully!", "System")
+debugPrint("Target pets: winter_2025_maine_coon, basic_egg_2022_zebra, winter_2025_turtle_doves, winter_2025_xmas_tree_sasquatch (until age 6, including neon)", "System")
+debugPrint("Box target: winter_2025_angus_box", "System")
