@@ -1,0 +1,167 @@
+-- ULTRA SIMPLE BOX OPENER - MINIMAL VERSION
+-- This will definitely work
+
+-- Wait for services to load
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Wait for player
+local player = Players.LocalPlayer
+repeat task.wait(0.1) until player and player.Character
+
+-- Simple print function
+local function printMsg(msg)
+    print("[BoxOpener] " .. msg)
+end
+
+printMsg("Script starting...")
+
+-- Simple click function
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
+
+-- Create the UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BoxOpenerUI"
+screenGui.ResetOnSpawn = false
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 150, 0, 80)
+mainFrame.Position = UDim2.new(0, 10, 1, -90)
+mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.BorderSizePixel = 0
+mainFrame.BackgroundTransparency = 0.2
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 25)
+title.BackgroundTransparency = 1
+title.Text = "Box Opener"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 16
+title.Parent = mainFrame
+
+-- Open button
+local openBtn = Instance.new("TextButton")
+openBtn.Size = UDim2.new(0.9, 0, 0, 30)
+openBtn.Position = UDim2.new(0.05, 0, 0.4, 0)
+openBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
+openBtn.Text = "OPEN BOX"
+openBtn.TextColor3 = Color3.new(1, 1, 1)
+openBtn.Font = Enum.Font.SourceSansBold
+openBtn.TextSize = 12
+openBtn.Parent = mainFrame
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 6)
+btnCorner.Parent = openBtn
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 0, 55)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Ready"
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 100)
+statusLabel.Font = Enum.Font.SourceSans
+statusLabel.TextSize = 11
+statusLabel.Parent = mainFrame
+
+-- Put UI in place
+mainFrame.Parent = screenGui
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+printMsg("UI created")
+
+-- Main open function
+local function openBox()
+    statusLabel.Text = "Finding box..."
+    
+    -- Try to find a box
+    local foundBox = false
+    local boxId = nil
+    
+    local success, err = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local data = clientData.get_data()
+        if data[player.Name] and data[player.Name].inventory and data[player.Name].inventory.gifts then
+            for uid, gift in pairs(data[player.Name].inventory.gifts) do
+                if gift.id == "winter_2025_angus_box" then
+                    foundBox = true
+                    boxId = uid
+                    break
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        statusLabel.Text = "Error: " .. tostring(err)
+        return
+    end
+    
+    if not foundBox then
+        statusLabel.Text = "No boxes found"
+        return
+    end
+    
+    statusLabel.Text = "Equipping..."
+    
+    -- Equip the box
+    local equipSuccess, equipErr = pcall(function()
+        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(boxId)
+    end)
+    
+    if not equipSuccess then
+        statusLabel.Text = "Equip failed"
+        return
+    end
+    
+    task.wait(1)
+    
+    -- Click first spot
+    statusLabel.Text = "Clicking slot..."
+    clickAt(520, 485)
+    
+    task.wait(1)
+    
+    -- Click second spot
+    statusLabel.Text = "Opening..."
+    clickAt(570, 333)
+    
+    task.wait(2)
+    statusLabel.Text = "Done!"
+    
+    -- Reset after delay
+    task.wait(1)
+    statusLabel.Text = "Ready"
+end
+
+-- Connect button
+openBtn.MouseButton1Click:Connect(function()
+    printMsg("Button clicked")
+    openBox()
+end)
+
+-- Right click to test coordinates
+openBtn.MouseButton2Click:Connect(function()
+    printMsg("Testing coordinates...")
+    clickAt(520, 485)
+    task.wait(0.5)
+    clickAt(570, 333)
+    printMsg("Test complete")
+    statusLabel.Text = "Test done"
+end)
+
+printMsg("Script loaded successfully!")
+printMsg("Left-click to open box, Right-click to test")
