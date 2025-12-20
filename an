@@ -28,6 +28,14 @@ local function clickGuiButton(button)
     return true
 end
 
+-- Direct click at coordinates (for precise clicking)
+local function clickAtPosition(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)   -- Mouse Down
+    task.wait(0.06)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)  -- Mouse Up
+    return true
+end
+
 -- === GUI Creation ===
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GiftGiverUI"
@@ -202,12 +210,19 @@ local function giveAllGiftsToPlayer()
     end
 end
 
--- Open One Gift (Dynamic + Reliable)
+-- Open One Gift (Precise Slot 13 Method)
 local function openGift()
     statusLabel.Text = "Searching for gift..."
     statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
 
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    -- Get client data
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success then
+        statusLabel.Text = "Failed to load ClientData"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
     local allData = clientData.get_data()
     local gifts = allData[localPlayer.Name]?.inventory?.gifts
     if not gifts then
@@ -216,6 +231,7 @@ local function openGift()
         return
     end
 
+    -- Find a gift to equip
     local uniqueId = nil
     for uid, gift in pairs(gifts) do
         if gift.id == giftType then
@@ -230,66 +246,137 @@ local function openGift()
         return
     end
 
+    -- Equip the gift
     statusLabel.Text = "Equipping gift..."
-    pcall(function()
+    local equipSuccess = pcall(function()
         ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
     end)
+    
+    if not equipSuccess then
+        statusLabel.Text = "Failed to equip gift!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+    
+    -- Wait for equip animation
     task.wait(2)
-
-    -- Find equipped gift in hotbar (look for filled slot)
-    local toolApp = playerGui:WaitForChild("ToolApp", 10)
-    local hotbar = toolApp?.Frame?.Hotbar
+    
+    -- PRECISE SLOT 13 CLICKING
+    statusLabel.Text = "Clicking slot 13..."
+    
+    -- Method 1: Direct path to slot 13
+    local hotbar = playerGui:WaitForChild("ToolApp", 5) 
+                     and playerGui.ToolApp:WaitForChild("Frame", 5) 
+                     and playerGui.ToolApp.Frame:WaitForChild("Hotbar", 5)
+    
     if not hotbar then
         statusLabel.Text = "Hotbar not found!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
-
-    local equippedSlot = nil
-    for _, slot in ipairs(hotbar:GetChildren()) do
-        if (slot:IsA("ImageButton") or slot:IsA("TextButton")) then
-            local img = slot:FindFirstChildWhichIsA("ImageLabel")
-            if img and img.Visible and img.Image ~= "" then
-                equippedSlot = slot
-                break
+    
+    -- Get the 13th child (as per your screenshot)
+    local children = hotbar:GetChildren()
+    local slot13 = nil
+    
+    -- Try to find slot 13 by index
+    if #children >= 13 then
+        -- Method 1: Get by exact index 13
+        slot13 = children[13]
+        
+        -- Method 2: Search for a slot with similar coordinates to your screenshot
+        if not slot13 then
+            for _, child in ipairs(children) do
+                if child:IsA("ImageButton") or child:IsA("TextButton") then
+                    local pos = child.AbsolutePosition
+                    -- Check if position is close to your screenshot coordinates (485, 400)
+                    if pos.X > 470 and pos.X < 500 and pos.Y > 390 and pos.Y < 410 then
+                        slot13 = child
+                        break
+                    end
+                end
             end
         end
     end
-
-    if not equippedSlot then
-        statusLabel.Text = "Gift not visible in hotbar!"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-
-    statusLabel.Text = "Clicking gift in hotbar..."
-    clickGuiButton(equippedSlot)
-    task.wait(2)
-
-    -- Find and click the green "Open" button (3rd in Buttons)
-    local confirmButton = nil
-    for i = 1, 15 do
-        task.wait(0.3)
-        local buttonsFrame = playerGui:FindFirstChild("DialogApp")
-            and playerGui.DialogApp:FindFirstChild("Dialog")
-            and playerGui.DialogApp.Dialog:FindFirstChild("CheckboxDialog")
-            and playerGui.DialogApp.Dialog.CheckboxDialog:FindFirstChild("Buttons")
-
-        if buttonsFrame then
-            local children = buttonsFrame:GetChildren()
-            table.sort(children, function(a, b) return a.Name < b.Name end)
-            confirmButton = children[3]  -- 3rd button is always "Open"
-            break
+    
+    -- Click the slot using coordinates from your screenshot
+    if slot13 then
+        -- From your screenshot: AbsolutePosition 485,25,400.1 and AbsoluteSize 70,70
+        -- Center X = 485 + 35 = 520
+        -- Center Y = 400 + 35 = 435
+        local centerX = 520
+        local centerY = 435
+        
+        statusLabel.Text = "Clicking at coordinates: " .. math.floor(centerX) .. ", " .. math.floor(centerY)
+        
+        -- Method 1: Click using the button object
+        if clickGuiButton(slot13) then
+            statusLabel.Text = "Slot clicked successfully!"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+        else
+            -- Method 2: Direct coordinate click (fallback)
+            clickAtPosition(centerX, centerY)
+            statusLabel.Text = "Clicked via coordinates!"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
         end
-    end
-
-    if confirmButton and clickGuiButton(confirmButton) then
-        statusLabel.Text = "Gift opened successfully!"
-        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-        task.wait(2)
-        updateGiftInventory()
     else
-        statusLabel.Text = "Failed to confirm open!"
+        -- Direct coordinate click as fallback
+        statusLabel.Text = "Using precise coordinates..."
+        clickAtPosition(520, 435)  -- Center of your screenshot button
+        statusLabel.Text = "Clicked via precise coordinates!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+    end
+    
+    -- Wait for dialog and click Open button
+    task.wait(1)
+    
+    local openButtonFound = false
+    for attempt = 1, 15 do  -- Try for 7.5 seconds
+        -- Look for dialog with Open button
+        local dialogApp = playerGui:FindFirstChild("DialogApp")
+        if dialogApp then
+            -- Search for any button that says "Open"
+            local function findOpenButton(parent)
+                for _, child in ipairs(parent:GetDescendants()) do
+                    if child:IsA("TextButton") then
+                        if string.find(string.lower(child.Text or ""), "open") then
+                            return child
+                        end
+                    elseif child:IsA("TextLabel") then
+                        if child.Parent:IsA("TextButton") and string.find(string.lower(child.Text or ""), "open") then
+                            return child.Parent
+                        end
+                    elseif child:IsA("ImageButton") then
+                        -- Check child text labels
+                        for _, desc in ipairs(child:GetDescendants()) do
+                            if desc:IsA("TextLabel") and string.find(string.lower(desc.Text or ""), "open") then
+                                return child
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+            
+            local openBtn = findOpenButton(dialogApp)
+            if openBtn then
+                if clickGuiButton(openBtn) then
+                    statusLabel.Text = "Gift opened successfully! 🎁"
+                    statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+                    openButtonFound = true
+                    
+                    -- Wait for animation and update inventory
+                    task.wait(2)
+                    updateGiftInventory()
+                    return
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+    
+    if not openButtonFound then
+        statusLabel.Text = "Open button not found!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
     end
 end
