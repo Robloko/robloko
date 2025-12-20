@@ -1,13 +1,19 @@
 -- ==================================================================
--- COMPACT POTION RELEASER & BOX OPENER SCRIPT (MODIFIED FOR NEON PETS)
+-- COMPACT POTION RELEASER & BOX OPENER & EGG TRADER SCRIPT
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
--- Potion Releaser variables
+-- ==================================================================
+-- CONFIGURATION
+-- ==================================================================
+local DEBUG_MODE = true
+
+-- Potion Releaser Config
 local PotionReleaserMode = false
 local potionReleaserCoroutine = nil
 local TARGET_PETS_FOR_POTIONS = {
@@ -16,15 +22,26 @@ local TARGET_PETS_FOR_POTIONS = {
     "winter_2025_xmas_tree_sasquatch"
 }
 
--- Box Opener variables
+-- Box Opener Config
 local BoxOpenerMode = false
 local boxOpenerCoroutine = nil
 local BOX_ID = "winter_2025_angus_box"
 
+-- Egg Trading Config
+local EggTradingMode = false
+local eggTradingCoroutine = nil
+local TARGET_PLAYER_NAME = "Gerranafa"
+
+-- ==================================================================
+-- UTILITY FUNCTIONS
+-- ==================================================================
+
 -- Debug print function
 local function debugPrint(msg, prefix)
-    prefix = prefix or "PotionRelease"
-    print("[" .. prefix .. "] " .. msg)
+    prefix = prefix or "System"
+    if DEBUG_MODE then
+        print("[" .. prefix .. "] " .. msg)
+    end
 end
 
 -- ==================================================================
@@ -72,7 +89,7 @@ local function equipPet(petUniqueID)
     return success
 end
 
--- Function to find pets that need potions (age < 6 and in target list, including neon pets)
+-- Function to find pets that need potions
 local function findPetsNeedingPotions()
     local petsNeedingPotions = {}
 
@@ -86,7 +103,7 @@ local function findPetsNeedingPotions()
                     local petAge = petData.properties.age or 0
                     local isNeon = petData.properties.neon or false
 
-                    -- Check if pet is in target list and under age 6 (including neon pets)
+                    -- Check if pet is in target list and under age 6
                     for _, targetPet in ipairs(TARGET_PETS_FOR_POTIONS) do
                         if petName == targetPet and petAge < 6 then
                             table.insert(petsNeedingPotions, {
@@ -286,7 +303,7 @@ end
 local function togglePotionReleaserMode()
     PotionReleaserMode = not PotionReleaserMode
     if PotionReleaserMode then
-        debugPrint("STARTED - Targeting pets until age 6 (including neon)", "PotionRelease")
+        debugPrint("STARTED - Targeting pets until age 6", "PotionRelease")
         potionReleaserCoroutine = coroutine.wrap(startPotionReleaser)()
     else
         debugPrint("STOPPED", "PotionRelease")
@@ -405,7 +422,7 @@ local function openAllBoxes()
         if not success then
             task.wait(2)
         else
-            task.wait(3) -- Wait between boxes
+            task.wait(3)
         end
     end
 end
@@ -425,16 +442,212 @@ local function toggleBoxOpenerMode()
 end
 
 -- ==================================================================
--- COMBINED UI CREATION
+-- EGG TRADING FUNCTIONS
+-- ==================================================================
+
+-- Function to find specific eggs in inventory
+local function findEggsInInventory()
+    local targetEggs = {
+        "winter_2025_angus_cow",
+        "winter_2025_angus_calf",
+        "winter_2025_angus_bull",
+        "halloween_2025_bat_cat",
+        "basic_egg_2022_alicorn",
+        "basic_egg_2022_ancient_dragon",
+        "basic_egg_2022_dragonfly",
+        "pet_recycler_2025_basic_egg",
+        "pet_recycler_2025_crystal_egg"
+    }
+
+    local foundEggs = {}
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.pets then
+            for petUniqueId, petData in pairs(playerData.inventory.pets) do
+                if petData.id then
+                    local eggName = string.lower(petData.id)
+                    for _, targetEgg in ipairs(targetEggs) do
+                        if eggName == targetEgg then
+                            table.insert(foundEggs, {
+                                unique_id = petUniqueId,
+                                name = petData.id,
+                                type = targetEgg
+                            })
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        debugPrint("Error scanning inventory for eggs: " .. tostring(errorMsg), "EggTrade")
+    end
+
+    return foundEggs
+end
+
+-- Function to add all eggs to trade
+local function addAllEggsToTrade()
+    debugPrint("Adding all recycler eggs to trade...", "EggTrade")
+    local eggs = findEggsInInventory()
+    if #eggs == 0 then
+        debugPrint("No recycler eggs found to add to trade", "EggTrade")
+        return 0
+    end
+
+    local eggsAdded = 0
+    local maxEggs = math.min(#eggs, 18) -- Trade limit
+
+    for i = 1, maxEggs do
+        local egg = eggs[i]
+        local success, err = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AddItemToOffer"):FireServer(egg.unique_id)
+        end)
+
+        if success then
+            eggsAdded = eggsAdded + 1
+            debugPrint("Added egg " .. i .. "/" .. maxEggs .. " to trade: " .. egg.name, "EggTrade")
+        else
+            debugPrint("Failed to add egg to trade: " .. tostring(err), "EggTrade")
+        end
+        task.wait(0.2)
+    end
+
+    debugPrint("Finished adding " .. eggsAdded .. " eggs to trade", "EggTrade")
+    return eggsAdded
+end
+
+-- Function to complete egg trade with specific player
+local function completeEggTradeWithPlayer(targetPlayerName)
+    if not targetPlayerName then
+        debugPrint("No player name provided for egg trading", "EggTrade")
+        return false
+    end
+
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if not targetPlayer then
+        debugPrint("Player not found: " .. targetPlayerName, "EggTrade")
+        return false
+    end
+
+    debugPrint("Starting egg trade with: " .. targetPlayerName, "EggTrade")
+
+    -- Send trade request
+    local success1, err1 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(targetPlayer)
+    end)
+
+    if not success1 then
+        debugPrint("Failed to send trade request: " .. tostring(err1), "EggTrade")
+        return false
+    end
+
+    debugPrint("Trade request sent successfully", "EggTrade")
+    task.wait(3)
+
+    -- Accept trade request
+    local args = { targetPlayer, true }
+    local success2, result2 = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptOrDeclineTradeRequest"):InvokeServer(unpack(args))
+    end)
+
+    if not success2 then
+        debugPrint("Failed to accept trade request: " .. tostring(result2), "EggTrade")
+        return false
+    end
+
+    debugPrint("Trade request accepted", "EggTrade")
+    task.wait(3)
+
+    -- Add all eggs to trade
+    local eggsAdded = addAllEggsToTrade()
+    if eggsAdded == 0 then
+        debugPrint("No eggs to trade, cancelling...", "EggTrade")
+        return false
+    end
+
+    task.wait(3)
+
+    -- Accept negotiation
+    local success3, result3 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptNegotiation"):FireServer()
+    end)
+
+    if not success3 then
+        debugPrint("Failed to accept negotiation: " .. tostring(result3), "EggTrade")
+        return false
+    end
+
+    debugPrint("Negotiation accepted, waiting for confirmation...", "EggTrade")
+    task.wait(6)
+
+    -- Confirm trade
+    local success4, result4 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
+    end)
+
+    if success4 then
+        debugPrint("SUCCESS: Egg trade completed with " .. targetPlayerName .. " (" .. eggsAdded .. " eggs traded)", "EggTrade")
+        return true
+    else
+        debugPrint("Failed to confirm trade: " .. tostring(result4), "EggTrade")
+        return false
+    end
+end
+
+-- Function to continuously trade eggs to fixed player
+local function startContinuousEggTrading()
+    while EggTradingMode do
+        local targetPlayerName = TARGET_PLAYER_NAME
+
+        -- Check if eggs are available
+        local eggs = findEggsInInventory()
+        if #eggs == 0 then
+            debugPrint("No eggs available for trading. Waiting 30 seconds...", "EggTrade")
+            task.wait(30)
+            continue
+        end
+
+        debugPrint("Eggs detected, sending trade request to " .. targetPlayerName, "EggTrade")
+
+        -- Perform trade only if eggs are detected
+        local success = completeEggTradeWithPlayer(targetPlayerName)
+        if not success then
+            debugPrint("Trade failed. Retrying in 15 seconds...", "EggTrade")
+            task.wait(15)
+        else
+            task.wait(math.random(8, 12))
+        end
+    end
+end
+
+-- Function to toggle egg trading mode
+local function toggleEggTradingMode()
+    EggTradingMode = not EggTradingMode
+    if EggTradingMode then
+        debugPrint("Continuous Egg Trading: ENABLED (target: " .. TARGET_PLAYER_NAME .. ")", "EggTrade")
+        eggTradingCoroutine = coroutine.create(startContinuousEggTrading)
+        coroutine.resume(eggTradingCoroutine)
+    else
+        debugPrint("Continuous Egg Trading: DISABLED", "EggTrade")
+    end
+end
+
+-- ==================================================================
+-- COMBINED UI CREATION (3-IN-1)
 -- ==================================================================
 local function createCombinedUI()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PotionReleaseBoxOpenerUI"
+    screenGui.Name = "PotionReleaseBoxOpenerEggTradeUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 180, 0, 100)
-    mainFrame.Position = UDim2.new(0, 10, 1, -110)
+    mainFrame.Size = UDim2.new(0, 220, 0, 150)  -- Increased height for 3 buttons
+    mainFrame.Position = UDim2.new(0, 10, 1, -160)  -- Adjusted position
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
@@ -481,14 +694,14 @@ local function createCombinedUI()
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Potion & Box Auto"
+    title.Text = "Potion & Box & Egg Auto"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 14
     title.Parent = mainFrame
 
-    -- Combined status line (Boxes | Pets | Potions)
+    -- Combined status line (Boxes | Pets | Eggs)
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, 0, 0, 20)
+    statusLabel.Size = UDim2.new(1, -10, 0, 20)
     statusLabel.Position = UDim2.new(0, 5, 0, 25)
     statusLabel.BackgroundTransparency = 1
     statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -501,7 +714,7 @@ local function createCombinedUI()
     -- Potion Release button
     local potionButton = Instance.new("TextButton")
     potionButton.Size = UDim2.new(0.9, 0, 0, 25)
-    potionButton.Position = UDim2.new(0.05, 0, 0.5, 0)
+    potionButton.Position = UDim2.new(0.05, 0, 0.3, 0)
     potionButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
     potionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     potionButton.Text = "PotionRelease [OFF]"
@@ -516,8 +729,8 @@ local function createCombinedUI()
     -- Open All Boxes button
     local openAllBoxesButton = Instance.new("TextButton")
     openAllBoxesButton.Size = UDim2.new(0.9, 0, 0, 25)
-    openAllBoxesButton.Position = UDim2.new(0.05, 0, 0.75, 0)
-    openAllBoxesButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    openAllBoxesButton.Position = UDim2.new(0.05, 0, 0.5, 0)
+    openAllBoxesButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
     openAllBoxesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     openAllBoxesButton.Text = "OPEN ALL [OFF]"
     openAllBoxesButton.Font = Enum.Font.SourceSansBold
@@ -528,15 +741,31 @@ local function createCombinedUI()
     openAllCorner.CornerRadius = UDim.new(0, 4)
     openAllCorner.Parent = openAllBoxesButton
 
+    -- Egg Trading button
+    local eggTradeButton = Instance.new("TextButton")
+    eggTradeButton.Size = UDim2.new(0.9, 0, 0, 25)
+    eggTradeButton.Position = UDim2.new(0.05, 0, 0.7, 0)
+    eggTradeButton.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
+    eggTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    eggTradeButton.Text = "EGG TRADE [OFF]"
+    eggTradeButton.Font = Enum.Font.SourceSansBold
+    eggTradeButton.TextSize = 12
+    eggTradeButton.Parent = mainFrame
+
+    local eggTradeCorner = Instance.new("UICorner")
+    eggTradeCorner.CornerRadius = UDim.new(0, 4)
+    eggTradeCorner.Parent = eggTradeButton
+
     -- Update combined status function
     local function updateCombinedStatus()
         local boxCount = countBoxes()
         local pets = findPetsNeedingPotions()
         local potions = findPetAgePotion() and "Yes" or "No"
+        local eggs = #findEggsInInventory()
         
-        -- Format: Boxes: X | Pets: Y | Potions: Yes/No
-        statusLabel.Text = string.format("Boxes: %d | Pets: %d | Potions: %s", 
-            boxCount, #pets, potions)
+        -- Format: Boxes: X | Pets: Y | Eggs: Z | Potions: Yes/No
+        statusLabel.Text = string.format("Boxes: %d | Pets: %d | Eggs: %d | Pot: %s", 
+            boxCount, #pets, eggs, potions)
     end
 
     -- Connect potion button click
@@ -551,7 +780,7 @@ local function createCombinedUI()
     openAllBoxesButton.MouseButton1Click:Connect(function()
         toggleBoxOpenerMode()
         openAllBoxesButton.Text = BoxOpenerMode and "OPEN ALL [ON]" or "OPEN ALL [OFF]"
-        openAllBoxesButton.BackgroundColor3 = BoxOpenerMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
+        openAllBoxesButton.BackgroundColor3 = BoxOpenerMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(0, 120, 200)
         updateCombinedStatus()
     end)
 
@@ -563,6 +792,27 @@ local function createCombinedUI()
             debugPrint("Box opened successfully!", "BoxOpener")
         else
             debugPrint("Failed to open box", "BoxOpener")
+        end
+    end)
+
+    -- Connect egg trade button click
+    eggTradeButton.MouseButton1Click:Connect(function()
+        toggleEggTradingMode()
+        eggTradeButton.Text = EggTradingMode and "EGG TRADE [ON]" or "EGG TRADE [OFF]"
+        eggTradeButton.BackgroundColor3 = EggTradingMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(120, 0, 200)
+        updateCombinedStatus()
+    end)
+
+    -- Right click egg trade for manual single trade
+    eggTradeButton.MouseButton2Click:Connect(function()
+        debugPrint("Attempting manual egg trade...", "EggTrade")
+        local eggs = #findEggsInInventory()
+        if eggs > 0 then
+            if completeEggTradeWithPlayer(TARGET_PLAYER_NAME) then
+                updateCombinedStatus()
+            end
+        else
+            debugPrint("No eggs to trade", "EggTrade")
         end
     end)
 
@@ -578,7 +828,8 @@ local function createCombinedUI()
         mainFrame = mainFrame,
         statusLabel = statusLabel,
         potionButton = potionButton,
-        openAllBoxesButton = openAllBoxesButton
+        openAllBoxesButton = openAllBoxesButton,
+        eggTradeButton = eggTradeButton
     }
 end
 
@@ -587,9 +838,13 @@ end
 -- ==================================================================
 -- Create the UI
 local ui = createCombinedUI()
-debugPrint("Compact Potion Releaser & Box Opener loaded successfully!", "System")
-debugPrint("Target pets: winter_2025_maine_coon, basic_egg_2022_zebra, winter_2025_turtle_doves, winter_2025_xmas_tree_sasquatch (until age 6, including neon)", "System")
-debugPrint("Box target: winter_2025_angus_box", "System")
-debugPrint("Left-click buttons to toggle auto modes", "System")
-debugPrint("Right-click OPEN ALL button to open single box", "System")
-debugPrint("Status shows: Boxes count | Pets needing potions | Potion availability", "System")
+debugPrint("3-in-1 Auto Script loaded successfully!", "System")
+debugPrint("Features:", "System")
+debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
+debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
+debugPrint("3. Egg Trader - Auto trades eggs to " .. TARGET_PLAYER_NAME, "System")
+debugPrint("Controls:", "System")
+debugPrint("- Left-click buttons to toggle auto modes", "System")
+debugPrint("- Right-click OPEN ALL for single box open", "System")
+debugPrint("- Right-click EGG TRADE for manual trade", "System")
+debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability", "System")
