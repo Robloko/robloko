@@ -35,7 +35,6 @@ local TARGET_PLAYER_NAME = "Gerranafa"
 -- Giveaway Config
 local GiveawayMode = false
 local giveawayCoroutine = nil
-local selectedGiveawayPlayer = nil
 local TARGET_GIVEAWAY_PETS = {
     "winter_2025_angus_cow",
     "winter_2025_angus_calf",
@@ -665,18 +664,6 @@ end
 -- GIVEAWAY FUNCTIONS
 -- ==================================================================
 
--- Function to update player list for giveaway
-local function updateGiveawayPlayers()
-    local playerList = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player then
-            table.insert(playerList, plr.Name)
-        end
-    end
-    table.sort(playerList)
-    return playerList
-end
-
 -- Function to get pet inventory by type
 local function getPetInventory()
     local petInventory = {}
@@ -718,19 +705,15 @@ local function givePetToPlayer(targetPlayer, petType, petUniqueId)
     end
 end
 
--- Main giveaway loop
+-- Main giveaway loop - Always uses Gerranafa
 local function startGiveaway()
     while GiveawayMode do
-        if not selectedGiveawayPlayer then
-            debugPrint("No player selected for giveaway. Waiting...", "Giveaway")
-            task.wait(5)
-            continue
-        end
+        local targetPlayerName = TARGET_PLAYER_NAME
+        local targetPlayer = Players:FindFirstChild(targetPlayerName)
         
-        local targetPlayer = Players:FindFirstChild(selectedGiveawayPlayer)
         if not targetPlayer then
-            debugPrint("Selected player not found: " .. selectedGiveawayPlayer, "Giveaway")
-            task.wait(5)
+            debugPrint("Target player not found: " .. targetPlayerName .. ". Waiting...", "Giveaway")
+            task.wait(10)
             continue
         end
         
@@ -749,8 +732,8 @@ local function startGiveaway()
         end
         
         if not gavePet then
-            debugPrint("No target pets available for giveaway. Waiting...", "Giveaway")
-            task.wait(5)
+            debugPrint("No target pets available for giveaway. Waiting 10 seconds...", "Giveaway")
+            task.wait(10)
         else
             task.wait(9) -- Wait between gives
         end
@@ -761,12 +744,7 @@ end
 local function toggleGiveawayMode()
     GiveawayMode = not GiveawayMode
     if GiveawayMode then
-        if not selectedGiveawayPlayer then
-            debugPrint("Please select a player first!", "Giveaway")
-            GiveawayMode = false
-            return
-        end
-        debugPrint("Giveaway STARTED for player: " .. selectedGiveawayPlayer, "Giveaway")
+        debugPrint("Giveaway STARTED for player: " .. TARGET_PLAYER_NAME, "Giveaway")
         giveawayCoroutine = coroutine.wrap(startGiveaway)()
     else
         debugPrint("Giveaway STOPPED", "Giveaway")
@@ -783,8 +761,8 @@ local function createCombinedUI()
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 220, 0, 190)  -- Increased height for 4 buttons
-    mainFrame.Position = UDim2.new(0, 10, 1, -200)  -- Adjusted position
+    mainFrame.Size = UDim2.new(0, 220, 0, 170)  -- Reduced height since we removed player selection
+    mainFrame.Position = UDim2.new(0, 10, 1, -180)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
@@ -893,58 +871,32 @@ local function createCombinedUI()
     eggTradeCorner.CornerRadius = UDim.new(0, 4)
     eggTradeCorner.Parent = eggTradeButton
 
-    -- Giveaway button with player selection dropdown
-    local giveawayFrame = Instance.new("Frame")
-    giveawayFrame.Size = UDim2.new(0.9, 0, 0, 50)
-    giveawayFrame.Position = UDim2.new(0.05, 0, 0.76, 0)
-    giveawayFrame.BackgroundTransparency = 1
-    giveawayFrame.Parent = mainFrame
-
+    -- Giveaway button (fixed to Gerranafa)
     local giveawayButton = Instance.new("TextButton")
-    giveawayButton.Size = UDim2.new(0.7, 0, 0, 25)
-    giveawayButton.Position = UDim2.new(0, 0, 0, 0)
+    giveawayButton.Size = UDim2.new(0.9, 0, 0, 25)
+    giveawayButton.Position = UDim2.new(0.05, 0, 0.76, 0)
     giveawayButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     giveawayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     giveawayButton.Text = "Giveaway [OFF]"
     giveawayButton.Font = Enum.Font.SourceSansBold
     giveawayButton.TextSize = 12
-    giveawayButton.Parent = giveawayFrame
+    giveawayButton.Parent = mainFrame
 
     local giveawayButtonCorner = Instance.new("UICorner")
     giveawayButtonCorner.CornerRadius = UDim.new(0, 4)
     giveawayButtonCorner.Parent = giveawayButton
 
-    local playerSelectButton = Instance.new("TextButton")
-    playerSelectButton.Size = UDim2.new(0.25, 0, 0, 25)
-    playerSelectButton.Position = UDim2.new(0.75, 0, 0, 0)
-    playerSelectButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-    playerSelectButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playerSelectButton.Text = "Player"
-    playerSelectButton.Font = Enum.Font.SourceSans
-    playerSelectButton.TextSize = 11
-    playerSelectButton.Parent = giveawayFrame
-
-    local playerSelectCorner = Instance.new("UICorner")
-    playerSelectCorner.CornerRadius = UDim.new(0, 4)
-    playerSelectCorner.Parent = playerSelectButton
-
-    -- Player dropdown list
-    local playerDropdown = Instance.new("Frame")
-    playerDropdown.Size = UDim2.new(1, 0, 0, 100)
-    playerDropdown.Position = UDim2.new(0, 0, 1, 0)
-    playerDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    playerDropdown.BorderSizePixel = 0
-    playerDropdown.Visible = false
-    playerDropdown.Parent = giveawayFrame
-
-    local playerListScrolling = Instance.new("ScrollingFrame")
-    playerListScrolling.Size = UDim2.new(1, 0, 1, 0)
-    playerListScrolling.BackgroundTransparency = 1
-    playerListScrolling.ScrollBarThickness = 6
-    playerListScrolling.Parent = playerDropdown
-
-    local playerListLayout = Instance.new("UIListLayout")
-    playerListLayout.Parent = playerListScrolling
+    -- Small label showing target player
+    local targetPlayerLabel = Instance.new("TextLabel")
+    targetPlayerLabel.Size = UDim2.new(1, -10, 0, 15)
+    targetPlayerLabel.Position = UDim2.new(0, 5, 0, 150)
+    targetPlayerLabel.BackgroundTransparency = 1
+    targetPlayerLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    targetPlayerLabel.Text = "Target: " .. TARGET_PLAYER_NAME
+    targetPlayerLabel.Font = Enum.Font.SourceSans
+    targetPlayerLabel.TextSize = 10
+    targetPlayerLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetPlayerLabel.Parent = mainFrame
 
     -- Update combined status function
     local function updateCombinedStatus()
@@ -961,36 +913,6 @@ local function createCombinedUI()
         -- Format: Boxes: X | Pets: Y | Eggs: Z | Pot: A | AllPets: B
         statusLabel.Text = string.format("Boxes: %d | Pets: %d | Eggs: %d | Pot: %s | All: %d", 
             boxCount, #pets, eggs, potions, totalPets)
-    end
-
-    -- Update player dropdown function
-    local function updatePlayerDropdown()
-        for _, child in ipairs(playerListScrolling:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
-            end
-        end
-        
-        local players = updateGiveawayPlayers()
-        for i, playerName in ipairs(players) do
-            local playerOption = Instance.new("TextButton")
-            playerOption.Size = UDim2.new(1, 0, 0, 20)
-            playerOption.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-            playerOption.TextColor3 = Color3.fromRGB(255, 255, 255)
-            playerOption.Text = playerName
-            playerOption.Font = Enum.Font.SourceSans
-            playerOption.TextSize = 12
-            playerOption.Parent = playerListScrolling
-            
-            playerOption.MouseButton1Click:Connect(function()
-                playerSelectButton.Text = playerName
-                selectedGiveawayPlayer = playerName
-                playerDropdown.Visible = false
-                debugPrint("Selected player: " .. playerName, "Giveaway")
-            end)
-        end
-        
-        playerListScrolling.CanvasSize = UDim2.new(0, 0, 0, #players * 20)
     end
 
     -- Connect potion button click
@@ -1049,27 +971,31 @@ local function createCombinedUI()
         updateCombinedStatus()
     end)
 
-    -- Connect player select button
-    playerSelectButton.MouseButton1Click:Connect(function()
-        playerDropdown.Visible = not playerDropdown.Visible
-        if playerDropdown.Visible then
-            updatePlayerDropdown()
+    -- Right click giveaway for manual single give
+    giveawayButton.MouseButton2Click:Connect(function()
+        debugPrint("Attempting manual giveaway...", "Giveaway")
+        local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+        if not targetPlayer then
+            debugPrint("Player not found: " .. TARGET_PLAYER_NAME, "Giveaway")
+            return
         end
-    end)
-
-    -- Close dropdown when clicking elsewhere
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            if playerDropdown.Visible then
-                local mousePos = UserInputService:GetMouseLocation()
-                local dropdownPos = playerDropdown.AbsolutePosition
-                local dropdownSize = playerDropdown.AbsoluteSize
-                
-                if not (mousePos.X >= dropdownPos.X and mousePos.X <= dropdownPos.X + dropdownSize.X and
-                       mousePos.Y >= dropdownPos.Y and mousePos.Y <= dropdownPos.Y + dropdownSize.Y) then
-                    playerDropdown.Visible = false
+        
+        local petInventory = getPetInventory()
+        local gave = false
+        
+        for _, petType in ipairs(TARGET_GIVEAWAY_PETS) do
+            if petInventory[petType] and #petInventory[petType] > 0 then
+                local petUniqueId = petInventory[petType][1]
+                if givePetToPlayer(targetPlayer, petType, petUniqueId) then
+                    gave = true
+                    updateCombinedStatus()
+                    break
                 end
             end
+        end
+        
+        if not gave then
+            debugPrint("No target pets available for giveaway", "Giveaway")
         end
     end)
 
@@ -1080,9 +1006,6 @@ local function createCombinedUI()
             task.wait(5)
         end
     end)()
-
-    -- Initial player dropdown update
-    updatePlayerDropdown()
 
     return {
         mainFrame = mainFrame,
@@ -1104,10 +1027,10 @@ debugPrint("Features:", "System")
 debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
 debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to " .. TARGET_PLAYER_NAME, "System")
-debugPrint("4. Giveaway - Auto gives trash pets to selected player", "System")
+debugPrint("4. Giveaway - Auto gives trash pets to " .. TARGET_PLAYER_NAME, "System")
 debugPrint("Controls:", "System")
 debugPrint("- Left-click buttons to toggle auto modes", "System")
 debugPrint("- Right-click OPEN ALL for single box open", "System")
 debugPrint("- Right-click EGG TRADE for manual trade", "System")
-debugPrint("- Select player for Giveaway using Player button", "System")
+debugPrint("- Right-click GIVEAWAY for manual single give", "System")
 debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Total pets", "System")
