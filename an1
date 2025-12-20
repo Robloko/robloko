@@ -11,23 +11,6 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 -- Wait for full game load
 repeat task.wait(0.1) until game:IsLoaded()
 
--- Universal GUI Click Function
-local function clickGuiButton(button)
-    if not button or not button.Visible or not button.Active then
-        return false
-    end
-    
-    local absPos = button.AbsolutePosition
-    local absSize = button.AbsoluteSize
-    local centerX = absPos.X + absSize.X / 2
-    local centerY = absPos.Y + absSize.Y / 2
-    
-    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-    task.wait(0.06)
-    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
-    return true
-end
-
 -- Direct coordinate click
 local function clickAtPosition(x, y)
     VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
@@ -97,22 +80,10 @@ openButton.TextSize = 16
 openButton.Parent = mainFrame
 Instance.new("UICorner", openButton).CornerRadius = UDim.new(0, 8)
 
--- Auto Open Toggle
-local autoOpenToggle = Instance.new("TextButton")
-autoOpenToggle.Size = UDim2.new(0, 120, 0, 25)
-autoOpenToggle.Position = UDim2.new(0.5, -60, 0, 180)
-autoOpenToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-autoOpenToggle.TextColor3 = Color3.new(1, 1, 1)
-autoOpenToggle.Text = "🔴 Auto: OFF"
-autoOpenToggle.Font = Enum.Font.SourceSansBold
-autoOpenToggle.TextSize = 14
-autoOpenToggle.Parent = mainFrame
-Instance.new("UICorner", autoOpenToggle).CornerRadius = UDim.new(0, 6)
-
 -- Status Label
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -20, 0, 35)
-statusLabel.Position = UDim2.new(0, 10, 0, 210)
+statusLabel.Position = UDim2.new(0, 10, 0, 175)
 statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 statusLabel.TextColor3 = Color3.new(1, 1, 1)
 statusLabel.Text = "Ready"
@@ -120,9 +91,6 @@ statusLabel.Font = Enum.Font.SourceSansBold
 statusLabel.TextSize = 14
 statusLabel.Parent = mainFrame
 Instance.new("UICorner", statusLabel).CornerRadius = UDim.new(0, 8)
-
--- Resize main frame to accommodate new elements
-mainFrame.Size = UDim2.new(0, 320, 0, 250)
 
 -- Variables
 local giftType = "winter_2025_angus_box"
@@ -132,7 +100,6 @@ local giftInventory = {}
 local totalGiftAmount = 0
 local isGiving = false
 local isOpening = false
-local autoOpenEnabled = false
 
 -- === FUNCTIONS ===
 
@@ -140,8 +107,6 @@ local autoOpenEnabled = false
 local function updateGiftInventory()
     giftInventory = {}
     totalGiftAmount = 0
-    
-    statusLabel.Text = "Checking inventory..."
     
     -- Try to get inventory data
     local success, clientData = pcall(function()
@@ -184,117 +149,7 @@ local function findTargetPlayer()
     end
 end
 
--- Find Gift to Equip
-local function findGiftToEquip()
-    -- Refresh inventory first
-    updateGiftInventory()
-    
-    if #giftInventory == 0 then
-        return nil
-    end
-    
-    -- Return the first gift UID
-    return giftInventory[1].uid
-end
-
--- Equip Gift
-local function equipGift(giftUID)
-    statusLabel.Text = "Equipping gift..."
-    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-    
-    local success = pcall(function()
-        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(giftUID)
-    end)
-    
-    if success then
-        statusLabel.Text = "Gift equipped!"
-        return true
-    else
-        statusLabel.Text = "Failed to equip gift"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return false
-    end
-end
-
--- Click Slot 13
-local function clickSlot13()
-    statusLabel.Text = "Clicking slot 13..."
-    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
-    
-    -- Try multiple methods to click slot 13
-    
-    -- Method 1: Direct coordinates (from your screenshot)
-    clickAtPosition(520, 485)
-    
-    -- Method 2: Try to find the actual button
-    local hotbarSuccess, hotbar = pcall(function()
-        return playerGui.ToolApp.Frame.Hotbar
-    end)
-    
-    if hotbarSuccess and hotbar then
-        local children = hotbar:GetChildren()
-        if #children >= 13 then
-            -- Try to click the 13th child
-            local slot13 = children[13]
-            if slot13 and (slot13:IsA("ImageButton") or slot13:IsA("TextButton")) then
-                clickGuiButton(slot13)
-            end
-        end
-    end
-    
-    return true
-end
-
--- Find and Click Open Button
-local function clickOpenButton()
-    statusLabel.Text = "Looking for Open button..."
-    statusLabel.TextColor3 = Color3.fromRGB(200, 255, 0)
-    
-    local openClicked = false
-    
-    for attempt = 1, 15 do
-        local dialogApp = playerGui:FindFirstChild("DialogApp")
-        if dialogApp then
-            -- Search for Open button in dialog
-            for _, obj in ipairs(dialogApp:GetDescendants()) do
-                if obj:IsA("TextButton") and obj.Visible then
-                    local text = obj.Text or ""
-                    if string.find(string.lower(text), "open") then
-                        if clickGuiButton(obj) then
-                            openClicked = true
-                            break
-                        end
-                    end
-                elseif obj:IsA("ImageButton") and obj.Visible then
-                    for _, child in ipairs(obj:GetChildren()) do
-                        if child:IsA("TextLabel") then
-                            local text = child.Text or ""
-                            if string.find(string.lower(text), "open") then
-                                if clickGuiButton(obj) then
-                                    openClicked = true
-                                    break
-                                end
-                            end
-                        end
-                    end
-                    if openClicked then break end
-                end
-            end
-        end
-        
-        if openClicked then
-            statusLabel.Text = "Gift opened! 🎁"
-            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-            return true
-        end
-        
-        task.wait(0.3)
-    end
-    
-    return false
-end
-
--- Complete Gift Opening Process
+-- SIMPLE DIRECT METHOD: Equip -> Wait 1s -> Click 520,485 -> Wait 1s -> Click 570,333
 local function openGift()
     if isOpening then return end
     isOpening = true
@@ -302,11 +157,13 @@ local function openGift()
     openButton.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
     openButton.Text = "Opening..."
     
-    -- Step 1: Find a gift
-    statusLabel.Text = "Finding gift..."
-    local giftUID = findGiftToEquip()
+    -- Step 1: Find a gift in inventory
+    statusLabel.Text = "Step 1: Finding gift..."
+    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
     
-    if not giftUID then
+    updateGiftInventory()
+    
+    if #giftInventory == 0 then
         statusLabel.Text = "ERROR: No gifts found!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         isOpening = false
@@ -316,69 +173,64 @@ local function openGift()
     end
     
     -- Step 2: Equip the gift
-    if not equipGift(giftUID) then
+    statusLabel.Text = "Step 2: Equipping gift..."
+    local giftUID = giftInventory[1].uid
+    
+    local equipSuccess = pcall(function()
+        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(giftUID)
+    end)
+    
+    if not equipSuccess then
+        statusLabel.Text = "ERROR: Failed to equip gift!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         isOpening = false
         openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
         openButton.Text = "Open One Gift"
         return
     end
     
-    -- Wait for equip animation
-    task.wait(2)
+    statusLabel.Text = "Gift equipped! Waiting 1 second..."
+    task.wait(1)  -- Wait 1 second after equipping
     
-    -- Step 3: Click slot 13
-    clickSlot13()
+    -- Step 3: Click at first coordinates (slot 13)
+    statusLabel.Text = "Step 3: Clicking at 520,485..."
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     
-    -- Wait for dialog to appear
-    task.wait(1)
+    clickAtPosition(520, 485)  -- First click
     
-    -- Step 4: Click Open button
-    local success = clickOpenButton()
+    statusLabel.Text = "First click done! Waiting 1 second..."
+    task.wait(1)  -- Wait 1 second after first click
     
-    -- Step 5: Update inventory and reset
-    task.wait(1.5)
+    -- Step 4: Click at second coordinates (Open button)
+    statusLabel.Text = "Step 4: Clicking at 570,333..."
+    statusLabel.TextColor3 = Color3.fromRGB(200, 255, 0)
     
-    if success then
-        -- Remove the opened gift from inventory
-        table.remove(giftInventory, 1)
-        totalGiftAmount = math.max(0, totalGiftAmount - 1)
-        statusLabel.Text = "Success! Gifts left: " .. totalGiftAmount
+    clickAtPosition(570, 333)  -- Second click (Open button)
+    
+    -- Step 5: Check if successful
+    statusLabel.Text = "Both clicks completed! Checking result..."
+    task.wait(2)  -- Wait to see if gift opened
+    
+    -- Verify if gift was opened by checking inventory
+    local oldCount = totalGiftAmount
+    updateGiftInventory()
+    
+    if totalGiftAmount < oldCount then
+        statusLabel.Text = "SUCCESS: Gift opened! 🎁"
+        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    else
+        statusLabel.Text = "Result: Unknown (check inventory)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
     end
     
+    -- Final reset
+    task.wait(1)
     isOpening = false
     openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
     openButton.Text = "Open One Gift"
-    
-    -- If auto-open is enabled and we still have gifts, open another
-    if autoOpenEnabled and totalGiftAmount > 0 then
-        task.wait(1)
-        openGift()
-    end
 end
 
--- Auto-open toggle
-local function toggleAutoOpen()
-    autoOpenEnabled = not autoOpenEnabled
-    
-    if autoOpenEnabled then
-        autoOpenToggle.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-        autoOpenToggle.Text = "🟢 Auto: ON"
-        statusLabel.Text = "Auto-open ENABLED"
-        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-        
-        -- Start auto-opening if we have gifts
-        if totalGiftAmount > 0 and not isOpening then
-            openGift()
-        end
-    else
-        autoOpenToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        autoOpenToggle.Text = "🔴 Auto: OFF"
-        statusLabel.Text = "Auto-open DISABLED"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end
-end
-
--- Give All Gifts (Optimized)
+-- Give All Gifts
 local function giveAllGiftsToPlayer()
     if isGiving then return end
     if not findTargetPlayer() then
@@ -429,34 +281,29 @@ local function giveAllGiftsToPlayer()
     end
 end
 
--- Debug function
-local function debugHotbar()
-    statusLabel.Text = "DEBUG: Checking hotbar..."
+-- Test coordinates function
+local function testCoordinates()
+    statusLabel.Text = "Testing coordinates..."
     
-    local success, hotbar = pcall(function()
-        return playerGui.ToolApp.Frame.Hotbar
-    end)
+    -- Test first coordinate
+    statusLabel.Text = "Clicking 520,485..."
+    clickAtPosition(520, 485)
+    task.wait(1)
     
-    if success and hotbar then
-        local children = hotbar:GetChildren()
-        statusLabel.Text = "Hotbar has " .. #children .. " slots"
-        
-        -- Print slot info
-        for i, slot in ipairs(children) do
-            print("Slot " .. i .. ": " .. slot.Name .. " (" .. slot.ClassName .. ")")
-        end
-    else
-        statusLabel.Text = "DEBUG: Hotbar not found!"
-    end
+    -- Test second coordinate
+    statusLabel.Text = "Clicking 570,333..."
+    clickAtPosition(570, 333)
+    task.wait(1)
+    
+    statusLabel.Text = "Coordinate test complete!"
 end
 
 -- === Button Connections ===
 giveAllButton.MouseButton1Click:Connect(giveAllGiftsToPlayer)
 openButton.MouseButton1Click:Connect(openGift)
-autoOpenToggle.MouseButton1Click:Connect(toggleAutoOpen)
 
--- Right-click for debug
-openButton.MouseButton2Click:Connect(debugHotbar)
+-- Right-click for coordinate test
+openButton.MouseButton2Click:Connect(testCoordinates)
 
 -- === Initial Setup ===
 findTargetPlayer()
@@ -474,19 +321,17 @@ spawn(function()
 end)
 
 print("=========================================")
-print("🎁 Gift Giver UI v2.0 FULLY LOADED! 🎁")
+print("🎁 Gift Giver UI - SIMPLE DIRECT METHOD 🎁")
 print("=========================================")
-print("Features:")
-print("1. Finds and equips gifts from inventory")
-print("2. Clicks slot 13 to open gifts")
-print("3. Auto-open mode (toggle button)")
-print("4. Gift giving to target player")
-print("5. Inventory tracking")
+print("Process:")
+print("1. Find and equip gift")
+print("2. Wait 1 second")
+print("3. Click at coordinates: 520, 485 (Slot 13)")
+print("4. Wait 1 second")
+print("5. Click at coordinates: 570, 333 (Open button)")
 print("=========================================")
 print("Instructions:")
-print("1. Make sure you have winter_2025_angus_box gifts")
-print("2. Click 'Open One Gift' to open a single gift")
-print("3. Toggle 'Auto: ON' for continuous opening")
-print("4. Click 'Give All' to give gifts to Gerranafa")
-print("5. Right-click Open button for debug info")
+print("- Left-click 'Open One Gift': Full process")
+print("- Right-click 'Open One Gift': Test coordinates only")
+print("- Make sure gifts are in your inventory")
 print("=========================================")
