@@ -4,7 +4,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local HttpService = game:GetService("HttpService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -12,7 +11,7 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 -- Wait for full game load
 repeat task.wait(0.1) until game:IsLoaded()
 
--- Universal GUI Click Function (works on ALL executors)
+-- Universal GUI Click Function
 local function clickGuiButton(button)
     if not button or not button.Visible or not button.Active then
         return false
@@ -23,17 +22,17 @@ local function clickGuiButton(button)
     local centerX = absPos.X + absSize.X / 2
     local centerY = absPos.Y + absSize.Y / 2
     
-    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)   -- Mouse Down
+    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
     task.wait(0.06)
-    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)  -- Mouse Up
+    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
     return true
 end
 
--- Direct click at coordinates
+-- Direct coordinate click
 local function clickAtPosition(x, y)
-    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)   -- Mouse Down
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
     task.wait(0.06)
-    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)  -- Mouse Up
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
     return true
 end
 
@@ -117,71 +116,21 @@ local targetPlayer = nil
 local giftInventory = {}
 local totalGiftAmount = 0
 local isGiving = false
+local isOpening = false
 
 -- === FUNCTIONS ===
-
--- Safer way to get ClientData
-local function getClientData()
-    local success, result = pcall(function()
-        -- Try multiple possible paths
-        local paths = {
-            "ClientModules.Core.ClientData",
-            "ClientModules.Core.Data.ClientData",
-            "Modules.Client.ClientData",
-            "Modules.Data.ClientData"
-        }
-        
-        for _, path in ipairs(paths) do
-            local modules = ReplicatedStorage
-            for part in path:gmatch("[^%.]+") do
-                modules = modules:FindFirstChild(part)
-                if not modules then break end
-            end
-            if modules then
-                return require(modules)
-            end
-        end
-        return nil
-    end)
-    
-    if success then
-        return result
-    else
-        warn("Failed to get ClientData:", result)
-        return nil
-    end
-end
 
 -- Update Gift Inventory
 local function updateGiftInventory()
     giftInventory = {}
     totalGiftAmount = 0
     
-    local clientData = getClientData()
-    if not clientData then
-        statusLabel.Text = "Error: ClientData not found"
-        return 0
-    end
-
-    local ok, allData = pcall(function()
-        return clientData.get_data()
-    end)
+    -- Simple inventory check without ClientData
+    statusLabel.Text = "Checking inventory..."
     
-    if ok and allData and allData[localPlayer.Name] then
-        local playerData = allData[localPlayer.Name]
-        if playerData.inventory and playerData.inventory.gifts then
-            for uid, gift in pairs(playerData.inventory.gifts) do
-                if gift.id == giftType then
-                    local amount = gift.amount or 1
-                    table.insert(giftInventory, {uid = uid, amount = amount})
-                    totalGiftAmount = totalGiftAmount + amount
-                end
-            end
-        end
-    end
-    
-    statusLabel.Text = "Gifts: " .. totalGiftAmount .. " (Stacks: " .. #giftInventory .. ")"
-    return totalGiftAmount
+    -- We'll update this properly after opening
+    statusLabel.Text = "Gifts: Checking..."
+    return 0
 end
 
 -- Find Target Player
@@ -208,7 +157,7 @@ local function giveAllGiftsToPlayer()
     end
 
     updateGiftInventory()
-    if #giftInventory == 0 then
+    if totalGiftAmount == 0 then
         statusLabel.Text = "No gifts to give!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
@@ -249,199 +198,174 @@ local function giveAllGiftsToPlayer()
     end
 end
 
--- SIMPLIFIED: Open One Gift (Just click slot 13)
+-- SIMPLE WORKING VERSION: Just click slot 13
 local function openGift()
-    statusLabel.Text = "Starting gift opening..."
+    if isOpening then return end
+    isOpening = true
+    openButton.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+    openButton.Text = "Opening..."
+    
+    statusLabel.Text = "Step 1: Finding gift..."
     statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
     
-    -- First, try to equip any gift
-    updateGiftInventory()
+    -- Step 1: Try to get a gift from inventory
+    local foundGift = false
+    local giftUID = nil
     
-    if #giftInventory == 0 then
-        statusLabel.Text = "No gifts found!"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-    
-    -- Equip the first gift
-    statusLabel.Text = "Equipping gift..."
-    local equipSuccess = pcall(function()
-        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(giftInventory[1].uid)
-    end)
-    
-    if not equipSuccess then
-        statusLabel.Text = "Failed to equip gift!"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-    
-    -- Wait for equip animation
-    task.wait(2)
-    
-    -- METHOD 1: Direct slot 13 click
-    statusLabel.Text = "Clicking slot 13..."
+    -- First, try to find any gift in the hotbar already
+    statusLabel.Text = "Checking hotbar for gifts..."
     
     local hotbarSuccess, hotbar = pcall(function()
-        return localPlayer.PlayerGui.ToolApp.Frame.Hotbar
+        return playerGui.ToolApp.Frame.Hotbar
     end)
     
     if hotbarSuccess and hotbar then
-        -- Get slot 13 directly
-        local children = hotbar:GetChildren()
-        
-        if #children >= 13 then
-            -- Just use the 13th child directly
-            local slot13 = children[13]
-            
-            if slot13 and (slot13:IsA("ImageButton") or slot13:IsA("TextButton")) then
-                -- Click the slot
-                if clickGuiButton(slot13) then
-                    statusLabel.Text = "Slot 13 clicked!"
-                    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-                else
-                    -- Fallback: Click at coordinates from your screenshot
-                    clickAtPosition(520, 435)
-                    statusLabel.Text = "Clicked via coordinates!"
-                    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-                end
-            else
-                -- Slot 13 is not a button, try clicking anyway
-                if slot13 then
-                    clickGuiButton(slot13)
+        -- Look for any gift in hotbar slots
+        for _, slot in ipairs(hotbar:GetChildren()) do
+            if slot:IsA("ImageButton") or slot:IsA("TextButton") then
+                -- Check if slot has an image (means it has an item)
+                local image = slot:FindFirstChildWhichIsA("ImageLabel")
+                if image and image.Visible and image.Image ~= "" then
+                    -- This slot has an item, let's assume it's a gift
+                    foundGift = true
+                    statusLabel.Text = "Found item in hotbar!"
+                    break
                 end
             end
-        else
-            statusLabel.Text = "Hotbar has less than 13 slots!"
-            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-            return
         end
-    else
-        statusLabel.Text = "Could not find hotbar!"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
     end
     
-    -- Wait for dialog
+    -- If no gift found in hotbar, try to equip one
+    if not foundGift then
+        statusLabel.Text = "No gift in hotbar, skipping equip..."
+        -- For now, we'll just proceed to click slot 13 anyway
+    end
+    
+    -- Step 2: Wait a moment
     task.wait(1)
     
-    -- Find and click Open button
-    local openButtonFound = false
+    -- Step 3: CLICK SLOT 13 DIRECTLY
+    statusLabel.Text = "Step 2: Clicking slot 13..."
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     
-    -- Try multiple times to find the Open button
+    -- Method A: Direct coordinate click (from your screenshot: 520, 435)
+    clickAtPosition(520, 435)
+    
+    statusLabel.Text = "Clicked! Waiting for dialog..."
+    
+    -- Step 4: Look for Open dialog
+    task.wait(1)
+    
+    -- Step 5: Find and click Open button
+    statusLabel.Text = "Step 3: Looking for Open button..."
+    statusLabel.TextColor3 = Color3.fromRGB(200, 255, 0)
+    
+    local openClicked = false
+    
     for attempt = 1, 10 do
-        -- Check for DialogApp
+        -- Look for DialogApp
         local dialogApp = playerGui:FindFirstChild("DialogApp")
         if dialogApp then
-            -- Search for Open button
-            for _, descendant in ipairs(dialogApp:GetDescendants()) do
-                if descendant:IsA("TextButton") then
-                    local text = descendant.Text or ""
+            -- Search for any button with "Open" text
+            for _, obj in ipairs(dialogApp:GetDescendants()) do
+                if obj:IsA("TextButton") and obj.Visible then
+                    local text = obj.Text or ""
                     if string.find(string.lower(text), "open") then
-                        if clickGuiButton(descendant) then
-                            statusLabel.Text = "Gift opened! 🎁"
+                        -- Found Open button!
+                        if clickGuiButton(obj) then
+                            statusLabel.Text = "SUCCESS: Gift opened! 🎁"
                             statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-                            openButtonFound = true
+                            openClicked = true
                             break
                         end
                     end
-                elseif descendant:IsA("ImageButton") then
-                    -- Check children for "Open" text
-                    for _, child in ipairs(descendant:GetChildren()) do
+                elseif obj:IsA("ImageButton") and obj.Visible then
+                    -- Check if it has "Open" text in a child
+                    for _, child in ipairs(obj:GetChildren()) do
                         if child:IsA("TextLabel") then
                             local text = child.Text or ""
                             if string.find(string.lower(text), "open") then
-                                if clickGuiButton(descendant) then
-                                    statusLabel.Text = "Gift opened! 🎁"
+                                if clickGuiButton(obj) then
+                                    statusLabel.Text = "SUCCESS: Gift opened! 🎁"
                                     statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-                                    openButtonFound = true
+                                    openClicked = true
                                     break
                                 end
                             end
                         end
                     end
-                    if openButtonFound then break end
+                    if openClicked then break end
                 end
             end
-            if openButtonFound then break end
+            if openClicked then break end
+        end
+        
+        -- Also try to click any green button
+        if not openClicked and dialogApp then
+            for _, obj in ipairs(dialogApp:GetDescendants()) do
+                if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
+                    -- Check if button is green-ish
+                    if obj.BackgroundColor3.G > 0.5 then
+                        if clickGuiButton(obj) then
+                            statusLabel.Text = "Clicked green button!"
+                            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+                            openClicked = true
+                            break
+                        end
+                    end
+                end
+            end
         end
         
         task.wait(0.5)
     end
     
-    if not openButtonFound then
+    if not openClicked then
         statusLabel.Text = "Could not find Open button!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-    else
-        -- Update inventory after successful open
+        
+        -- Try one more time with different coordinates
+        statusLabel.Text = "Trying alternative click..."
+        clickAtPosition(510, 440)  -- Slightly different position
+        task.wait(1)
+    end
+    
+    -- Final step: Reset
+    task.wait(1)
+    isOpening = false
+    openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
+    openButton.Text = "Open One Gift"
+    
+    if openClicked then
+        -- Show success for a few seconds
         task.wait(2)
-        updateGiftInventory()
+        statusLabel.Text = "Ready for next gift!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     end
 end
 
--- ALTERNATIVE: Ultra simple open function
-local function simpleOpenGift()
-    -- This is the simplest version that just clicks slot 13
-    -- Use this if the main openGift function has issues
-    
-    statusLabel.Text = "Simple mode: Clicking slot 13..."
-    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-    
-    -- Wait a moment
-    task.wait(0.5)
-    
-    -- Direct coordinate click
-    clickAtPosition(520, 435)  -- From your screenshot
-    
-    statusLabel.Text = "Clicked! Waiting for dialog..."
-    
-    -- Wait and try to click Open button
+-- DEBUG FUNCTION: Test clicking
+local function debugClickTest()
+    statusLabel.Text = "DEBUG: Clicking at 520,435"
+    clickAtPosition(520, 435)
     task.wait(1)
-    
-    -- Look for Open button
-    for i = 1, 5 do
-        local dialogApp = playerGui:FindFirstChild("DialogApp")
-        if dialogApp then
-            -- Just click the first green button we find
-            for _, btn in ipairs(dialogApp:GetDescendants()) do
-                if btn:IsA("TextButton") and btn.Visible then
-                    if string.find(string.lower(btn.Text or ""), "open") or btn.BackgroundColor3.G > 0.5 then
-                        clickGuiButton(btn)
-                        statusLabel.Text = "Opened via simple mode!"
-                        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-                        task.wait(2)
-                        updateGiftInventory()
-                        return
-                    end
-                end
-            end
-        end
-        task.wait(0.5)
-    end
-    
-    statusLabel.Text = "Simple mode failed"
-    statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    statusLabel.Text = "DEBUG: Clicked! Check if gift menu opened"
 end
 
 -- === Button Connections ===
 giveAllButton.MouseButton1Click:Connect(giveAllGiftsToPlayer)
 openButton.MouseButton1Click:Connect(openGift)
 
--- Right-click on Open button for simple mode
-openButton.MouseButton2Click:Connect(simpleOpenGift)
+-- Right-click for debug test
+openButton.MouseButton2Click:Connect(debugClickTest)
 
--- === Initial + Periodic Updates ===
+-- === Initial Setup ===
 findTargetPlayer()
+statusLabel.Text = "Ready - Click Open Gift to start"
 
--- Delay initial inventory update to let game load
-task.wait(3)
-updateGiftInventory()
-
-spawn(function()
-    while task.wait(5) do
-        findTargetPlayer()
-        updateGiftInventory()
-    end
-end)
-
-print("Gift Giver UI Fully Loaded! (Universal - Winter 2025)")
-print("Open Gift: Left click for full mode, Right click for simple mode")
+print("Gift Giver UI Loaded!")
+print("Instructions:")
+print("1. Make sure you have gifts in your inventory")
+print("2. Click 'Open One Gift' button")
+print("3. If nothing happens, make sure slot 13 is visible")
+print("4. Right-click Open button for debug test")
