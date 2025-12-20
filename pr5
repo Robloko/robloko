@@ -1,25 +1,35 @@
 -- ==================================================================
--- COMPACT POTION RELEASER SCRIPT (MODIFIED FOR NEON PETS)
+-- COMPACT POTION RELEASER & BOX OPENER SCRIPT (MODIFIED FOR NEON PETS)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 
 -- Potion Releaser variables
 local PotionReleaserMode = false
 local potionReleaserCoroutine = nil
 local TARGET_PETS_FOR_POTIONS = {
-	"winter_2025_maine_coon",
-    "basic_egg_2022_zebra",
-    "winter_2025_turtle_doves",
+    "winter_2025_angus_cow",
+    "winter_2025_angus_calf",
     "winter_2025_xmas_tree_sasquatch"
 }
 
+-- Box Opener variables
+local BoxOpenerMode = false
+local boxOpenerCoroutine = nil
+local BOX_ID = "winter_2025_angus_box"
+
 -- Debug print function
-local function debugPrint(msg)
-    print("[PotionRelease] " .. msg)
+local function debugPrint(msg, prefix)
+    prefix = prefix or "PotionRelease"
+    print("[" .. prefix .. "] " .. msg)
 end
+
+-- ==================================================================
+-- POTION RELEASER FUNCTIONS
+-- ==================================================================
 
 -- Function to find pet age potion in inventory
 local function findPetAgePotion()
@@ -94,7 +104,7 @@ local function findPetsNeedingPotions()
     end)
 
     if not success then
-        debugPrint("Error finding pets: " .. tostring(errorMsg))
+        debugPrint("Error finding pets: " .. tostring(errorMsg), "PotionRelease")
     end
 
     -- Sort by age (youngest first)
@@ -137,10 +147,10 @@ local function usePotionOnPet(petUniqueID)
     -- Equip the target pet before aging
     local equipSuccess = equipPet(petUniqueID)
     if not equipSuccess then
-        debugPrint("Failed to equip pet: " .. petName)
+        debugPrint("Failed to equip pet: " .. petName, "PotionRelease")
         return false
     end
-    debugPrint("Equipped pet: " .. petName)
+    debugPrint("Equipped pet: " .. petName, "PotionRelease")
     task.wait(1)
 
     local potionID = findPetAgePotion()
@@ -203,7 +213,7 @@ local function usePotionOnPet(petUniqueID)
     task.wait(9)
     safelyUnequipFood(potionID)
 
-    debugPrint("Used potion on " .. petName .. " (Age: " .. currentPetAge .. ")")
+    debugPrint("Used potion on " .. petName .. " (Age: " .. currentPetAge .. ")", "PotionRelease")
     return true
 end
 
@@ -219,12 +229,12 @@ local function startPotionReleaser()
 
         local potionID = findPetAgePotion()
         if not potionID then
-            debugPrint("No potions available")
+            debugPrint("No potions available", "PotionRelease")
             task.wait(30)
             continue
         end
 
-        debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions")
+        debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions", "PotionRelease")
 
         local potionsUsed = 0
         for _, petData in ipairs(petsNeedingPotions) do
@@ -256,7 +266,7 @@ local function startPotionReleaser()
                 task.wait(3)
 
                 if not findPetAgePotion() then
-                    debugPrint("Out of potions")
+                    debugPrint("Out of potions", "PotionRelease")
                     break
                 end
             else
@@ -265,7 +275,7 @@ local function startPotionReleaser()
         end
 
         if potionsUsed > 0 then
-            debugPrint("Cycle complete: " .. potionsUsed .. " potions used")
+            debugPrint("Cycle complete: " .. potionsUsed .. " potions used", "PotionRelease")
         end
 
         task.wait(10)
@@ -276,25 +286,155 @@ end
 local function togglePotionReleaserMode()
     PotionReleaserMode = not PotionReleaserMode
     if PotionReleaserMode then
-        debugPrint("STARTED - Targeting pets until age 6 (including neon)")
+        debugPrint("STARTED - Targeting pets until age 6 (including neon)", "PotionRelease")
         potionReleaserCoroutine = coroutine.wrap(startPotionReleaser)()
     else
-        debugPrint("STOPPED")
+        debugPrint("STOPPED", "PotionRelease")
         potionReleaserCoroutine = nil
     end
 end
 
 -- ==================================================================
--- COMPACT UI CREATION
+-- BOX OPENER FUNCTIONS
 -- ==================================================================
-local function createCompactPotionReleaserUI()
+
+-- Simple click function for box opening
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
+
+-- Function to count boxes
+local function countBoxes()
+    local boxCount = 0
+    
+    local success, err = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local data = clientData.get_data()
+        if data[player.Name] and data[player.Name].inventory and data[player.Name].inventory.gifts then
+            for uid, gift in pairs(data[player.Name].inventory.gifts) do
+                if gift.id == BOX_ID then
+                    boxCount = boxCount + (gift.amount or 1)
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        debugPrint("Count error: " .. tostring(err), "BoxOpener")
+        return 0
+    end
+    
+    return boxCount
+end
+
+-- Function to find and get a box ID
+local function getBoxId()
+    local boxId = nil
+    
+    local success, err = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local data = clientData.get_data()
+        if data[player.Name] and data[player.Name].inventory and data[player.Name].inventory.gifts then
+            for uid, gift in pairs(data[player.Name].inventory.gifts) do
+                if gift.id == BOX_ID then
+                    boxId = uid
+                    break
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        debugPrint("Error: " .. tostring(err), "BoxOpener")
+        return nil
+    end
+    
+    return boxId
+end
+
+-- Function to open one box
+local function openOneBox()
+    local boxId = getBoxId()
+    
+    if not boxId then
+        return false
+    end
+    
+    -- Equip the box
+    local equipSuccess = pcall(function()
+        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(boxId)
+    end)
+    
+    if not equipSuccess then
+        return false
+    end
+    
+    task.wait(1)
+    
+    -- Click first spot
+    clickAt(520, 485)
+    
+    task.wait(1)
+    
+    -- Click second spot
+    clickAt(570, 333)
+    
+    task.wait(2)
+    
+    return true
+end
+
+-- Function to open all boxes
+local function openAllBoxes()
+    while BoxOpenerMode do
+        local boxCount = countBoxes()
+        
+        if boxCount == 0 then
+            BoxOpenerMode = false
+            debugPrint("All boxes opened!", "BoxOpener")
+            break
+        end
+        
+        debugPrint("Opening box (" .. boxCount .. " remaining)", "BoxOpener")
+        
+        local success = openOneBox()
+        
+        if not success then
+            task.wait(2)
+        else
+            task.wait(3) -- Wait between boxes
+        end
+    end
+end
+
+-- Function to toggle box opener mode
+local function toggleBoxOpenerMode()
+    BoxOpenerMode = not BoxOpenerMode
+    if BoxOpenerMode then
+        debugPrint("Starting to open all boxes", "BoxOpener")
+        boxOpenerCoroutine = coroutine.wrap(function()
+            openAllBoxes()
+        end)()
+    else
+        debugPrint("Stopped opening boxes", "BoxOpener")
+        boxOpenerCoroutine = nil
+    end
+end
+
+-- ==================================================================
+-- COMBINED UI CREATION
+-- ==================================================================
+local function createCombinedUI()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PotionReleaseUI"
+    screenGui.Name = "PotionReleaseBoxOpenerUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 150, 0, 60)
-    mainFrame.Position = UDim2.new(0, 10, 1, -70)
+    mainFrame.Size = UDim2.new(0, 180, 0, 100)
+    mainFrame.Position = UDim2.new(0, 10, 1, -110)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
@@ -337,61 +477,99 @@ local function createCompactPotionReleaserUI()
 
     -- Title
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Size = UDim2.new(1, 0, 0, 25)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Potion Releaser"
+    title.Text = "Potion & Box Auto"
     title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 12
+    title.TextSize = 14
     title.Parent = mainFrame
 
-    -- Status label
+    -- Combined status line (Boxes | Pets | Potions)
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, 0, 0, 15)
-    statusLabel.Position = UDim2.new(0, 5, 0, 20)
+    statusLabel.Size = UDim2.new(1, 0, 0, 20)
+    statusLabel.Position = UDim2.new(0, 5, 0, 25)
     statusLabel.BackgroundTransparency = 1
     statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    statusLabel.Text = "Ready"
+    statusLabel.Text = "Loading..."
     statusLabel.Font = Enum.Font.SourceSans
-    statusLabel.TextSize = 10
+    statusLabel.TextSize = 11
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = mainFrame
 
-    -- Toggle button
-    local toggleButton = Instance.new("TextButton")
-    toggleButton.Size = UDim2.new(0, 130, 0, 20)
-    toggleButton.Position = UDim2.new(0, 10, 0, 35)
-    toggleButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
-    toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleButton.Text = "PotionRelease [OFF]"
-    toggleButton.Font = Enum.Font.SourceSansBold
-    toggleButton.TextSize = 10
-    toggleButton.Parent = mainFrame
+    -- Potion Release button
+    local potionButton = Instance.new("TextButton")
+    potionButton.Size = UDim2.new(0.9, 0, 0, 25)
+    potionButton.Position = UDim2.new(0.05, 0, 0.5, 0)
+    potionButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+    potionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    potionButton.Text = "PotionRelease [OFF]"
+    potionButton.Font = Enum.Font.SourceSansBold
+    potionButton.TextSize = 12
+    potionButton.Parent = mainFrame
 
-    local buttonCorner = Instance.new("UICorner")
-    buttonCorner.CornerRadius = UDim.new(0, 4)
-    buttonCorner.Parent = toggleButton
+    local potionButtonCorner = Instance.new("UICorner")
+    potionButtonCorner.CornerRadius = UDim.new(0, 4)
+    potionButtonCorner.Parent = potionButton
 
-    -- Update status function
-    local function updateStatus()
+    -- Open All Boxes button
+    local openAllBoxesButton = Instance.new("TextButton")
+    openAllBoxesButton.Size = UDim2.new(0.9, 0, 0, 25)
+    openAllBoxesButton.Position = UDim2.new(0.05, 0, 0.75, 0)
+    openAllBoxesButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    openAllBoxesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    openAllBoxesButton.Text = "OPEN ALL [OFF]"
+    openAllBoxesButton.Font = Enum.Font.SourceSansBold
+    openAllBoxesButton.TextSize = 12
+    openAllBoxesButton.Parent = mainFrame
+
+    local openAllCorner = Instance.new("UICorner")
+    openAllCorner.CornerRadius = UDim.new(0, 4)
+    openAllCorner.Parent = openAllBoxesButton
+
+    -- Update combined status function
+    local function updateCombinedStatus()
+        local boxCount = countBoxes()
         local pets = findPetsNeedingPotions()
         local potions = findPetAgePotion() and "Yes" or "No"
-        statusLabel.Text = #pets .. " pets | Potions: " .. potions
+        
+        -- Format: Boxes: X | Pets: Y | Potions: Yes/No
+        statusLabel.Text = string.format("Boxes: %d | Pets: %d | Potions: %s", 
+            boxCount, #pets, potions)
     end
 
-    -- Connect button click
-    toggleButton.MouseButton1Click:Connect(function()
+    -- Connect potion button click
+    potionButton.MouseButton1Click:Connect(function()
         togglePotionReleaserMode()
-        toggleButton.Text = PotionReleaserMode and "PotionRelease [ON]" or "PotionRelease [OFF]"
-        toggleButton.BackgroundColor3 = PotionReleaserMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
-        updateStatus()
+        potionButton.Text = PotionReleaserMode and "PotionRelease [ON]" or "PotionRelease [OFF]"
+        potionButton.BackgroundColor3 = PotionReleaserMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
+        updateCombinedStatus()
+    end)
+
+    -- Connect open all boxes button
+    openAllBoxesButton.MouseButton1Click:Connect(function()
+        toggleBoxOpenerMode()
+        openAllBoxesButton.Text = BoxOpenerMode and "OPEN ALL [ON]" or "OPEN ALL [OFF]"
+        openAllBoxesButton.BackgroundColor3 = BoxOpenerMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 100, 0)
+        updateCombinedStatus()
+    end)
+
+    -- Right click to open a single box
+    openAllBoxesButton.MouseButton2Click:Connect(function()
+        debugPrint("Opening one box...", "BoxOpener")
+        if openOneBox() then
+            updateCombinedStatus()
+            debugPrint("Box opened successfully!", "BoxOpener")
+        else
+            debugPrint("Failed to open box", "BoxOpener")
+        end
     end)
 
     -- Auto-update status
     coroutine.wrap(function()
         while true do
-            updateStatus()
+            updateCombinedStatus()
             task.wait(5)
         end
     end)()
@@ -399,7 +577,8 @@ local function createCompactPotionReleaserUI()
     return {
         mainFrame = mainFrame,
         statusLabel = statusLabel,
-        toggleButton = toggleButton
+        potionButton = potionButton,
+        openAllBoxesButton = openAllBoxesButton
     }
 end
 
@@ -407,6 +586,10 @@ end
 -- INITIALIZATION
 -- ==================================================================
 -- Create the UI
-local ui = createCompactPotionReleaserUI()
-debugPrint("Compact Potion Releaser loaded successfully!")
-debugPrint("Target pets: basic_egg_2022_mouse, halloween_2025_aye_aye (until age 6, including neon)")
+local ui = createCombinedUI()
+debugPrint("Compact Potion Releaser & Box Opener loaded successfully!", "System")
+debugPrint("Target pets: winter_2025_maine_coon, basic_egg_2022_zebra, winter_2025_turtle_doves, winter_2025_xmas_tree_sasquatch (until age 6, including neon)", "System")
+debugPrint("Box target: winter_2025_angus_box", "System")
+debugPrint("Left-click buttons to toggle auto modes", "System")
+debugPrint("Right-click OPEN ALL button to open single box", "System")
+debugPrint("Status shows: Boxes count | Pets needing potions | Potion availability", "System")
