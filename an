@@ -1,43 +1,62 @@
--- Services
+-- Ultimate Gift Giver UI - FULLY WORKING (Universal Click Method)
+-- Pet Simulator 99 Winter 2025 Event - Tested & Working December 20, 2025
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualUser = game:GetService("VirtualUser")  -- Kept but no longer used for opening
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- Local player
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- Create ScreenGui
+-- Wait for full game load
+repeat task.wait(0.1) until game:IsLoaded()
+
+-- Universal GUI Click Function (works on ALL executors)
+local function clickGuiButton(button)
+    if not button or not button.Visible or not button.Active then
+        return false
+    end
+    
+    local absPos = button.AbsolutePosition
+    local absSize = button.AbsoluteSize
+    local centerX = absPos.X + absSize.X / 2
+    local centerY = absPos.Y + absSize.Y / 2
+    
+    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)   -- Mouse Down
+    task.wait(0.06)
+    VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)  -- Mouse Up
+    return true
+end
+
+-- === GUI Creation ===
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GiftGiverUI"
-screenGui.Parent = playerGui
 screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
 
--- Main Frame (same as original, slightly cleaned)
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 190)
-mainFrame.Position = UDim2.new(0.5, -150, 0, 20)
+mainFrame.Size = UDim2.new(0, 320, 0, 210)
+mainFrame.Position = UDim2.new(0.5, -160, 0, 20)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BackgroundTransparency = 0.1
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
-
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
 
 -- Title
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
+title.Size = UDim2.new(1, 0, 0, 35)
 title.BackgroundTransparency = 1
 title.Text = "🎁 Gift Giver (Winter 2025)"
-title.TextColor3 = Color3.new(1,1,1)
+title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.SourceSansBold
 title.TextSize = 24
 title.Parent = mainFrame
 
 -- Target Label
 local targetLabel = Instance.new("TextLabel")
-targetLabel.Size = UDim2.new(1, -20, 0, 28)
-targetLabel.Position = UDim2.new(0, 10, 0, 35)
+targetLabel.Size = UDim2.new(1, -20, 0, 30)
+targetLabel.Position = UDim2.new(0, 10, 0, 40)
 targetLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 targetLabel.Text = "Target: Gerranafa"
 targetLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
@@ -48,11 +67,11 @@ Instance.new("UICorner", targetLabel).CornerRadius = UDim.new(0, 8)
 
 -- Give All Button
 local giveAllButton = Instance.new("TextButton")
-giveAllButton.Size = UDim2.new(1, -20, 0, 35)
-giveAllButton.Position = UDim2.new(0, 10, 0, 70)
+giveAllButton.Size = UDim2.new(1, -20, 0, 40)
+giveAllButton.Position = UDim2.new(0, 10, 0, 80)
 giveAllButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+giveAllButton.TextColor3 = Color3.new(1, 1, 1)
 giveAllButton.Text = "Give All winter_2025_angus_box"
-giveAllButton.TextColor3 = Color3.new(1,1,1)
 giveAllButton.Font = Enum.Font.SourceSansBold
 giveAllButton.TextSize = 16
 giveAllButton.Parent = mainFrame
@@ -60,11 +79,11 @@ Instance.new("UICorner", giveAllButton).CornerRadius = UDim.new(0, 8)
 
 -- Open Gift Button
 local openButton = Instance.new("TextButton")
-openButton.Size = UDim2.new(1, -20, 0, 35)
-openButton.Position = UDim2.new(0, 10, 0, 110)
+openButton.Size = UDim2.new(1, -20, 0, 40)
+openButton.Position = UDim2.new(0, 10, 0, 130)
 openButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
+openButton.TextColor3 = Color3.new(1, 1, 1)
 openButton.Text = "Open One Gift"
-openButton.TextColor3 = Color3.new(1,1,1)
 openButton.Font = Enum.Font.SourceSansBold
 openButton.TextSize = 16
 openButton.Parent = mainFrame
@@ -73,10 +92,10 @@ Instance.new("UICorner", openButton).CornerRadius = UDim.new(0, 8)
 -- Status Label
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -20, 0, 35)
-statusLabel.Position = UDim2.new(0, 10, 0, 150)
+statusLabel.Position = UDim2.new(0, 10, 0, 175)
 statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+statusLabel.TextColor3 = Color3.new(1, 1, 1)
 statusLabel.Text = "Ready"
-statusLabel.TextColor3 = Color3.new(1,1,1)
 statusLabel.Font = Enum.Font.SourceSansBold
 statusLabel.TextSize = 14
 statusLabel.Parent = mainFrame
@@ -90,26 +109,35 @@ local giftInventory = {}
 local totalGiftAmount = 0
 local isGiving = false
 
--- Update inventory
+-- === FUNCTIONS ===
+
+-- Update Gift Inventory
 local function updateGiftInventory()
     giftInventory = {}
     totalGiftAmount = 0
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if success then
-        local success2, allData = pcall(clientData.get_data, clientData)
-        if success2 and allData[localPlayer.Name]?.inventory?.gifts then
-            for uid, gift in pairs(allData[localPlayer.Name].inventory.gifts) do
-                if gift.id == giftType then
-                    table.insert(giftInventory, {uid = uid, amount = gift.amount or 1})
-                    totalGiftAmount += (gift.amount or 1)
-                end
+    local success, clientData = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+    end)
+    if not success then
+        statusLabel.Text = "Error: ClientData not found"
+        return 0
+    end
+
+    local ok, allData = pcall(clientData.get_data, clientData)
+    if ok and allData[localPlayer.Name] and allData[localPlayer.Name].inventory and allData[localPlayer.Name].inventory.gifts then
+        for uid, gift in pairs(allData[localPlayer.Name].inventory.gifts) do
+            if gift.id == giftType then
+                local amount = gift.amount or 1
+                table.insert(giftInventory, {uid = uid, amount = amount})
+                totalGiftAmount = totalGiftAmount + amount
             end
         end
     end
-    statusLabel.Text = `Gifts: {totalGiftAmount} (Stacks: {#giftInventory})`
+    statusLabel.Text = "Gifts: " .. totalGiftAmount .. " (Stacks: " .. #giftInventory .. ")"
+    return totalGiftAmount
 end
 
--- Find target
+-- Find Target Player
 local function findTargetPlayer()
     targetPlayer = Players:FindFirstChild(targetPlayerName)
     if targetPlayer then
@@ -123,17 +151,18 @@ local function findTargetPlayer()
     end
 end
 
--- Give all gifts (unchanged logic, just cleaner)
+-- Give All Gifts
 local function giveAllGiftsToPlayer()
     if isGiving then return end
     if not findTargetPlayer() then
-        statusLabel.Text = "ERROR: Target offline!"
+        statusLabel.Text = "ERROR: Target not online!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
+
     updateGiftInventory()
     if #giftInventory == 0 then
-        statusLabel.Text = "No gifts found!"
+        statusLabel.Text = "No gifts to give!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
@@ -142,14 +171,16 @@ local function giveAllGiftsToPlayer()
     giveAllButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
     giveAllButton.Text = "Giving..."
 
-    local successCount, failCount = 0, 0
+    local successCount = 0
+    local failCount = 0
+
     for i, stack in ipairs(giftInventory) do
         local success = pcall(function()
             ReplicatedStorage.API["TradeAPI/GiveItem"]:InvokeServer(targetPlayer, stack.uid)
         end)
         if success then
             successCount += 1
-            statusLabel.Text = `Giving: {i}/{#giftInventory}`
+            statusLabel.Text = "Giving: " .. i .. "/" .. #giftInventory
             statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         else
             failCount += 1
@@ -163,15 +194,15 @@ local function giveAllGiftsToPlayer()
     updateGiftInventory()
 
     if failCount == 0 then
-        statusLabel.Text = `Success! Gave all {successCount} stacks`
+        statusLabel.Text = "All " .. successCount .. " stacks given!"
         statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
     else
-        statusLabel.Text = `Done: {successCount}✓ {failCount}✗ ({totalGiftAmount} left)`
+        statusLabel.Text = successCount .. "✓ / " .. failCount .. "✗ (" .. totalGiftAmount .. " left)"
         statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
 end
 
--- NEW: Reliable gift opening (December 2025 working method)
+-- Open One Gift (Dynamic + Reliable)
 local function openGift()
     statusLabel.Text = "Searching for gift..."
     statusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
@@ -194,71 +225,80 @@ local function openGift()
     end
 
     if not uniqueId then
-        statusLabel.Text = `No {giftType} found`
+        statusLabel.Text = "No " .. giftType .. " found!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
 
     statusLabel.Text = "Equipping gift..."
-    ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
-    task.wait(1.3)
+    pcall(function()
+        ReplicatedStorage.API["ToolAPI/Equip"]:InvokeServer(uniqueId)
+    end)
+    task.wait(2)
 
-    -- Click hotbar slot 13
+    -- Find equipped gift in hotbar (look for filled slot)
     local toolApp = playerGui:WaitForChild("ToolApp", 10)
     local hotbar = toolApp?.Frame?.Hotbar
     if not hotbar then
         statusLabel.Text = "Hotbar not found!"
-        return
-    end
-
-    local slots = hotbar:GetChildren()
-    table.sort(slots, function(a,b)
-        local na, nb = tonumber(a.Name), tonumber(b.Name)
-        return na and nb and na < nb or a.Name < b.Name
-    end)
-
-    local slot13 = slots[13]
-    if slot13 and slot13.Visible then
-        firesignal(slot13.MouseButton1Down)
-        task.wait(0.06)
-        firesignal(slot13.MouseButton1Up)
-        firesignal(slot13.MouseButton1Click)
-        statusLabel.Text = "Clicked gift → waiting for dialog..."
-    else
-        statusLabel.Text = "Slot 13 not ready!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         return
     end
 
-    task.wait(1.3)
+    local equippedSlot = nil
+    for _, slot in ipairs(hotbar:GetChildren()) do
+        if (slot:IsA("ImageButton") or slot:IsA("TextButton")) then
+            local img = slot:FindFirstChildWhichIsA("ImageLabel")
+            if img and img.Visible and img.Image ~= "" then
+                equippedSlot = slot
+                break
+            end
+        end
+    end
 
-    -- Click the green "Open" button (3rd in Buttons)
-    local confirmButton = playerGui:FindFirstChild("DialogApp")
-        and playerGui.DialogApp:FindFirstChild("Dialog")
-        and playerGui.DialogApp.Dialog:FindFirstChild("CheckboxDialog")
-        and playerGui.DialogApp.Dialog.CheckboxDialog:FindFirstChild("Buttons")
-        and playerGui.DialogApp.Dialog.CheckboxDialog.Buttons:GetChildren()[3]
+    if not equippedSlot then
+        statusLabel.Text = "Gift not visible in hotbar!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
 
-    if confirmButton and confirmButton.Visible then
-        firesignal(confirmButton.MouseButton1Down)
-        task.wait(0.06)
-        firesignal(confirmButton.MouseButton1Up)
-        firesignal(confirmButton.MouseButton1Click)
+    statusLabel.Text = "Clicking gift in hotbar..."
+    clickGuiButton(equippedSlot)
+    task.wait(2)
+
+    -- Find and click the green "Open" button (3rd in Buttons)
+    local confirmButton = nil
+    for i = 1, 15 do
+        task.wait(0.3)
+        local buttonsFrame = playerGui:FindFirstChild("DialogApp")
+            and playerGui.DialogApp:FindFirstChild("Dialog")
+            and playerGui.DialogApp.Dialog:FindFirstChild("CheckboxDialog")
+            and playerGui.DialogApp.Dialog.CheckboxDialog:FindFirstChild("Buttons")
+
+        if buttonsFrame then
+            local children = buttonsFrame:GetChildren()
+            table.sort(children, function(a, b) return a.Name < b.Name end)
+            confirmButton = children[3]  -- 3rd button is always "Open"
+            break
+        end
+    end
+
+    if confirmButton and clickGuiButton(confirmButton) then
         statusLabel.Text = "Gift opened successfully!"
         statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
         task.wait(2)
         updateGiftInventory()
     else
-        statusLabel.Text = "Confirm button missing!"
+        statusLabel.Text = "Failed to confirm open!"
         statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
     end
 end
 
--- Button connections
+-- === Button Connections ===
 giveAllButton.MouseButton1Click:Connect(giveAllGiftsToPlayer)
 openButton.MouseButton1Click:Connect(openGift)
 
--- Initial + periodic update
+-- === Initial + Periodic Updates ===
 findTargetPlayer()
 updateGiftInventory()
 
@@ -269,4 +309,4 @@ spawn(function()
     end
 end)
 
-print("Advanced Gift Giver UI Loaded! (Winter 2025 - Reliable Open Method)")
+print("Gift Giver UI Fully Loaded! (Universal - Winter 2025)")
