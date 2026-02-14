@@ -17,7 +17,6 @@ local DEBUG_MODE = true
 local PotionReleaserMode = false
 local potionReleaserCoroutine = nil
 local TARGET_PETS_FOR_POTIONS = {
-    "lny_2026_fire_foal",
     "valentines_2026_cherub_chipmunk",
     "summerfest_2024_cow_calf",
     "inspector_shepherd_2026_magpie",
@@ -46,7 +45,6 @@ local TARGET_PLAYER_NAME = "Ximatiann"
 local GiveawayMode = false
 local giveawayCoroutine = nil
 local TARGET_GIVEAWAY_PETS = {
-    "lny_2026_fire_foal",
     "valentines_2026_cherub_chipmunk",
     "summerfest_2024_cow_calf",
     "inspector_shepherd_2026_magpie",
@@ -73,7 +71,10 @@ local TARGET_GIVEAWAY_PETS = {
 -- Lunar Apple Config
 local LunarAppleMode = false
 local lunarAppleCoroutine = nil
-local LUNAR_APPLE_ID = "lny_2026_super_fire_horse_apple"
+local LUNAR_APPLE_IDS = {
+    "lny_2026_fire_horse_apple",
+    "lny_2026_super_fire_horse_apple"
+}
 
 -- ==================================================================
 -- UTILITY FUNCTIONS
@@ -777,34 +778,38 @@ end
 -- LUNAR APPLE FUNCTIONS
 -- ==================================================================
 
--- Function to buy lunar apple
+-- Function to buy lunar apple (tries both types)
 local function buyLunarApple()
-    local args = {
-        "food",
-        LUNAR_APPLE_ID,
-        { buy_count = 1 }
-    }
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
-    end)
-    if success then
-        debugPrint("Bought " .. LUNAR_APPLE_ID, "LunarApple")
-        return true
-    else
-        debugPrint("Failed to buy " .. LUNAR_APPLE_ID .. ": " .. tostring(result), "LunarApple")
-        return false
+    for _, appleId in ipairs(LUNAR_APPLE_IDS) do
+        local args = {
+            "food",
+            appleId,
+            { buy_count = 1 }
+        }
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+        end)
+        if success then
+            debugPrint("Bought " .. appleId, "LunarApple")
+            return true
+        else
+            debugPrint("Failed to buy " .. appleId .. ": " .. tostring(result), "LunarApple")
+        end
     end
+    return false
 end
 
--- Function to find lunar apple in inventory
+-- Function to find lunar apple in inventory (checks both types)
 local function findLunarApple()
     local success, result = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
         if playerData and playerData.inventory and playerData.inventory.food then
             for uniqueId, itemData in pairs(playerData.inventory.food) do
-                if itemData.id == LUNAR_APPLE_ID then
-                    return uniqueId
+                for _, appleId in ipairs(LUNAR_APPLE_IDS) do
+                    if itemData.id == appleId then
+                        return uniqueId, appleId
+                    end
                 end
             end
         end
@@ -813,8 +818,8 @@ local function findLunarApple()
 end
 
 -- Function to open lunar apple
-local function openLunarApple(appleUniqueId)
-    if not appleUniqueId then
+local function openLunarApple(appleUniqueId, appleId)
+    if not appleUniqueId or not appleId then
         return false
     end
 
@@ -842,7 +847,7 @@ local function openLunarApple(appleUniqueId)
     task.wait(1)
 
     -- Exchange for reward
-    local exchangeArgs = { LUNAR_APPLE_ID, appleUniqueId }
+    local exchangeArgs = { appleId, appleUniqueId }
     local exchangeSuccess = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("LootBoxAPI/ExchangeItemForReward"):InvokeServer(unpack(exchangeArgs))
     end)
@@ -850,15 +855,16 @@ local function openLunarApple(appleUniqueId)
         return false
     end
 
-    debugPrint("Opened " .. LUNAR_APPLE_ID, "LunarApple")
+    debugPrint("Opened " .. appleId, "LunarApple")
     return true
 end
 
 -- Main lunar apple loop
 local function startLunarApple()
     while LunarAppleMode do
-        -- Try to buy
-        if not findLunarApple() then
+        -- Try to buy if no apple is found
+        local appleId, appleUniqueId = findLunarApple()
+        if not appleUniqueId then
             debugPrint("No lunar apple found, attempting to buy...", "LunarApple")
             if not buyLunarApple() then
                 task.wait(10)
@@ -867,10 +873,10 @@ local function startLunarApple()
         end
 
         -- Find and open
-        local appleId = findLunarApple()
-        if appleId then
-            debugPrint("Found lunar apple, opening...", "LunarApple")
-            if openLunarApple(appleId) then
+        appleId, appleUniqueId = findLunarApple()
+        if appleUniqueId then
+            debugPrint("Found " .. appleId .. ", opening...", "LunarApple")
+            if openLunarApple(appleUniqueId, appleId) then
                 task.wait(5)
             else
                 task.wait(2)
@@ -902,7 +908,7 @@ local function createCombinedUI()
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 220, 0, 200)  -- Increased height for new button
+    mainFrame.Size = UDim2.new(0, 220, 0, 200)
     mainFrame.Position = UDim2.new(0, 10, 1, -210)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
@@ -1065,10 +1071,11 @@ local function createCombinedUI()
         for _, petList in pairs(petInventory) do
             totalPets = totalPets + #petList
         end
-        local lunarApple = findLunarApple() and "Yes" or "No"
+        local _, lunarApple = findLunarApple()
+        local appleStatus = lunarApple and "Yes" or "No"
 
         statusLabel.Text = string.format("Boxes: %d | Pets: %d | Eggs: %d | Pot: %s | Apple: %s | All: %d",
-            boxCount, #pets, eggs, potions, lunarApple, totalPets)
+            boxCount, #pets, eggs, potions, appleStatus, totalPets)
     end
 
     -- Connect potion button click
@@ -1193,7 +1200,7 @@ debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
 debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to " .. TARGET_PLAYER_NAME, "System")
 debugPrint("4. Giveaway - Auto gives trash pets to " .. TARGET_PLAYER_NAME, "System")
-debugPrint("5. Lunar Apple - Auto buys and opens lny_2026_fire_horse_apple", "System")
+debugPrint("5. Lunar Apple - Auto buys and opens lny_2026_fire_horse_apple or lny_2026_super_fire_horse_apple", "System")
 debugPrint("Controls:", "System")
 debugPrint("- Left-click buttons to toggle auto modes", "System")
 debugPrint("- Right-click OPEN ALL for single box open", "System")
