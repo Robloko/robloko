@@ -1,3 +1,4 @@
+wait(10)
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -71,9 +72,10 @@ local currentSelectedPetKey = nil
 local lastValidPetID = nil
 -- Priority eggs for Auto PetPen
 local priorityEggs = {
-    "basic_egg_2022_mouse",
-    "basic_egg_2022_ant",
-    "cracked_egg"
+    "lny_2026_fire_foal",
+    "lny_2026_fire_mare",
+    "lny_2026_fire_foal",
+    "valentines_2026_cherub_chipmunk"
 }
 local prioritySet = {}
 for _, v in ipairs(priorityEggs) do prioritySet[v] = true end
@@ -1774,10 +1776,12 @@ local function resolveMysteryAilment(ailmentId)
     return true
 end
 -- =============================================================================
--- SMART PET SELECTION SYSTEM - AUTO SELECT STARTER_EGG OR 6YO DOG/CAT
+-- UPDATED SMART PET SELECTION SYSTEM
+-- NEW PRIORITIES: starter_egg (100+) > dog age6 (96) > cat age6 (86) > dog any age (80 + age*2) > cat any age (70 + age*2)
+-- Includes ANY age dog/cat (non-practice, non-neon), prioritizes higher age within type
 -- =============================================================================
 local function findBestStarterPet()
-    debugPrint("Searching for best starter pet (starter_egg or 6yo dog/cat)...")
+    debugPrint("Searching for best starter pet (starter_egg > dog/cat any age, age-prioritized)...")
     local starterPets = {}
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -1787,24 +1791,29 @@ local function findBestStarterPet()
                 if petData and petData.id and petData.properties then
                     local petName = string.lower(petData.id)
                     local age = petData.properties.age or 0
-                  
-                    -- Only consider starter_egg (any age) or 6yo dogs/cats
+                    local isNeon = petData.properties.neon or false
+                    
+                    -- Skip neons (valuable, don't farm them) and practice_dog
+                    if isNeon or string.find(petName, "practice_dog") then
+                        continue
+                    end
+                    
                     local priority = 0
                     if petName == "starter_egg" then
-                        priority = 100 -- Highest for starter_egg
-                    elseif string.find(petName, "dog") and not string.find(petName, "practice_dog") and age == 6 then
-                        priority = 90 -- Next for 6yo dog
-                    elseif string.find(petName, "cat") and age == 6 then
-                        priority = 80 -- Lowest for 6yo cat
+                        priority = 100 + age  -- Highest: 100-106
+                    elseif string.find(petName, "dog") then
+                        priority = 80 + age * 2  -- dog6: 92, dog5:90, ..., dog0:80
+                    elseif string.find(petName, "cat") then
+                        priority = 70 + age * 2  -- cat6: 82, cat5:80, ..., cat0:70
                     end
-                  
+                    
                     -- Only add if priority > 0 (eligible pet)
                     if priority > 0 then
                         table.insert(starterPets, {
                             unique_id = uniqueId,
                             name = petData.id,
                             age = age,
-                            neon = petData.properties.neon or false,
+                            neon = isNeon,
                             priority = priority
                         })
                     end
@@ -1819,11 +1828,11 @@ local function findBestStarterPet()
     end
   
     if #starterPets == 0 then
-        debugPrint("No eligible pets found (starter_egg or 6yo dog/cat)!")
+        debugPrint("No eligible pets found (starter_egg or dog/cat)!")
         return nil
     end
   
-    -- Sort by priority (highest first)
+    -- Sort by priority DESC (highest first)
     table.sort(starterPets, function(a, b)
         return a.priority > b.priority
     end)
@@ -1831,7 +1840,7 @@ local function findBestStarterPet()
     -- Log all available pets for debugging
     debugPrint("Available eligible pets (sorted by priority):")
     for i, pet in ipairs(starterPets) do
-        local neon = pet.neon and " (Neon)" or ""
+        local neon = pet.neon and " (Neon - SKIPPED)" or ""
         debugPrint(string.format(" %d. %s (Age: %d%s, Priority: %d)", i, pet.name, pet.age, neon, pet.priority))
     end
   
@@ -2020,7 +2029,7 @@ local function addPriorityPets(snapshot)
     while added < slotsOpen and AutoPetPenMode do
         debugPrint("Buying cracked_egg to fill slot...")
         local bought = pcall(function()
-            ReplicatedStorage.API["ShopAPI/BuyItem"]:InvokeServer("pets", "cracked_egg", {buy_count = 1})
+            ReplicatedStorage.API["ShopAPI/BuyItem"]:InvokeServer("pets", "", {buy_count = 1})
         end)
         if bought then
             task.wait(3)
@@ -2713,7 +2722,7 @@ local function autoStartEverything()
     task.wait(3)
   
     -- Step 1: Find and select the best starter pet (only starter_egg or 6yo dog/cat)
-    debugPrint("Step 1: Finding best starter pet (starter_egg or 6yo dog/cat)...")
+    debugPrint("Step 1: Finding best starter pet (starter_egg > dog/cat any age, age-prioritized)...")
     local bestPetID = findBestStarterPet()
     if bestPetID then
         PetID = bestPetID
@@ -2727,7 +2736,7 @@ local function autoStartEverything()
             debugPrint("Warning: Could not auto-equip pet, but continuing...")
         end
     else
-        debugPrint("Warning: No suitable pets found for auto-start (starter_egg or 6yo dog/cat)")
+        debugPrint("Warning: No suitable pets found for auto-start (starter_egg or dog/cat)")
     end
   
     -- Step 2: Start Auto PetPen
@@ -2847,7 +2856,7 @@ task.wait(5) -- Wait a bit longer for everything to initialize
 autoStartEverything()
 debugPrint("ENHANCED PetFarm System Loaded Successfully!")
 debugPrint("Features: AUTO-START ENABLED - PetFarm and PetPen start automatically!")
-debugPrint("Smart Pet Selection: Automatically selects starter_egg > 6yo dog > 6yo cat")
+debugPrint("Smart Pet Selection: Automatically selects starter_egg > dog any age > cat any age (age-prioritized)")
 debugPrint("Ailment Monitoring + Throw Toys + Walk Handler + Ride Handler + Sick Handler + Mystery Handler + Pet Me Handler + Auto Pet Re-equip")
 debugPrint("NEW: Auto Trading System - Send trades, add all pets, auto accept")
 debugPrint("NEW: Auto Potion System - Uses pet_age_potion only on selected pet")
