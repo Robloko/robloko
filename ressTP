@@ -103,14 +103,14 @@ local recyclerFolderName = nil -- Store the found folder name (like "f-39")
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
-    MIN_MEGA_NEONS = 1, -- Condition 3: 1 mega neon pet (any age)
+    MIN_MEGA_NEONS = 1, -- NEW: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60 -- 60 seconds between condition checks
 }
@@ -125,11 +125,16 @@ local ALLOWED_PET_NAMES = {
     "basic_egg_2022_parakeet",
     "basic_egg_2022_swordfish",
     "basic_egg_2022_robot",
-    "basic_egg_2022_corgi"
+    "basic_egg_2022_corgi",
+    -- Add more pet names here as needed
+    "basic_egg_2022_cat",
+    "basic_egg_2022_dog",
+    "basic_egg_2022_parrot",
+    "basic_egg_2022_fish"
 }
 
 --------------------------------------------------------------
--- LOGGING FUNCTION
+-- IMPROVED LOGGING FUNCTION
 --------------------------------------------------------------
 local function log(msg) 
     local timestamp = os.date("%H:%M:%S")
@@ -137,7 +142,7 @@ local function log(msg)
 end
 
 --------------------------------------------------------------
--- DYNAMIC PET RECYCLER FOLDER FINDER (RETURNS FOLDER NAME LIKE "f-39")
+-- DYNAMIC PET RECYCLER FOLDER FINDER
 --------------------------------------------------------------
 local function findRecyclerFolderName()
     local Workspace = game:GetService("Workspace")
@@ -148,7 +153,7 @@ local function findRecyclerFolderName()
         log("🔍 Searching in MainMap!EggTeaser2026 for PetRecycler folder...")
         
         -- Search recursively for PetRecycler and get its parent folder
-        local function searchForRecycler(folder)
+        local function searchInEggTeaser(folder)
             for _, child in ipairs(folder:GetChildren()) do
                 if child.Name == "PetRecycler" then
                     -- Found the recycler, now get its parent folder name
@@ -167,20 +172,17 @@ local function findRecyclerFolderName()
                                 return current.Name
                             end
                         end
-                        -- If still no f- folder, return the path for debugging
-                        log("⚠️ PetRecycler parent is not an f- folder: " .. tostring(parent and parent.Name))
-                        return nil
                     end
                 end
                 if child:IsA("Folder") or child:IsA("Model") then
-                    local result = searchForRecycler(child)
+                    local result = searchInEggTeaser(child)
                     if result then return result end
                 end
             end
             return nil
         end
         
-        local folderName = searchForRecycler(eggTeaser)
+        local folderName = searchInEggTeaser(eggTeaser)
         if folderName then
             return folderName
         end
@@ -344,7 +346,6 @@ local function shouldReleaseNow()
     log(" Allowed Pets: " .. totalAllowedPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
     log(" Neons (6+): " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS)
     log(" Mega Neons: " .. totalMegaNeons .. "/" .. RELEASE_CONDITIONS.MIN_MEGA_NEONS)
-    
     -- PRIORITY-BASED RELEASE CONDITIONS
     if totalMegaNeons >= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
         log("✅ REASON: Enough mega neons (" .. totalMegaNeons .. ")")
@@ -363,7 +364,7 @@ local function shouldReleaseNow()
 end
 
 --------------------------------------------------------------
--- PET RELEASE LOGIC (USING FOUND FOLDER NAME)
+-- ENHANCED PET RELEASE LOGIC (USING FOUND FOLDER)
 --------------------------------------------------------------
 local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
@@ -397,7 +398,7 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
 
     log("🎯 Release Strategy: " ..
         usedMegaNeons .. " mega neons + " ..
-        usedNeons .. " neons + " ..
+        usedNeons .. " neons (any type, age 6+) + " ..
         (#petIds - usedNeons - usedMegaNeons) ..
         " allowed pets = " ..
         #petIds .. " total pets")
@@ -407,113 +408,173 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         return false
     end
 
-    -- Create uniques table for API (exactly as in your example)
+    -- Create uniques table for API
     local uniques = {}
     for _, petId in ipairs(petIds) do
         uniques[petId] = true
     end
 
-    -- Check if we have the folder name
+    -- Check if we have the folder name, if not try to find it
     if not recyclerFolderName then
         recyclerFolderName = findRecyclerFolderName()
     end
 
-    if not recyclerFolderName then
-        log("❌ Could not find PetRecycler folder name!")
-        return false
-    end
+    -- If we found the folder, use it directly
+    if recyclerFolderName then
+        log("🎯 Using found recycler folder: " .. recyclerFolderName)
+        local releaseArgs = {
+            recyclerFolderName,
+            "UseBlock",
+            {
+                action = "use",
+                uniques = uniques
+            },
+            player.Character
+        }
 
-    -- Prepare args exactly as in your example
-    local args = {
-        recyclerFolderName,  -- This will be "f-39" or similar
-        "UseBlock",
-        {
-            uniques = uniques
-        },
-        player.Character
-    }
-
-    log("🎯 Using recycler folder: " .. recyclerFolderName)
-    log("📦 Releasing " .. #petIds .. " pets")
-
-    -- Invoke the API
-    local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
-    end)
-
-    if success then
-        log("✅ Successfully released pets in folder: " .. recyclerFolderName)
-        
-        -- Collect tickets
-        task.wait(1)
-        local ticketSuccess, ticketErr = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
+        local success, err = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
         end)
-        if ticketSuccess then
-            log("🎫 Tickets collected successfully!")
-            getTickets()
+
+        if success then
+            log("✅ Released pets in folder: " .. recyclerFolderName)
+            -- Collect tickets after successful release
+            local ticketSuccess, ticketErr = pcall(function()
+                return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
+            end)
+            if ticketSuccess then
+                log("🎫 Tickets collected successfully!")
+                getTickets()
+            else
+                log("⚠️ Failed to collect tickets: " .. tostring(ticketErr))
+            end
+            return true
+        else
+            log("❌ Failed to release in found folder: " .. tostring(err))
+            log("🔄 Falling back to slot scanning...")
         end
-        return true
     else
-        log("❌ Failed to release pets: " .. tostring(err))
-        return false
+        log("⚠️ Could not find PetRecycler folder, falling back to slot scanning...")
     end
+
+    -- FALLBACK: Release pets in dynamic slots (f-0 to f-99)
+    log("🔍 Scanning all possible slots (f-0 to f-99)...")
+    for slot = 0, 99 do
+        local slotName = "f-" .. slot
+        local releaseArgs = {
+            slotName,
+            "UseBlock",
+            {
+                action = "use",
+                uniques = uniques
+            },
+            player.Character
+        }
+
+        local success, err = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
+        end)
+
+        if success then
+            log("✅ Released pets in slot: " .. slotName)
+            -- Save this working slot for future use
+            recyclerFolderName = slotName
+            log("💾 Saved working slot: " .. recyclerFolderName)
+            
+            -- Collect tickets after successful release
+            local ticketSuccess, ticketErr = pcall(function()
+                return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
+            end)
+            if ticketSuccess then
+                log("🎫 Tickets collected successfully!")
+                getTickets()
+            else
+                log("⚠️ Failed to collect tickets: " .. tostring(ticketErr))
+            end
+            return true
+        else
+            log("❌ Failed to release in slot " .. slotName .. ": " .. tostring(err))
+        end
+    end
+
+    return false
 end
 
 --------------------------------------------------------------
--- CLAIM REWARD FUNCTION (USING FOUND FOLDER NAME)
+-- ENHANCED CLAIM REWARD FUNCTION (USING FOUND FOLDER)
 --------------------------------------------------------------
 local function claimReward()
     log("🔹 Claiming Reward...")
     
     -- Check if we have the folder name
-    if not recyclerFolderName then
-        recyclerFolderName = findRecyclerFolderName()
-    end
+    if recyclerFolderName then
+        log("🎯 Using saved recycler folder: " .. recyclerFolderName)
+        local claimArgs = {
+            recyclerFolderName,
+            "UseBlock",
+            {
+                action = "claim"
+            },
+            player.Character
+        }
 
-    if not recyclerFolderName then
-        log("❌ Could not find PetRecycler folder name for claiming!")
-        return false
-    end
+        local success, err = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
+        end)
 
-    -- Prepare args for claiming (similar to release but without uniques)
-    local args = {
-        recyclerFolderName,
-        "UseBlock",
-        {
-            action = "claim"  -- Add claim action
-        },
-        player.Character
-    }
-
-    log("🎯 Using recycler folder for claim: " .. recyclerFolderName)
-
-    -- Invoke the API
-    local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
-    end)
-
-    if success then
-        log("🎉 Successfully claimed reward in folder: " .. recyclerFolderName)
-        return true
+        if success then
+            log("🎉 Successfully claimed reward in folder: " .. recyclerFolderName)
+            return true
+        else
+            log("❌ Failed to claim in saved folder: " .. tostring(err))
+            log("🔄 Falling back to slot scanning...")
+        end
     else
-        log("❌ Failed to claim reward: " .. tostring(err))
-        return false
+        log("⚠️ No saved folder, scanning all slots...")
     end
+
+    -- FALLBACK: Scan through slots
+    for slot = 0, 99 do
+        local slotName = "f-" .. slot
+        local claimArgs = {
+            slotName,
+            "UseBlock",
+            {
+                action = "claim"
+            },
+            player.Character
+        }
+
+        local success, err = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
+        end)
+
+        if success then
+            log("🎉 Successfully claimed reward in slot: " .. slotName)
+            -- Save this working slot
+            recyclerFolderName = slotName
+            log("💾 Saved working slot: " .. recyclerFolderName)
+            return true
+        end
+    end
+
+    log("❌ Failed to claim reward in any slot")
+    return false
 end
 
 --------------------------------------------------------------
--- VERIFY RECYCLER FOLDER ACCESS
+-- VERIFY RECYCLER FOLDER
 --------------------------------------------------------------
 local function verifyRecyclerFolder()
+    log("🔍 Looking for PetRecycler folder...")
     recyclerFolderName = findRecyclerFolderName()
     if recyclerFolderName then
-        log("✅ PetRecycler folder found: " .. recyclerFolderName)
+        log("✅ Found PetRecycler folder: " .. recyclerFolderName)
         log("✅ Will use this folder for all interactions")
         return true
     else
-        log("⚠️ Could not find PetRecycler folder!")
-        log("⚠️ Make sure you're near the recycler and it's loaded")
+        log("⚠️ Could not find PetRecycler folder")
+        log("⚠️ Will use slot scanning as fallback")
         return false
     end
 end
@@ -565,7 +626,7 @@ local function farmCycle()
 
     if not running then return end
 
-    -- STEP 4: Claim Reward
+    -- Claim Reward
     local claimSuccess = claimReward()
     if claimSuccess then
         log("✅ Reward claimed successfully")
@@ -602,7 +663,7 @@ local function toggleFarm()
         status.TextColor3 = Color3.fromRGB(0, 255, 0)
         log("Strict Filter Farmer started! Waiting for conditions...")
         
-        -- Find and verify recycler folder on start
+        -- Verify recycler folder on start
         verifyRecyclerFolder()
         
         farmThread = task.spawn(function()
@@ -648,5 +709,5 @@ verifyRecyclerFolder()
 
 log("✅ PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
 log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
-log("✅ USING FOUND FOLDER: Will use folder name like " .. (recyclerFolderName or "f-XX") .. " for interactions")
+log("✅ FOLDER FINDING: Will detect and use correct PetRecycler folder")
 log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
