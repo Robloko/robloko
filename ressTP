@@ -1,17 +1,121 @@
--- ╔════════════════════════════════════════════╗
--- ║         Adopt Me Pet Recycler Script       ║
--- ║     (LocalScript - for your own pets)      ║
--- ╚════════════════════════════════════════════╝
-
-local Players          = game:GetService("Players")
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER (NO TELEPORT, TICKETS UI)
+-- Press ♻️ or R key → START / STOP
+-- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age)
+repeat task.wait() until game:IsLoaded()
+repeat task.wait() until game.Players.LocalPlayer
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace        = game:GetService("Workspace")
-
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
-local API    = ReplicatedStorage:WaitForChild("API", 8)
+local playerGui = player:WaitForChild("PlayerGui")
 
--- List of pet IDs you want to release (common 2022 basic egg pets)
-local TARGET_PET_IDS = {
+--------------------------------------------------------------
+-- SAFE SERVICE ACQUISITION
+--------------------------------------------------------------
+local function safeWaitForChild(parent, childName, timeout)
+    timeout = timeout or 10
+    local startTime = tick()
+    while tick() - startTime < timeout do
+        local child = parent:FindFirstChild(childName)
+        if child then return child end
+        task.wait(0.5)
+    end
+    return nil
+end
+
+local API = safeWaitForChild(ReplicatedStorage, "API")
+if not API then warn("API not found!") return end
+
+local ClientDataModule
+local core = safeWaitForChild(ReplicatedStorage, "ClientModules")
+if core then
+    local clientCore = safeWaitForChild(core, "Core")
+    if clientCore then
+        ClientDataModule = safeWaitForChild(clientCore, "ClientData")
+    end
+end
+if not ClientDataModule then warn("ClientDataModule not found!") return end
+
+local clientData
+local success, err = pcall(function() clientData = require(ClientDataModule) end)
+if not success then warn("ClientData error: " .. tostring(err)) return end
+
+--------------------------------------------------------------
+-- CENTRAL UI BUTTON + TICKETS DISPLAY
+--------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000,9999))
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Main Button
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 90, 0, 90)
+btn.Position = UDim2.new(0.5, -45, 0.5, -45)
+btn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+btn.Text = "♻️"
+btn.TextColor3 = Color3.fromRGB(0, 255, 0)
+btn.TextScaled = true
+btn.Font = Enum.Font.GothamBold
+btn.Parent = screenGui
+
+-- Button Styling
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(1, 0)
+corner.Parent = btn
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 4
+stroke.Color = Color3.fromRGB(0, 255, 0)
+stroke.Transparency = 0.3
+stroke.Parent = btn
+
+-- Status Label
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(0, 200, 0, 40)
+status.Position = UDim2.new(0.5, -100, 0.5, 50)
+status.BackgroundTransparency = 1
+status.Text = "OFF"
+status.TextColor3 = Color3.fromRGB(255, 0, 0)
+status.TextScaled = true
+status.Font = Enum.Font.GothamBold
+status.Parent = screenGui
+
+-- Tickets Display
+local ticketsLabel = Instance.new("TextLabel")
+ticketsLabel.Size = UDim2.new(0, 200, 0, 40)
+ticketsLabel.Position = UDim2.new(0.5, -100, 0.5, 90)
+ticketsLabel.BackgroundTransparency = 1
+ticketsLabel.Text = "Tickets: 0"
+ticketsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ticketsLabel.TextScaled = true
+ticketsLabel.Font = Enum.Font.GothamBold
+ticketsLabel.Parent = screenGui
+
+--------------------------------------------------------------
+-- VARIABLES & CONFIG
+--------------------------------------------------------------
+local running = false
+local farmThread = nil
+
+-- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
+local RELEASE_CONDITIONS = {
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
+    MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
+    MIN_MEGA_NEONS = 1, -- NEW: 1 mega neon pet (any age)
+}
+
+-- COOLDOWN TIMERS
+local COOLDOWNS = {
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
+    AFTER_CLAIM = 30, -- 30 seconds after claim
+    RESOURCE_CHECK = 60 -- 60 seconds between condition checks
+}
+
+-- STRICTLY ALLOWED PET TYPES
+local ALLOWED_PET_NAMES = {
     "basic_egg_2022_camel",
     "basic_egg_2022_poodle",
     "basic_egg_2022_donkey",
@@ -20,141 +124,417 @@ local TARGET_PET_IDS = {
     "basic_egg_2022_parakeet",
     "basic_egg_2022_swordfish",
     "basic_egg_2022_robot",
-    "basic_egg_2022_corgi",
+    "basic_egg_2022_corgi"
 }
 
--- ───────────────────────────────────────────────
---  1. Get player data (inventory)
--- ───────────────────────────────────────────────
-local function getPlayerInventory()
-    local success, result = pcall(function()
-        local ClientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return ClientData.get_data()[player.Name]
-    end)
-    
-    if not success or not result then
-        warn("Failed to load ClientData")
-        return nil
-    end
-    
-    return result.inventory
-end
-
--- ───────────────────────────────────────────────
---  2. Find matching pets to release
--- ───────────────────────────────────────────────
-local function findPetsToRelease(petsTable)
-    local toRelease = {}
-    local count = 0
-    
-    for uniqueId, pet in pairs(petsTable or {}) do
-        if table.find(TARGET_PET_IDS, pet.id) then
-            -- You can add extra filters here if needed, e.g.
-            -- if not pet.properties.neon and not pet.properties.mega_neon then
-                toRelease[uniqueId] = true
-                count += 1
-            -- end
-        end
-    end
-    
-    return toRelease, count
-end
-
--- ───────────────────────────────────────────────
---  3. Find PetRecycler in HouseInteriors (recursive)
--- ───────────────────────────────────────────────
+--------------------------------------------------------------
+-- FIND PET RECYCLER AND ITS SLOTNAME
+--------------------------------------------------------------
 local function findPetRecycler()
-    local houseInteriors = Workspace:FindFirstChild("HouseInteriors")
-    if not houseInteriors then
-        warn("HouseInteriors folder not found")
+    local Workspace = game:GetService("Workspace")
+    local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
+    if not HouseInteriors then
+        warn("HouseInteriors not found!")
         return nil
     end
-    
-    local function recursiveSearch(folder)
+
+    local function search(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
-                return child
+                -- Try to get slotName from attributes or parent
+                local slotName = child:GetAttribute("SlotName") or child.Name
+                if not slotName or slotName == "" then
+                    -- Fallback: Use parent's name or grandparent's name
+                    slotName = child.Parent.Name
+                    if child.Parent.Parent then
+                        slotName = child.Parent.Parent.Name .. "_" .. slotName
+                    end
+                end
+                return child, slotName, child:GetFullName()
             end
-            if child:IsA("Folder") or child:IsA("Model") then
-                local found = recursiveSearch(child)
-                if found then return found end
+            if child:IsA("Folder") then
+                local found, slot, path = search(child)
+                if found then
+                    return found, slot, path
+                end
             end
         end
         return nil
     end
-    
-    return recursiveSearch(houseInteriors)
+
+    local petRecycler, slotName, fullPath = search(HouseInteriors)
+    return petRecycler, slotName, fullPath
 end
 
--- ───────────────────────────────────────────────
---  Main logic
--- ───────────────────────────────────────────────
-local inventory = getPlayerInventory()
-
-if not inventory or not inventory.pets then
-    warn("No pets inventory found")
-    return
+--------------------------------------------------------------
+-- PET MANAGEMENT SYSTEM (STRICT FILTERING)
+--------------------------------------------------------------
+-- 🔍 Get ALL pets from inventory
+local function getAllPets()
+    local playerData = clientData.get_data()[player.Name]
+    local pets = {}
+    if playerData and playerData.inventory and playerData.inventory.pets then
+        for uniqueId, petData in pairs(playerData.inventory.pets) do
+            if type(petData) == "table" then
+                petData.uniqueId = uniqueId
+                petData.unique = petData.unique or uniqueId
+                table.insert(pets, petData)
+            end
+        end
+    end
+    return pets
 end
 
-print("🔍 Found " .. #TARGET_PET_IDS .. " target pet types")
-local uniquesToRelease, matchCount = findPetsToRelease(inventory.pets)
-
-print("📊 Matching pets found: " .. matchCount)
-
-if matchCount < 4 then
-    print("Not enough matching pets (" .. matchCount .. "/4). Stopping.")
-    return
+-- 🟢 Get Neon and Mega Neon pets (ANY type)
+local function getNeonPets()
+    local pets = getAllPets()
+    local neons = {}
+    local megaNeons = {}
+    for _, pet in ipairs(pets) do
+        local isNeon = pet.properties and pet.properties.neon
+        local isMegaNeon = pet.properties and pet.properties.mega_neon
+        local age = pet.properties and pet.properties.age or 0
+        if isMegaNeon then
+            table.insert(megaNeons, {
+                uniqueId = pet.uniqueId,
+                age = age,
+                id = pet.id
+            })
+            print("🌟 MEGA NEON Found: " .. pet.id)
+        elseif isNeon and age >= 6 then
+            table.insert(neons, {
+                uniqueId = pet.uniqueId,
+                age = age,
+                id = pet.id
+            })
+            print("🌟 Neon 6+ Found: " .. pet.id .. " (Age: " .. age .. ")")
+        elseif isNeon then
+            print("💡 Young Neon: " .. pet.id .. " (Age: " .. age .. ") - Too young, skipping")
+        end
+    end
+    return neons, megaNeons
 end
 
--- ───────────────────────────────────────────────
---  Find recycler
--- ───────────────────────────────────────────────
-local petRecycler = findPetRecycler()
-
-if not petRecycler then
-    warn("PetRecycler not found in HouseInteriors!")
-    return
+-- 🔍 Get ONLY allowed target pets (strict filter)
+local function getAllowedTargetPets()
+    local pets = getAllPets()
+    local allowedPets = {}
+    local counts = {}
+    -- Initialize counts for allowed pets only
+    for _, name in ipairs(ALLOWED_PET_NAMES) do
+        counts[name] = 0
+    end
+    -- Collect ONLY allowed pets
+    for _, pet in ipairs(pets) do
+        for _, allowedName in ipairs(ALLOWED_PET_NAMES) do
+            if pet.id == allowedName then
+                table.insert(allowedPets, pet.uniqueId)
+                counts[allowedName] = (counts[allowedName] or 0) + 1
+                break
+            end
+        end
+    end
+    print("📊 Allowed Pets Scan: " .. HttpService:JSONEncode(counts))
+    print("📦 Total Allowed Pets: " .. #allowedPets)
+    return allowedPets, counts
 end
 
-print("✅ PetRecycler found → releasing " .. matchCount .. " pets")
-
--- Prepare remote arguments
-local releaseArgs = {
-    "f-39",                       -- furniture ID? (seems hardcoded in many scripts)
-    "UseBlock",
-    {
-        uniques = uniquesToRelease
-    },
-    player.Character or player.CharacterAdded:Wait()
-}
-
--- ───────────────────────────────────────────────
---  Release pets
--- ───────────────────────────────────────────────
-local successRelease, err = pcall(function()
-    API:WaitForChild("HousingAPI"):WaitForChild("ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
-end)
-
-if successRelease then
-    print("✅ Release request sent (" .. matchCount .. " pets)")
-else
-    warn("Release failed: " .. tostring(err))
+-- 🎫 Get Tickets (pet_recycler_tickets_2026)
+local function getTickets()
+    local tickets = 0
+    pcall(function()
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.items then
+            for _, item in pairs(playerData.inventory.items) do
+                if item.id == "pet_recycler_tickets_2026" then
+                    tickets = item.amount or 0
+                    break
+                end
+            end
+        end
+    end)
+    ticketsLabel.Text = "Tickets: " .. tickets
+    print("🎫 Tickets: " .. tickets)
+    return tickets
 end
 
--- Small wait — sometimes server needs time to process
-task.wait(1.2)
-
--- ───────────────────────────────────────────────
---  Collect tickets
--- ───────────────────────────────────────────────
-local successTickets, errTickets = pcall(function()
-    API:WaitForChild("PetRecyclerAPI"):WaitForChild("TicketsCollected"):InvokeServer()
-end)
-
-if successTickets then
-    print("🎟️ Tickets collection request sent")
-else
-    warn("Tickets collection failed: " .. tostring(errTickets))
+-- 🥚 Count Crystal Eggs - FIXED VERSION
+local function countCrystalEggs()
+    local playerData = clientData.get_data()[player.Name]
+    local count = 0
+    if playerData and playerData.inventory and playerData.inventory.pets then
+        for _, petData in pairs(playerData.inventory.pets) do
+            if petData.id and string.lower(petData.id) == "pet_recycler_2025_crystal_egg" then
+                count = count + 1
+            end
+        end
+    end
+    print("🥚 CRYSTAL EGGS: " .. count)
+    return count
 end
 
-print("Script finished.")
+--------------------------------------------------------------
+-- SMART RELEASE DECISION SYSTEM
+--------------------------------------------------------------
+local function shouldReleaseNow()
+    local allowedPets, counts = getAllowedTargetPets()
+    local neonPets, megaNeonPets = getNeonPets()
+    local totalAllowedPets = #allowedPets
+    local totalNeons = #neonPets
+    local totalMegaNeons = #megaNeonPets
+    print("🤔 Release Check:")
+    print(" Allowed Pets: " .. totalAllowedPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
+    print(" Neons (6+): " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS)
+    print(" Mega Neons: " .. totalMegaNeons .. "/" .. RELEASE_CONDITIONS.MIN_MEGA_NEONS)
+    -- PRIORITY-BASED RELEASE CONDITIONS
+    if totalMegaNeons >= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
+        print("✅ REASON: Enough mega neons (" .. totalMegaNeons .. ")")
+        return true, "mega_neons", allowedPets, neonPets, megaNeonPets
+    end
+    if totalAllowedPets >= RELEASE_CONDITIONS.MIN_PETS then
+        print("✅ REASON: Enough allowed pets (" .. totalAllowedPets .. ")")
+        return true, "pets", allowedPets, neonPets, megaNeonPets
+    end
+    if totalNeons >= RELEASE_CONDITIONS.MIN_NEONS then
+        print("✅ REASON: Enough neons (" .. totalNeons .. ")")
+        return true, "neons", allowedPets, neonPets, megaNeonPets
+    end
+    print("❌ Not enough resources for release")
+    return false, "none", allowedPets, neonPets, megaNeonPets
+end
+
+--------------------------------------------------------------
+-- UTILITIES
+--------------------------------------------------------------
+local function log(msg) print("[Nursery Farmer] " .. tostring(msg)) end
+
+--------------------------------------------------------------
+-- PET RELEASE LOGIC (DYNAMIC SLOTS)
+--------------------------------------------------------------
+local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
+    log("🔹 Starting PET release process...")
+    local petIds = {}
+    local usedNeons = 0
+    local usedMegaNeons = 0
+
+    -- Priority 1: Mega Neons
+    for i, megaNeon in ipairs(megaNeonPets) do
+        if i <= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
+            table.insert(petIds, megaNeon.uniqueId)
+            usedMegaNeons = usedMegaNeons + 1
+            log("🚀 Adding MEGA NEON: " .. (megaNeon.id or "Unknown"))
+        end
+    end
+
+    -- Priority 2: Neons (age 6+)
+    for i, neon in ipairs(neonPets) do
+        if i <= RELEASE_CONDITIONS.MIN_NEONS and #petIds < 18 then
+            table.insert(petIds, neon.uniqueId)
+            usedNeons = usedNeons + 1
+            log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
+        end
+    end
+
+    -- Priority 3: Allowed Pets
+    for i, petId in ipairs(allowedPets) do
+        if #petIds < 18 then
+            table.insert(petIds, petId)
+        else
+            break
+        end
+    end
+
+    log("🎯 Release Strategy: " ..
+        usedMegaNeons .. " mega neons + " ..
+        usedNeons .. " neons (any type, age 6+) + " ..
+        (#petIds - usedNeons - usedMegaNeons) ..
+        " allowed pets = " ..
+        #petIds .. " total pets")
+
+    if #petIds < 1 then
+        log("❌ No pets selected for release")
+        return false
+    end
+
+    -- Create uniques table for API
+    local uniques = {}
+    for _, petId in ipairs(petIds) do
+        uniques[petId] = true
+    end
+
+    -- Release pets in dynamic slot
+    local releaseArgs = {
+        slotName, -- Use dynamic slotName
+        "UseBlock",
+        {
+            action = "use",
+            uniques = uniques
+        },
+        player.Character
+    }
+
+    local success, err = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
+    end)
+
+    if success then
+        log("✅ Released pets in slot: " .. slotName)
+        -- Collect tickets after successful release
+        local ticketSuccess, ticketErr = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
+        end)
+        if ticketSuccess then
+            log("🎫 Tickets collected successfully!")
+            getTickets() -- Update UI
+        else
+            log("⚠️ Failed to collect tickets: " .. tostring(ticketErr))
+        end
+        return true
+    else
+        log("❌ Failed to release in slot " .. slotName .. ": " .. tostring(err))
+    end
+
+    return false
+end
+
+--------------------------------------------------------------
+-- MAIN FARMING CYCLE
+--------------------------------------------------------------
+local function farmCycle()
+    log("Starting farm cycle...")
+    getTickets() -- Update tickets UI
+    countCrystalEggs()
+
+    -- Find PetRecycler and its slotName
+    local petRecycler, slotName, fullPath = findPetRecycler()
+    if not petRecycler or not slotName then
+        log("❌ PetRecycler or slotName not found! Retrying in 60 seconds...")
+        for i = 1, COOLDOWNS.RESOURCE_CHECK do
+            if not running then break end
+            task.wait(1)
+        end
+        return
+    end
+
+    -- Check conditions and get pet data
+    local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
+    if not shouldRelease then
+        log("❌ Not enough resources. Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds...")
+        for i = 1, COOLDOWNS.RESOURCE_CHECK do
+            if not running then break end
+            task.wait(1)
+        end
+        return
+    end
+
+    log("✅ Release conditions met! Reason: " .. releaseReason)
+
+    local releaseSuccess = false
+    -- PET RELEASE (pets, neons, or mega neons)
+    releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
+
+    if not releaseSuccess then
+        log("❌ Release process failed")
+        return
+    end
+
+    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN BEFORE CLAIMING
+    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT/60) .. " minutes " .. (COOLDOWNS.REWARD_WAIT%60) .. " seconds) for rewards cooldown...")
+    for i = 1, COOLDOWNS.REWARD_WAIT do
+        if not running then break end
+        if i % 60 == 0 then
+            local minutesLeft = math.floor((COOLDOWNS.REWARD_WAIT - i) / 60)
+            local secondsLeft = (COOLDOWNS.REWARD_WAIT - i) % 60
+            log(" " .. minutesLeft .. "m " .. secondsLeft .. "s remaining...")
+        end
+        task.wait(1)
+    end
+
+    if not running then return end
+
+    -- STEP 4: Claim Reward (FOR ALL RELEASE TYPES)
+    log("🔹 Step 4: Claiming Reward...")
+    local claimArgs = {
+        slotName, -- Use dynamic slotName
+        "UseBlock",
+        {
+            action = "claim"
+        },
+        player.Character
+    }
+
+    local success, err = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
+    end)
+
+    if success then
+        log("🎉 Successfully claimed reward in slot: " .. slotName)
+    else
+        log("❌ Failed to claim reward in slot " .. slotName .. ": " .. tostring(err))
+    end
+
+    -- Count crystal eggs after successful release
+    countCrystalEggs()
+    getTickets() -- Update tickets UI
+
+    -- WAIT 30 SECONDS BEFORE NEXT CYCLE CHECK
+    log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
+    for i = 1, COOLDOWNS.AFTER_CLAIM do
+        if not running then break end
+        task.wait(1)
+    end
+
+    return true
+end
+
+--------------------------------------------------------------
+-- CONTROL SYSTEM
+--------------------------------------------------------------
+local function toggleFarm()
+    running = not running
+    if running then
+        btn.Text = "⏹️"
+        btn.TextColor3 = Color3.fromRGB(255, 0, 0)
+        stroke.Color = Color3.fromRGB(255, 0, 0)
+        status.Text = "RUNNING..."
+        status.TextColor3 = Color3.fromRGB(0, 255, 0)
+        log("Strict Filter Farmer started! Waiting for conditions...")
+        farmThread = task.spawn(function()
+            while running do
+                local cycleSuccess = pcall(farmCycle)
+                if not cycleSuccess then
+                    log("Error in farm cycle")
+                end
+                -- Only check every 60 seconds if no release happened
+                if running then
+                    log("⏳ Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds before next condition check...")
+                    for i = 1, COOLDOWNS.RESOURCE_CHECK do
+                        if not running then break end
+                        task.wait(1)
+                    end
+                end
+            end
+        end)
+        pcall(function()
+            TweenService:Create(btn, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+                Size = UDim2.new(0, 100, 0, 100)
+            }):Play()
+        end)
+    else
+        btn.Text = "♻️"
+        btn.TextColor3 = Color3.fromRGB(0, 255, 0)
+        stroke.Color = Color3.fromRGB(0, 255, 0)
+        status.Text = "OFF"
+        status.TextColor3 = Color3.fromRGB(255, 0, 0)
+        if farmThread then task.cancel(farmThread) end
+        pcall(function() btn.Size = UDim2.new(0, 90, 0, 90) end)
+        log("Farmer stopped")
+    end
+end
+
+btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
+player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
+
+log("PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
+log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
+log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
