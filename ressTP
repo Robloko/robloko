@@ -106,13 +106,13 @@ local farmThread = nil
 local recyclerFolder = nil -- Will store folder name like "f-39"
 
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4,
+    MIN_PETS = 18,
     MIN_NEONS = 2,
     MIN_MEGA_NEONS = 1,
 }
 
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds
     AFTER_CLAIM = 30,
     RESOURCE_CHECK = 60
 }
@@ -181,8 +181,13 @@ local function getAllPets()
     if playerData and playerData.inventory and playerData.inventory.pets then
         for uniqueId, petData in pairs(playerData.inventory.pets) do
             if type(petData) == "table" then
-                petData.uniqueId = uniqueId
-                table.insert(pets, petData)
+                -- Create a new table instead of modifying the original
+                local petCopy = {}
+                for k, v in pairs(petData) do
+                    petCopy[k] = v
+                end
+                petCopy.uniqueId = uniqueId
+                table.insert(pets, petCopy)
             end
         end
     end
@@ -324,13 +329,11 @@ end
 -- SELECT PETS FOR RELEASE
 --------------------------------------------------------------
 local function selectPetsForRelease(reason, allowedPets, neons, megaNeons)
-    local petIds = {}
-    local uniques = {}
+    local uniques = {} -- Create new table
     
     if reason == "mega" then
         -- Take 1 mega neon
         for i = 1, math.min(1, #megaNeons) do
-            table.insert(petIds, megaNeons[i].uniqueId)
             uniques[megaNeons[i].uniqueId] = true
         end
         log("🎯 Selected 1 Mega Neon")
@@ -338,7 +341,6 @@ local function selectPetsForRelease(reason, allowedPets, neons, megaNeons)
     elseif reason == "neons" then
         -- Take 2 neons
         for i = 1, math.min(2, #neons) do
-            table.insert(petIds, neons[i].uniqueId)
             uniques[neons[i].uniqueId] = true
         end
         log("🎯 Selected 2 Neons (6+)")
@@ -346,13 +348,12 @@ local function selectPetsForRelease(reason, allowedPets, neons, megaNeons)
     elseif reason == "pets" then
         -- Take 18 allowed pets
         for i = 1, math.min(18, #allowedPets) do
-            table.insert(petIds, allowedPets[i])
             uniques[allowedPets[i]] = true
         end
-        log("🎯 Selected " .. #petIds .. " Allowed Pets")
+        log("🎯 Selected " .. tableCount(uniques) .. " Allowed Pets")
     end
     
-    return uniques, petIds
+    return uniques
 end
 
 --------------------------------------------------------------
@@ -370,17 +371,23 @@ local function releasePets(uniques)
     
     log("🎯 Using recycler folder: " .. recyclerFolder)
     
+    -- Create a new uniques table to be safe
+    local releaseUniques = {}
+    for k, v in pairs(uniques) do
+        releaseUniques[k] = v
+    end
+    
     -- EXACT FORMAT FROM YOUR EXAMPLE
     local args = {
         recyclerFolder,           -- "f-39"
         "UseBlock",
         {
-            uniques = uniques      -- { ["petid"] = true, ... }
+            uniques = releaseUniques  -- Create new table to avoid readonly issues
         },
         player.Character
     }
     
-    log("📦 Releasing " .. table.count(uniques) .. " pets")
+    log("📦 Releasing " .. tableCount(releaseUniques) .. " pets")
     
     local success, err = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
@@ -446,6 +453,19 @@ local function claimReward()
 end
 
 --------------------------------------------------------------
+-- HELPER FUNCTION FOR TABLE COUNT
+--------------------------------------------------------------
+local function tableCount(t)
+    local count = 0
+    if t then
+        for _ in pairs(t) do
+            count = count + 1
+        end
+    end
+    return count
+end
+
+--------------------------------------------------------------
 -- MAIN FARMING CYCLE
 --------------------------------------------------------------
 local function farmCycle()
@@ -471,7 +491,12 @@ local function farmCycle()
     end
     
     -- STEP 2: Select which pets to release
-    local uniques, selectedPets = selectPetsForRelease(reason, allowedPets, neons, megaNeons)
+    local uniques = selectPetsForRelease(reason, allowedPets, neons, megaNeons)
+    
+    if tableCount(uniques) == 0 then
+        log("❌ No pets selected for release")
+        return
+    end
     
     -- STEP 3: Find recycler folder (if not already found)
     if not recyclerFolder then
@@ -581,13 +606,6 @@ local function toggleFarm()
         pcall(function() btn.Size = UDim2.new(0, 90, 0, 90) end)
         log("⏹️ Farmer stopped")
     end
-end
-
--- Helper function for table count
-function table.count(t)
-    local count = 0
-    for _ in pairs(t) do count = count + 1 end
-    return count
 end
 
 -- Event connections
