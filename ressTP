@@ -103,14 +103,14 @@ local farmThread = nil
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
     MIN_MEGA_NEONS = 1, -- NEW: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60, -- 60 seconds between condition checks
 }
@@ -129,9 +129,9 @@ local ALLOWED_PET_NAMES = {
 }
 
 --------------------------------------------------------------
--- FIND PET RECYCLER
+-- FIND PET RECYCLER AND ITS SLOT
 --------------------------------------------------------------
-local function findPetRecycler()
+local function findPetRecyclerSlot()
     local Workspace = game:GetService("Workspace")
     local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
 
@@ -140,16 +140,24 @@ local function findPetRecycler()
         return nil
     end
 
-    -- Recursive search for PetRecycler
+    -- Recursive search for PetRecycler and its parent slot
     local function search(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
-                return child, child:GetFullName()
+                -- Find the parent slot (e.g., "f-39")
+                local current = child
+                while current and current.Parent ~= HouseInteriors do
+                    current = current.Parent
+                    if current and current.Name:match("^f%-%d+$") then
+                        return current.Name, child
+                    end
+                end
+                return nil, child
             end
             if child:IsA("Folder") then
-                local found, path = search(child)
-                if found then
-                    return found, path
+                local slotName, recycler = search(child)
+                if slotName then
+                    return slotName, recycler
                 end
             end
         end
@@ -157,8 +165,8 @@ local function findPetRecycler()
     end
 
     -- Start search from HouseInteriors
-    local petRecycler, path = search(HouseInteriors)
-    return petRecycler, path
+    local slotName, petRecycler = search(HouseInteriors)
+    return slotName, petRecycler
 end
 
 --------------------------------------------------------------
@@ -306,7 +314,7 @@ local function log(msg)
 end
 
 --------------------------------------------------------------
--- PET RELEASE LOGIC (USING PET RECYCLER)
+-- PET RELEASE LOGIC (USING SLOT)
 --------------------------------------------------------------
 local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
@@ -348,28 +356,30 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         uniques[petId] = true
     end
 
-    -- Find PetRecycler
-    local petRecycler, fullPath = findPetRecycler()
-    if not petRecycler then
-        log("❌ PetRecycler not found!")
+    -- Find PetRecycler slot
+    local slotName, petRecycler = findPetRecyclerSlot()
+    if not slotName then
+        log("❌ PetRecycler slot not found!")
         return false
     end
 
-    -- Release pets using PetRecycler
+    -- Release pets using the slot
+    local args = {
+        slotName,
+        "UseBlock",
+        {
+            action = "use",
+            uniques = uniques,
+        },
+        player.Character
+    }
+
     local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
-            petRecycler, -- Use PetRecycler instead of slot
-            "UseBlock",
-            {
-                action = "use",
-                uniques = uniques,
-            },
-            player.Character
-        )
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
     end)
 
     if success then
-        log("✅ Released pets via PetRecycler!")
+        log("✅ Released pets via slot: " .. slotName)
         -- Collect tickets after successful release
         local ticketSuccess, ticketErr = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
@@ -431,25 +441,27 @@ local function farmCycle()
 
     -- Claim Reward
     log("🔹 Claiming Reward...")
-    local petRecycler, fullPath = findPetRecycler()
-    if not petRecycler then
-        log("❌ PetRecycler not found for claiming!")
+    local slotName, petRecycler = findPetRecyclerSlot()
+    if not slotName then
+        log("❌ PetRecycler slot not found for claiming!")
         return
     end
 
+    local args = {
+        slotName,
+        "UseBlock",
+        {
+            action = "claim",
+        },
+        player.Character
+    }
+
     local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
-            petRecycler,
-            "UseBlock",
-            {
-                action = "claim",
-            },
-            player.Character
-        )
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
     end)
 
     if success then
-        log("🎉 Successfully claimed reward via PetRecycler!")
+        log("🎉 Successfully claimed reward via slot: " .. slotName)
     else
         log("❌ Failed to claim reward: " .. tostring(err))
     end
