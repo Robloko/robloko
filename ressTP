@@ -13,11 +13,12 @@ local ALLOWED_PET_NAMES = {
 
 -- 🔍 FIND PET RECYCLER (WITH SLOT DETECTION)
 local function findPetRecycler()
+    print("[DEBUG] Поиск PetRecycler...")
     local Workspace = game:GetService("Workspace")
     local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
 
     if not HouseInteriors then
-        warn("HouseInteriors не найден!")
+        warn("[ERROR] HouseInteriors не найден!")
         return nil
     end
 
@@ -25,10 +26,13 @@ local function findPetRecycler()
     local function search(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
-                -- Проверяем, есть ли у PetRecycler родительский слот (например, f-0, f-1, ...)
+                print("[DEBUG] Найден PetRecycler:", child:GetFullName())
                 local slotName = child.Parent and child.Parent.Name or "Unknown"
                 if slotName:match("^f%-%d+$") then
+                    print("[DEBUG] Слот:", slotName)
                     return child, slotName, child:GetFullName()
+                else
+                    warn("[WARNING] PetRecycler найден, но слот неопределён!")
                 end
             end
             if child:IsA("Folder") or child:IsA("Model") then
@@ -43,31 +47,58 @@ local function findPetRecycler()
 
     -- Начинаем поиск с HouseInteriors
     local petRecycler, slotName, fullPath = search(HouseInteriors)
+    if not petRecycler then
+        warn("[ERROR] PetRecycler не найден!")
+    end
     return petRecycler, slotName, fullPath
 end
 
 -- 🔍 GET PLAYER PETS FROM INVENTORY (FILTERED BY ALLOWED_PET_NAMES)
 local function getAllowedPlayerPets()
+    print("[DEBUG] Получение питомцев игрока...")
     local Players = game:GetService("Players")
     local player = Players.LocalPlayer
     local clientData
     local allowedPets = {}
 
-    -- Получаем ClientData
+    -- Проверяем ClientData
+    local core = game:GetService("ReplicatedStorage"):FindFirstChild("ClientModules")
+    if not core then
+        warn("[ERROR] ClientModules не найден!")
+        return allowedPets
+    end
+
+    core = core:FindFirstChild("Core")
+    if not core then
+        warn("[ERROR] Core не найден в ClientModules!")
+        return allowedPets
+    end
+
+    local clientDataModule = core:FindFirstChild("ClientData")
+    if not clientDataModule then
+        warn("[ERROR] ClientData не найден в Core!")
+        return allowedPets
+    end
+
+    -- Загружаем ClientData
     local success, err = pcall(function()
-        local core = game:GetService("ReplicatedStorage"):WaitForChild("ClientModules"):WaitForChild("Core")
-        clientData = require(core:WaitForChild("ClientData"))
+        clientData = require(clientDataModule)
     end)
 
     if not success then
-        warn("Ошибка загрузки ClientData: " .. tostring(err))
+        warn("[ERROR] Ошибка загрузки ClientData: " .. tostring(err))
         return allowedPets
     end
 
     -- Получаем данные игрока
     local playerData = clientData.get_data()[player.Name]
-    if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        warn("У игрока нет питомцев!")
+    if not playerData then
+        warn("[ERROR] Данные игрока не найдены!")
+        return allowedPets
+    end
+
+    if not playerData.inventory or not playerData.inventory.pets then
+        warn("[ERROR] У игрока нет питомцев!")
         return allowedPets
     end
 
@@ -78,31 +109,48 @@ local function getAllowedPlayerPets()
                 if petData.id == allowedName then
                     petData.uniqueId = uniqueId
                     table.insert(allowedPets, petData)
+                    print("[DEBUG] Найден разрешённый питомец:", petData.id)
                     break
                 end
             end
         end
     end
 
+    print("[DEBUG] Найдено разрешённых питомцев:", #allowedPets)
     return allowedPets
 end
 
 -- 🎫 RELEASE PETS IN PET RECYCLER
 local function releasePets(petRecycler, slotName, petsToRelease)
     if not petRecycler or not slotName then
-        warn("PetRecycler или слот не найден!")
+        warn("[ERROR] PetRecycler или слот не найден!")
         return false
     end
 
+    print("[DEBUG] Подготовка к релизу питомцев...")
     -- Формируем список uniqueId питомцев для релиза
     local uniques = {}
     for _, pet in ipairs(petsToRelease) do
         uniques[pet.uniqueId] = true
+        print("[DEBUG] Добавляем питомца для релиза:", pet.uniqueId)
+    end
+
+    -- Проверяем API
+    local API = game:GetService("ReplicatedStorage"):FindFirstChild("API")
+    if not API then
+        warn("[ERROR] API не найден!")
+        return false
+    end
+
+    local housingAPI = API:FindFirstChild("HousingAPI/ActivateInteriorFurniture")
+    if not housingAPI then
+        warn("[ERROR] HousingAPI/ActivateInteriorFurniture не найден!")
+        return false
     end
 
     -- Вызываем релиз через API
     local success, err = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+        return housingAPI:InvokeServer(
             slotName,
             "UseBlock",
             {
@@ -114,60 +162,71 @@ local function releasePets(petRecycler, slotName, petsToRelease)
     end)
 
     if not success then
-        warn("Ошибка релиза питомцев: " .. tostring(err))
+        warn("[ERROR] Ошибка релиза питомцев: " .. tostring(err))
         return false
     end
 
+    print("[DEBUG] Питомцы успешно отправлены на релиз!")
     return true
 end
 
 -- 🎟️ COLLECT TICKETS AFTER RELEASE
 local function collectTickets()
-    local success, err = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
-    end)
-
-    if not success then
-        warn("Ошибка сбора билетов: " .. tostring(err))
+    print("[DEBUG] Сбор билетов...")
+    local API = game:GetService("ReplicatedStorage"):FindFirstChild("API")
+    if not API then
+        warn("[ERROR] API не найден!")
         return false
     end
 
+    local ticketsAPI = API:FindFirstChild("PetRecyclerAPI/TicketsCollected")
+    if not ticketsAPI then
+        warn("[ERROR] PetRecyclerAPI/TicketsCollected не найден!")
+        return false
+    end
+
+    local success, err = pcall(function()
+        return ticketsAPI:InvokeServer()
+    end)
+
+    if not success then
+        warn("[ERROR] Ошибка сбора билетов: " .. tostring(err))
+        return false
+    end
+
+    print("[DEBUG] Билеты успешно собраны!")
     return true
 end
 
 -- 🔄 MAIN EXECUTION
+print("[START] Запуск скрипта PetRecycler...")
 local petRecycler, slotName, fullPath = findPetRecycler()
 if petRecycler then
-    print("PetRecycler найден!")
+    print("[SUCCESS] PetRecycler найден!")
     print("Слот:", slotName)
     print("Полный путь:", fullPath)
 
     -- Получаем разрешённых питомцев игрока
     local allowedPets = getAllowedPlayerPets()
-    print("Найдено разрешённых питомцев:", #allowedPets)
-
     if #allowedPets > 0 then
-        -- Выбираем всех разрешённых питомцев для релиза
-        local petsToRelease = allowedPets
+        print("[SUCCESS] Найдено разрешённых питомцев:", #allowedPets)
 
         -- Выполняем релиз
-        local releaseSuccess = releasePets(petRecycler, slotName, petsToRelease)
+        local releaseSuccess = releasePets(petRecycler, slotName, allowedPets)
         if releaseSuccess then
-            print("Питомцы успешно отправлены на релиз!")
-
             -- Собираем билеты
             local collectSuccess = collectTickets()
             if collectSuccess then
-                print("Билеты успешно собраны!")
+                print("[SUCCESS] Билеты успешно собраны!")
             else
-                warn("Не удалось собрать билеты!")
+                warn("[ERROR] Не удалось собрать билеты!")
             end
         else
-            warn("Не удалось отправить питомцев на релиз!")
+            warn("[ERROR] Не удалось отправить питомцев на релиз!")
         end
     else
-        warn("У игрока нет разрешённых питомцев для релиза!")
+        warn("[ERROR] У игрока нет разрешённых питомцев для релиза!")
     end
 else
-    warn("PetRecycler не найден!")
+    warn("[ERROR] PetRecycler не найден!")
 end
