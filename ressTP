@@ -3,6 +3,7 @@
 -- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age)
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
@@ -46,7 +47,7 @@ if not success then warn("ClientData error: " .. tostring(err)) return end
 -- CENTRAL UI BUTTON + TICKETS DISPLAY
 --------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000,9999))
+screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000, 9999))
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -102,16 +103,16 @@ local farmThread = nil
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
     MIN_MEGA_NEONS = 1, -- NEW: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
-    RESOURCE_CHECK = 60 -- 60 seconds between condition checks
+    RESOURCE_CHECK = 60, -- 60 seconds between condition checks
 }
 
 -- STRICTLY ALLOWED PET TYPES
@@ -124,7 +125,7 @@ local ALLOWED_PET_NAMES = {
     "basic_egg_2022_parakeet",
     "basic_egg_2022_swordfish",
     "basic_egg_2022_robot",
-    "basic_egg_2022_corgi"
+    "basic_egg_2022_corgi",
 }
 
 --------------------------------------------------------------
@@ -155,7 +156,9 @@ local function findPetRecycler()
         return nil
     end
 
-    return search(HouseInteriors)
+    -- Start search from HouseInteriors
+    local petRecycler, path = search(HouseInteriors)
+    return petRecycler, path
 end
 
 --------------------------------------------------------------
@@ -190,14 +193,14 @@ local function getNeonPets()
             table.insert(megaNeons, {
                 uniqueId = pet.uniqueId,
                 age = age,
-                id = pet.id
+                id = pet.id,
             })
             print("🌟 MEGA NEON Found: " .. pet.id)
         elseif isNeon and age >= 6 then
             table.insert(neons, {
                 uniqueId = pet.uniqueId,
                 age = age,
-                id = pet.id
+                id = pet.id,
             })
             print("🌟 Neon 6+ Found: " .. pet.id .. " (Age: " .. age .. ")")
         elseif isNeon then
@@ -298,7 +301,9 @@ end
 --------------------------------------------------------------
 -- UTILITIES
 --------------------------------------------------------------
-local function log(msg) print("[Nursery Farmer] " .. tostring(msg)) end
+local function log(msg)
+    print("[Nursery Farmer] " .. tostring(msg))
+end
 
 --------------------------------------------------------------
 -- PET RELEASE LOGIC (USING PET RECYCLER)
@@ -337,6 +342,12 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         return false
     end
 
+    -- Create uniques table for API
+    local uniques = {}
+    for _, petId in ipairs(petIds) do
+        uniques[petId] = true
+    end
+
     -- Find PetRecycler
     local petRecycler, fullPath = findPetRecycler()
     if not petRecycler then
@@ -344,27 +355,21 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         return false
     end
 
-    -- Create uniques table for API
-    local uniques = {}
-    for _, petId in ipairs(petIds) do
-        uniques[petId] = true
-    end
-
-    -- Release pets using PetRecycler object
+    -- Release pets using PetRecycler
     local success, err = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
-            petRecycler, -- Use PetRecycler object instead of slotName
+            petRecycler, -- Use PetRecycler instead of slot
             "UseBlock",
             {
                 action = "use",
-                uniques = uniques
+                uniques = uniques,
             },
             player.Character
         )
     end)
 
     if success then
-        log("✅ Released pets successfully!")
+        log("✅ Released pets via PetRecycler!")
         -- Collect tickets after successful release
         local ticketSuccess, ticketErr = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
@@ -403,17 +408,15 @@ local function farmCycle()
 
     log("✅ Release conditions met! Reason: " .. releaseReason)
 
-    local releaseSuccess = false
-    -- PET RELEASE (pets, neons, or mega neons)
-    releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets)
+    local releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets)
 
     if not releaseSuccess then
         log("❌ Release process failed")
         return
     end
 
-    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN BEFORE CLAIMING
-    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT/60) .. " minutes " .. (COOLDOWNS.REWARD_WAIT%60) .. " seconds) for rewards cooldown...")
+    -- Wait for cooldown before claiming
+    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT / 60) .. " minutes " .. (COOLDOWNS.REWARD_WAIT % 60) .. " seconds) for rewards cooldown...")
     for i = 1, COOLDOWNS.REWARD_WAIT do
         if not running then break end
         if i % 60 == 0 then
@@ -426,36 +429,36 @@ local function farmCycle()
 
     if not running then return end
 
-    -- STEP 4: Claim Reward (USING SLOTNAME, AS REQUESTED)
-    log("🔹 Step 4: Claiming Reward...")
-    for slot = 0, 99 do
-        local slotName = "f-" .. slot
-        local claimArgs = {
-            slotName,
+    -- Claim Reward
+    log("🔹 Claiming Reward...")
+    local petRecycler, fullPath = findPetRecycler()
+    if not petRecycler then
+        log("❌ PetRecycler not found for claiming!")
+        return
+    end
+
+    local success, err = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+            petRecycler,
             "UseBlock",
             {
-                action = "claim"
+                action = "claim",
             },
             player.Character
-        }
+        )
+    end)
 
-        local success, err = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
-        end)
-
-        if success then
-            log("🎉 Successfully claimed reward in slot: " .. slotName)
-            break
-        else
-            log("❌ Failed to claim reward in slot " .. slotName .. ": " .. tostring(err))
-        end
+    if success then
+        log("🎉 Successfully claimed reward via PetRecycler!")
+    else
+        log("❌ Failed to claim reward: " .. tostring(err))
     end
 
     -- Count crystal eggs after successful release
     countCrystalEggs()
     getTickets() -- Update tickets UI
 
-    -- WAIT 30 SECONDS BEFORE NEXT CYCLE CHECK
+    -- Wait before next cycle check
     log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
     for i = 1, COOLDOWNS.AFTER_CLAIM do
         if not running then break end
