@@ -1,15 +1,17 @@
---[[
-   NURSERY AUTO-FARMER (NO TELEPORT, TICKETS UI)
-   Press ♻️ or R key → START / STOP
-   SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age)
---]]
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER (NO TELEPORT, TICKETS UI)
+-- Press ♻️ or R key → START / STOP
+-- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age)
+
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -45,44 +47,10 @@ local success, err = pcall(function() clientData = require(ClientDataModule) end
 if not success then warn("ClientData error: " .. tostring(err)) return end
 
 --------------------------------------------------------------
--- FIND PET RECYCLER FOLDER
---------------------------------------------------------------
-local function findPetRecycler()
-    local Workspace = game:GetService("Workspace")
-    if not Workspace then
-        warn("Workspace not found!")
-        return nil
-    end
-
-    local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
-    if not HouseInteriors then
-        warn("HouseInteriors not found!")
-        return nil
-    end
-
-    local function search(folder)
-        for _, child in ipairs(folder:GetChildren()) do
-            if child.Name == "PetRecycler" and child:IsA("Folder") then
-                return child, child:GetFullName()
-            end
-            if child:IsA("Folder") then
-                local found, path = search(child)
-                if found then
-                    return found, path
-                end
-            end
-        end
-        return nil
-    end
-
-    return search(HouseInteriors)
-end
-
---------------------------------------------------------------
 -- CENTRAL UI BUTTON + TICKETS DISPLAY
 --------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000,9999))
+screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000, 9999))
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -130,17 +98,6 @@ ticketsLabel.TextScaled = true
 ticketsLabel.Font = Enum.Font.GothamBold
 ticketsLabel.Parent = screenGui
 
--- Crystal Eggs Display
-local crystalEggsLabel = Instance.new("TextLabel")
-crystalEggsLabel.Size = UDim2.new(0, 200, 0, 40)
-crystalEggsLabel.Position = UDim2.new(0.5, -100, 0.5, 130)
-crystalEggsLabel.BackgroundTransparency = 1
-crystalEggsLabel.Text = "Crystal Eggs: 0"
-crystalEggsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-crystalEggsLabel.TextScaled = true
-crystalEggsLabel.Font = Enum.Font.GothamBold
-crystalEggsLabel.Parent = screenGui
-
 --------------------------------------------------------------
 -- VARIABLES & CONFIG
 --------------------------------------------------------------
@@ -156,7 +113,7 @@ local RELEASE_CONDITIONS = {
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60 -- 60 seconds between condition checks
 }
@@ -268,7 +225,6 @@ local function countCrystalEggs()
             end
         end
     end
-    crystalEggsLabel.Text = "Crystal Eggs: " .. count
     return count
 end
 
@@ -281,6 +237,7 @@ local function shouldReleaseNow()
     local totalAllowedPets = #allowedPets
     local totalNeons = #neonPets
     local totalMegaNeons = #megaNeonPets
+
     if totalMegaNeons >= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
         return true, "mega_neons", allowedPets, neonPets, megaNeonPets
     end
@@ -297,12 +254,6 @@ end
 -- PET RELEASE LOGIC (DYNAMIC SLOTS)
 --------------------------------------------------------------
 local function executePetRelease(allowedPets, neonPets, megaNeonPets)
-    local petRecycler, petRecyclerPath = findPetRecycler()
-    if not petRecycler then
-        warn("PetRecycler not found! Cannot release pets.")
-        return false
-    end
-
     local petIds = {}
     local usedNeons = 0
     local usedMegaNeons = 0
@@ -330,7 +281,6 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     end
 
     if #petIds < 1 then
-        warn("No pets selected for release")
         return false
     end
 
@@ -364,12 +314,8 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
             end)
             if ticketSuccess then
                 getTickets()
-            else
-                warn("Failed to collect tickets: " .. tostring(ticketErr))
             end
             return true
-        else
-            warn("Failed to release in slot " .. slotName .. ": " .. tostring(err))
         end
     end
 
@@ -385,7 +331,10 @@ local function farmCycle()
 
     local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
     if not shouldRelease then
-        task.wait(COOLDOWNS.RESOURCE_CHECK)
+        for i = 1, COOLDOWNS.RESOURCE_CHECK do
+            if not running then break end
+            task.wait(1)
+        end
         return
     end
 
@@ -400,14 +349,13 @@ local function farmCycle()
         if i % 60 == 0 then
             local minutesLeft = math.floor((COOLDOWNS.REWARD_WAIT - i) / 60)
             local secondsLeft = (COOLDOWNS.REWARD_WAIT - i) % 60
-            print(" " .. minutesLeft .. "m " .. secondsLeft .. "s remaining...")
         end
         task.wait(1)
     end
 
     if not running then return end
 
-    -- STEP 4: Claim Reward (FOR ALL RELEASE TYPES)
+    -- STEP 4: Claim Reward
     for slot = 0, 99 do
         local slotName = "f-" .. slot
         local claimArgs = {
@@ -424,10 +372,7 @@ local function farmCycle()
         end)
 
         if success then
-            print("Successfully claimed reward in slot: " .. slotName)
             break
-        else
-            warn("Failed to claim reward in slot " .. slotName .. ": " .. tostring(err))
         end
     end
 
@@ -435,7 +380,10 @@ local function farmCycle()
     getTickets()
 
     -- WAIT 30 SECONDS BEFORE NEXT CYCLE CHECK
-    task.wait(COOLDOWNS.AFTER_CLAIM)
+    for i = 1, COOLDOWNS.AFTER_CLAIM do
+        if not running then break end
+        task.wait(1)
+    end
 end
 
 --------------------------------------------------------------
@@ -449,14 +397,24 @@ local function toggleFarm()
         stroke.Color = Color3.fromRGB(255, 0, 0)
         status.Text = "RUNNING..."
         status.TextColor3 = Color3.fromRGB(0, 255, 0)
-        print("Farmer started! Waiting for conditions...")
         farmThread = task.spawn(function()
             while running do
                 local cycleSuccess = pcall(farmCycle)
                 if not cycleSuccess then
-                    warn("Error in farm cycle")
+                    print("Error in farm cycle")
+                end
+                if running then
+                    for i = 1, COOLDOWNS.RESOURCE_CHECK do
+                        if not running then break end
+                        task.wait(1)
+                    end
                 end
             end
+        end)
+        pcall(function()
+            TweenService:Create(btn, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+                Size = UDim2.new(0, 100, 0, 100)
+            }):Play()
         end)
     else
         btn.Text = "♻️"
@@ -465,7 +423,7 @@ local function toggleFarm()
         status.Text = "OFF"
         status.TextColor3 = Color3.fromRGB(255, 0, 0)
         if farmThread then task.cancel(farmThread) end
-        print("Farmer stopped")
+        pcall(function() btn.Size = UDim2.new(0, 90, 0, 90) end)
     end
 end
 
@@ -473,5 +431,5 @@ btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
 print("Nursery Farmer Loaded! Press Recycle or R")
-print("ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
-print("COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
+print("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
+print("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
