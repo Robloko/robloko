@@ -1,31 +1,17 @@
--- // Pet Recycler Auto Script - Basic Egg 2022 Pets
--- // February 2025 - Pet Sim 99 (most likely version)
+-- ╔════════════════════════════════════════════╗
+-- ║         Adopt Me Pet Recycler Script       ║
+-- ║     (LocalScript - for your own pets)      ║
+-- ╚════════════════════════════════════════════╝
 
-local Players = game:GetService("Players")
+local Players          = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
+local Workspace        = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
-local API = ReplicatedStorage:WaitForChild("API", 8)
+local API    = ReplicatedStorage:WaitForChild("API", 8)
 
-if not API then
-    warn("ReplicatedStorage.API not found")
-    return
-end
-
-local HousingAPI = API:WaitForChild("HousingAPI", 5)
-local PetRecyclerAPI = API:WaitForChild("PetRecyclerAPI", 5)
-
-if not HousingAPI or not PetRecyclerAPI then
-    warn("Required APIs not found")
-    return
-end
-
--- ════════════════════════════════════════════════════════════
---   TARGET PETS (old basic egg 2022 pets)
--- ════════════════════════════════════════════════════════════
-
-local targetPetNames = {
+-- List of pet IDs you want to release (common 2022 basic egg pets)
+local TARGET_PET_IDS = {
     "basic_egg_2022_camel",
     "basic_egg_2022_poodle",
     "basic_egg_2022_donkey",
@@ -34,138 +20,141 @@ local targetPetNames = {
     "basic_egg_2022_parakeet",
     "basic_egg_2022_swordfish",
     "basic_egg_2022_robot",
-    "basic_egg_2022_corgi"
+    "basic_egg_2022_corgi",
 }
 
--- ════════════════════════════════════════════════════════════
---   Find PetRecycler in HouseInteriors (recursive)
--- ════════════════════════════════════════════════════════════
+-- ───────────────────────────────────────────────
+--  1. Get player data (inventory)
+-- ───────────────────────────────────────────────
+local function getPlayerInventory()
+    local success, result = pcall(function()
+        local ClientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return ClientData.get_data()[player.Name]
+    end)
+    
+    if not success or not result then
+        warn("Failed to load ClientData")
+        return nil
+    end
+    
+    return result.inventory
+end
 
+-- ───────────────────────────────────────────────
+--  2. Find matching pets to release
+-- ───────────────────────────────────────────────
+local function findPetsToRelease(petsTable)
+    local toRelease = {}
+    local count = 0
+    
+    for uniqueId, pet in pairs(petsTable or {}) do
+        if table.find(TARGET_PET_IDS, pet.id) then
+            -- You can add extra filters here if needed, e.g.
+            -- if not pet.properties.neon and not pet.properties.mega_neon then
+                toRelease[uniqueId] = true
+                count += 1
+            -- end
+        end
+    end
+    
+    return toRelease, count
+end
+
+-- ───────────────────────────────────────────────
+--  3. Find PetRecycler in HouseInteriors (recursive)
+-- ───────────────────────────────────────────────
 local function findPetRecycler()
-    local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
-    if not HouseInteriors then
+    local houseInteriors = Workspace:FindFirstChild("HouseInteriors")
+    if not houseInteriors then
         warn("HouseInteriors folder not found")
         return nil
     end
-
-    local function search(folder)
+    
+    local function recursiveSearch(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
                 return child
             end
             if child:IsA("Folder") or child:IsA("Model") then
-                local found = search(child)
+                local found = recursiveSearch(child)
                 if found then return found end
             end
         end
         return nil
     end
-
-    return search(HouseInteriors)
+    
+    return recursiveSearch(houseInteriors)
 end
 
--- ════════════════════════════════════════════════════════════
---   Get player's pet inventory (most common structure in PS99)
--- ════════════════════════════════════════════════════════════
+-- ───────────────────────────────────────────────
+--  Main logic
+-- ───────────────────────────────────────────────
+local inventory = getPlayerInventory()
 
-local function getOwnedPets()
-    local inventory = player:GetAttribute("Inventory") 
-                     or player:FindFirstChild("PlayerData") 
-                     and player.PlayerData:FindFirstChild("Inventory")
-
-    if not inventory then
-        warn("Cannot find player inventory")
-        return {}
-    end
-
-    local petsFolder = inventory:FindFirstChild("Pets") 
-                    or inventory:FindFirstChild("OwnedPets")
-
-    if not petsFolder then return {} end
-
-    local result = {}
-    for _, pet in ipairs(petsFolder:GetChildren()) do
-        local name = pet.Name:lower()
-        local uid = pet:GetAttribute("uid") 
-                 or pet:GetAttribute("UniqueId") 
-                 or pet.Name:match("^[^_]+_(.+)$")  -- fallback
-
-        if uid and table.find(targetPetNames, name) then
-            table.insert(result, {name = name, uid = uid, instance = pet})
-        end
-    end
-
-    return result
+if not inventory or not inventory.pets then
+    warn("No pets inventory found")
+    return
 end
 
--- ════════════════════════════════════════════════════════════
---   MAIN LOGIC
--- ════════════════════════════════════════════════════════════
+print("🔍 Found " .. #TARGET_PET_IDS .. " target pet types")
+local uniquesToRelease, matchCount = findPetsToRelease(inventory.pets)
 
-local function main()
-    local matchingPets = getOwnedPets()
+print("📊 Matching pets found: " .. matchCount)
 
-    print(string.format("Found %d target pets in inventory", #matchingPets))
-
-    if #matchingPets < 4 then
-        warn("Less than 4 matching pets → stopping")
-        return
-    end
-
-    local recycler = findPetRecycler()
-    if not recycler then
-        warn("PetRecycler not found in HouseInteriors")
-        return
-    end
-
-    print("PetRecycler found → preparing release...")
-
-    -- Build uniques table (most common format in late 2024 / 2025)
-    local uniques = {}
-    local count = 0
-
-    for _, pet in ipairs(matchingPets) do
-        if pet.uid then
-            uniques[pet.uid] = true
-            count = count + 1
-            if count >= 4 then break end  -- usually release 4 at once
-        end
-    end
-
-    if next(uniques) == nil then
-        warn("No valid UIDs found – cannot release")
-        return
-    end
-
-    -- Most common release remote pattern (2024–2026)
-    local releaseArgs = {
-        recycler.Name,           -- usually something like "f-39", "f-123" etc.
-        "UseBlock",
-        { uniques = uniques },
-        player.Character
-    }
-
-    local success, err = pcall(function()
-        HousingAPI:FindFirstChild("ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
-    end)
-
-    if success then
-        print("Release request sent (" .. count .. " pets)")
-        task.wait(1.4)
-        
-        -- Collect tickets
-        pcall(function()
-            PetRecyclerAPI:FindFirstChild("TicketsCollected"):InvokeServer()
-            print("Tickets collection requested")
-        end)
-    else
-        warn("InvokeServer failed: " .. tostring(err))
-        print("Used arguments were:")
-        for i,v in ipairs(releaseArgs) do
-            print(i, typeof(v) == "table" and "[table]" or tostring(v))
-        end
-    end
+if matchCount < 4 then
+    print("Not enough matching pets (" .. matchCount .. "/4). Stopping.")
+    return
 end
 
--- Run
-task.spawn(main)
+-- ───────────────────────────────────────────────
+--  Find recycler
+-- ───────────────────────────────────────────────
+local petRecycler = findPetRecycler()
+
+if not petRecycler then
+    warn("PetRecycler not found in HouseInteriors!")
+    return
+end
+
+print("✅ PetRecycler found → releasing " .. matchCount .. " pets")
+
+-- Prepare remote arguments
+local releaseArgs = {
+    "f-39",                       -- furniture ID? (seems hardcoded in many scripts)
+    "UseBlock",
+    {
+        uniques = uniquesToRelease
+    },
+    player.Character or player.CharacterAdded:Wait()
+}
+
+-- ───────────────────────────────────────────────
+--  Release pets
+-- ───────────────────────────────────────────────
+local successRelease, err = pcall(function()
+    API:WaitForChild("HousingAPI"):WaitForChild("ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
+end)
+
+if successRelease then
+    print("✅ Release request sent (" .. matchCount .. " pets)")
+else
+    warn("Release failed: " .. tostring(err))
+end
+
+-- Small wait — sometimes server needs time to process
+task.wait(1.2)
+
+-- ───────────────────────────────────────────────
+--  Collect tickets
+-- ───────────────────────────────────────────────
+local successTickets, errTickets = pcall(function()
+    API:WaitForChild("PetRecyclerAPI"):WaitForChild("TicketsCollected"):InvokeServer()
+end)
+
+if successTickets then
+    print("🎟️ Tickets collection request sent")
+else
+    warn("Tickets collection failed: " .. tostring(errTickets))
+end
+
+print("Script finished.")
