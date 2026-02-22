@@ -99,7 +99,7 @@ ticketsLabel.Parent = screenGui
 --------------------------------------------------------------
 local running = false
 local farmThread = nil
-local recyclerFolderName = nil -- Store the found folder name (f-XX)
+local recyclerFolderName = nil -- Store the found folder name (like "f-39")
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
@@ -137,58 +137,65 @@ local function log(msg)
 end
 
 --------------------------------------------------------------
--- FIND RECYCLER FOLDER NAME (f-XX)
+-- DYNAMIC PET RECYCLER FOLDER FINDER (RETURNS FOLDER NAME LIKE "f-39")
 --------------------------------------------------------------
-local function findRecyclerFolder()
+local function findRecyclerFolderName()
     local Workspace = game:GetService("Workspace")
     
     -- First check in MainMap!EggTeaser2026 (event area)
     local eggTeaser = Workspace:FindFirstChild("MainMap!EggTeaser2026")
     if eggTeaser then
-        log("🔍 Searching in MainMap!EggTeaser2026 for PetRecycler...")
+        log("🔍 Searching in MainMap!EggTeaser2026 for PetRecycler folder...")
         
-        -- Search recursively for PetRecycler
-        local function findPetRecyclerPath(folder)
+        -- Search recursively for PetRecycler and get its parent folder
+        local function searchForRecycler(folder)
             for _, child in ipairs(folder:GetChildren()) do
                 if child.Name == "PetRecycler" then
-                    -- Found the recycler, now find its parent f- folder
+                    -- Found the recycler, now get its parent folder name
                     local parent = child.Parent
-                    while parent do
-                        if string.match(parent.Name, "^f%-%d+$") then
-                            return parent.Name
+                    if parent and string.match(parent.Name, "^f%-%d+$") then
+                        log("✅ Found PetRecycler in folder: " .. parent.Name)
+                        return parent.Name
+                    else
+                        -- If parent isn't f- folder, try to find f- folder in ancestry
+                        local current = child
+                        for i = 1, 5 do
+                            current = current.Parent
+                            if not current then break end
+                            if string.match(current.Name, "^f%-%d+$") then
+                                log("✅ Found PetRecycler in nested folder: " .. current.Name)
+                                return current.Name
+                            end
                         end
-                        parent = parent.Parent
+                        -- If still no f- folder, return the path for debugging
+                        log("⚠️ PetRecycler parent is not an f- folder: " .. tostring(parent and parent.Name))
+                        return nil
                     end
-                    return nil
                 end
                 if child:IsA("Folder") or child:IsA("Model") then
-                    local result = findPetRecyclerPath(child)
+                    local result = searchForRecycler(child)
                     if result then return result end
                 end
             end
             return nil
         end
         
-        local folderName = findPetRecyclerPath(eggTeaser)
+        local folderName = searchForRecycler(eggTeaser)
         if folderName then
-            log("✅ Found PetRecycler in folder: " .. folderName)
             return folderName
         end
     end
     
     -- If not found in EggTeaser, search entire workspace
-    log("🔍 Searching entire workspace for PetRecycler...")
+    log("🔍 Searching entire workspace for PetRecycler folder...")
     local function searchWorkspace(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
                 local parent = child.Parent
-                while parent do
-                    if string.match(parent.Name, "^f%-%d+$") then
-                        return parent.Name
-                    end
-                    parent = parent.Parent
+                if parent and string.match(parent.Name, "^f%-%d+$") then
+                    log("✅ Found PetRecycler in folder: " .. parent.Name)
+                    return parent.Name
                 end
-                return nil
             end
             if child:IsA("Folder") or child:IsA("Model") then
                 local result = searchWorkspace(child)
@@ -202,34 +209,21 @@ local function findRecyclerFolder()
 end
 
 --------------------------------------------------------------
--- PET MANAGEMENT SYSTEM (FIXED PET DATA HANDLING)
+-- PET MANAGEMENT SYSTEM (STRICT FILTERING)
 --------------------------------------------------------------
--- 🔍 Get ALL pets from inventory with proper ID extraction
+-- 🔍 Get ALL pets from inventory
 local function getAllPets()
+    local playerData = clientData.get_data()[player.Name]
     local pets = {}
-    local success, result = pcall(function()
-        local playerData = clientData.get_data()
-        if playerData and playerData[player.Name] and playerData[player.Name].inventory and playerData[player.Name].inventory.pets then
-            for uniqueId, petData in pairs(playerData[player.Name].inventory.pets) do
-                if type(petData) == "table" then
-                    -- Make sure we have all the data
-                    local pet = {
-                        uniqueId = uniqueId,
-                        id = petData.id,
-                        properties = petData.properties or {}
-                    }
-                    table.insert(pets, pet)
-                    log("📦 Found pet: " .. (petData.id or "Unknown") .. " | ID: " .. uniqueId)
-                end
+    if playerData and playerData.inventory and playerData.inventory.pets then
+        for uniqueId, petData in pairs(playerData.inventory.pets) do
+            if type(petData) == "table" then
+                petData.uniqueId = uniqueId
+                petData.unique = petData.unique or uniqueId
+                table.insert(pets, petData)
             end
         end
-    end)
-    
-    if not success then
-        log("❌ Error getting pets: " .. tostring(result))
     end
-    
-    log("📊 Total pets in inventory: " .. #pets)
     return pets
 end
 
@@ -238,34 +232,28 @@ local function getNeonPets()
     local pets = getAllPets()
     local neons = {}
     local megaNeons = {}
-    
     for _, pet in ipairs(pets) do
         local isNeon = pet.properties and pet.properties.neon
         local isMegaNeon = pet.properties and pet.properties.mega_neon
         local age = pet.properties and pet.properties.age or 0
-        
         if isMegaNeon then
             table.insert(megaNeons, {
                 uniqueId = pet.uniqueId,
                 age = age,
                 id = pet.id
             })
-            log("🌟 MEGA NEON Found: " .. (pet.id or "Unknown") .. " | ID: " .. pet.uniqueId)
+            log("🌟 MEGA NEON Found: " .. pet.id)
+        elseif isNeon and age >= 6 then
+            table.insert(neons, {
+                uniqueId = pet.uniqueId,
+                age = age,
+                id = pet.id
+            })
+            log("🌟 Neon 6+ Found: " .. pet.id .. " (Age: " .. age .. ")")
         elseif isNeon then
-            if age >= 6 then
-                table.insert(neons, {
-                    uniqueId = pet.uniqueId,
-                    age = age,
-                    id = pet.id
-                })
-                log("🌟 Neon 6+ Found: " .. (pet.id or "Unknown") .. " (Age: " .. age .. ") | ID: " .. pet.uniqueId)
-            else
-                log("💡 Young Neon: " .. (pet.id or "Unknown") .. " (Age: " .. age .. ") - Too young")
-            end
+            log("💡 Young Neon: " .. pet.id .. " (Age: " .. age .. ") - Too young, skipping")
         end
     end
-    
-    log("📊 Neons (6+): " .. #neons .. " | Mega Neons: " .. #megaNeons)
     return neons, megaNeons
 end
 
@@ -274,35 +262,32 @@ local function getAllowedTargetPets()
     local pets = getAllPets()
     local allowedPets = {}
     local counts = {}
-    
-    -- Initialize counts
+    -- Initialize counts for allowed pets only
     for _, name in ipairs(ALLOWED_PET_NAMES) do
         counts[name] = 0
     end
-    
     -- Collect ONLY allowed pets
     for _, pet in ipairs(pets) do
         for _, allowedName in ipairs(ALLOWED_PET_NAMES) do
             if pet.id == allowedName then
                 table.insert(allowedPets, pet.uniqueId)
                 counts[allowedName] = (counts[allowedName] or 0) + 1
-                log("✅ Allowed pet: " .. allowedName .. " | ID: " .. pet.uniqueId)
                 break
             end
         end
     end
-    
-    log("📊 Allowed Pets: " .. #allowedPets)
+    log("📊 Allowed Pets Scan: " .. HttpService:JSONEncode(counts))
+    log("📦 Total Allowed Pets: " .. #allowedPets)
     return allowedPets, counts
 end
 
--- 🎫 Get Tickets
+-- 🎫 Get Tickets (pet_recycler_tickets_2026)
 local function getTickets()
     local tickets = 0
     pcall(function()
-        local playerData = clientData.get_data()
-        if playerData and playerData[player.Name] and playerData[player.Name].inventory and playerData[player.Name].inventory.items then
-            for _, item in pairs(playerData[player.Name].inventory.items) do
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.items then
+            for _, item in pairs(playerData.inventory.items) do
                 if item.id == "pet_recycler_tickets_2026" then
                     tickets = item.amount or 0
                     break
@@ -317,22 +302,21 @@ end
 
 -- 🥚 Count Crystal Eggs
 local function countCrystalEggs()
-    local playerData = clientData.get_data()
+    local playerData = clientData.get_data()[player.Name]
     local count = 0
-    if playerData and playerData[player.Name] and playerData[player.Name].inventory and playerData[player.Name].inventory.pets then
-        for _, petData in pairs(playerData[player.Name].inventory.pets) do
+    if playerData and playerData.inventory and playerData.inventory.pets then
+        for _, petData in pairs(playerData.inventory.pets) do
             if petData.id and string.lower(petData.id) == "pet_recycler_2025_crystal_egg" then
                 count = count + 1
             end
         end
     end
-    log("🥚 Crystal Eggs: " .. count)
+    log("🥚 CRYSTAL EGGS: " .. count)
     return count
 end
 
 -- 🔄 Refresh inventory data
 local function refreshInventory()
-    log("🔄 Refreshing inventory...")
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("InventoryAPI/Request"):InvokeServer()
     end)
@@ -356,11 +340,10 @@ local function shouldReleaseNow()
     local totalAllowedPets = #allowedPets
     local totalNeons = #neonPets
     local totalMegaNeons = #megaNeonPets
-    
     log("🤔 Release Check:")
-    log("  Allowed Pets: " .. totalAllowedPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
-    log("  Neons (6+): " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS)
-    log("  Mega Neons: " .. totalMegaNeons .. "/" .. RELEASE_CONDITIONS.MIN_MEGA_NEONS)
+    log(" Allowed Pets: " .. totalAllowedPets .. "/" .. RELEASE_CONDITIONS.MIN_PETS)
+    log(" Neons (6+): " .. totalNeons .. "/" .. RELEASE_CONDITIONS.MIN_NEONS)
+    log(" Mega Neons: " .. totalMegaNeons .. "/" .. RELEASE_CONDITIONS.MIN_MEGA_NEONS)
     
     -- PRIORITY-BASED RELEASE CONDITIONS
     if totalMegaNeons >= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
@@ -380,14 +363,10 @@ local function shouldReleaseNow()
 end
 
 --------------------------------------------------------------
--- PET RELEASE LOGIC (USING FOUND FOLDER)
+-- PET RELEASE LOGIC (USING FOUND FOLDER NAME)
 --------------------------------------------------------------
 local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
-    
-    -- Refresh inventory to make sure we have latest data
-    refreshInventory()
-    
     local petIds = {}
     local usedNeons = 0
     local usedMegaNeons = 0
@@ -397,18 +376,16 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         if i <= 1 then
             table.insert(petIds, megaNeon.uniqueId)
             usedMegaNeons = usedMegaNeons + 1
-            log("🚀 Adding MEGA NEON: " .. (megaNeon.id or "Unknown") .. " | ID: " .. megaNeon.uniqueId)
+            log("🚀 Adding MEGA NEON: " .. (megaNeon.id or "Unknown"))
         end
     end
 
     -- Priority 2: Neons (age 6+)
-    if usedMegaNeons < 1 then
-        for i, neon in ipairs(neonPets) do
-            if i <= 2 then
-                table.insert(petIds, neon.uniqueId)
-                usedNeons = usedNeons + 1
-                log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ") | ID: " .. neon.uniqueId)
-            end
+    for i, neon in ipairs(neonPets) do
+        if i <= 2 and usedMegaNeons < 1 then
+            table.insert(petIds, neon.uniqueId)
+            usedNeons = usedNeons + 1
+            log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
         end
     end
 
@@ -430,132 +407,113 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         return false
     end
 
-    -- Create uniques table for API (EXACT FORMAT FROM YOUR EXAMPLE)
+    -- Create uniques table for API (exactly as in your example)
     local uniques = {}
     for _, petId in ipairs(petIds) do
         uniques[petId] = true
-        log("🔑 Adding pet to release: " .. petId)
     end
 
-    -- Make sure we have the folder name
+    -- Check if we have the folder name
     if not recyclerFolderName then
-        recyclerFolderName = findRecyclerFolder()
+        recyclerFolderName = findRecyclerFolderName()
     end
-    
+
     if not recyclerFolderName then
-        log("❌ Could not find recycler folder!")
+        log("❌ Could not find PetRecycler folder name!")
         return false
     end
 
-    -- Prepare args EXACTLY as in your example
+    -- Prepare args exactly as in your example
     local args = {
-        recyclerFolderName,           -- "f-39"
-        "UseBlock",                    -- "UseBlock"
-        {                              -- The action table
+        recyclerFolderName,  -- This will be "f-39" or similar
+        "UseBlock",
+        {
             uniques = uniques
         },
-        player.Character               -- Character
+        player.Character
     }
-    
-    log("📦 Release args prepared for folder: " .. recyclerFolderName)
-    log("🔍 Uniques count: " .. HttpService:JSONEncode(#petIds))
 
-    -- Send the request
-    local success, result = pcall(function()
+    log("🎯 Using recycler folder: " .. recyclerFolderName)
+    log("📦 Releasing " .. #petIds .. " pets")
+
+    -- Invoke the API
+    local success, err = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
     end)
 
     if success then
         log("✅ Successfully released pets in folder: " .. recyclerFolderName)
         
-        -- Wait a moment then collect tickets
+        -- Collect tickets
         task.wait(1)
         local ticketSuccess, ticketErr = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
         end)
-        
         if ticketSuccess then
             log("🎫 Tickets collected successfully!")
             getTickets()
-        else
-            log("⚠️ Ticket collection failed: " .. tostring(ticketErr))
         end
         return true
     else
-        log("❌ Release failed: " .. tostring(result))
+        log("❌ Failed to release pets: " .. tostring(err))
         return false
     end
 end
 
 --------------------------------------------------------------
--- CLAIM REWARD FUNCTION
+-- CLAIM REWARD FUNCTION (USING FOUND FOLDER NAME)
 --------------------------------------------------------------
 local function claimReward()
     log("🔹 Claiming Reward...")
     
+    -- Check if we have the folder name
     if not recyclerFolderName then
-        recyclerFolderName = findRecyclerFolder()
+        recyclerFolderName = findRecyclerFolderName()
     end
-    
+
     if not recyclerFolderName then
-        log("❌ Could not find recycler folder!")
+        log("❌ Could not find PetRecycler folder name for claiming!")
         return false
     end
-    
+
+    -- Prepare args for claiming (similar to release but without uniques)
     local args = {
         recyclerFolderName,
         "UseBlock",
         {
-            action = "claim"
+            action = "claim"  -- Add claim action
         },
         player.Character
     }
-    
-    local success, result = pcall(function()
+
+    log("🎯 Using recycler folder for claim: " .. recyclerFolderName)
+
+    -- Invoke the API
+    local success, err = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
     end)
-    
+
     if success then
         log("🎉 Successfully claimed reward in folder: " .. recyclerFolderName)
         return true
     else
-        log("❌ Claim failed: " .. tostring(result))
+        log("❌ Failed to claim reward: " .. tostring(err))
         return false
     end
 end
 
 --------------------------------------------------------------
--- VERIFY RECYCLER ACCESS
+-- VERIFY RECYCLER FOLDER ACCESS
 --------------------------------------------------------------
-local function verifyRecyclerAccess()
-    recyclerFolderName = findRecyclerFolder()
-    
+local function verifyRecyclerFolder()
+    recyclerFolderName = findRecyclerFolderName()
     if recyclerFolderName then
-        log("✅ PetRecycler found in folder: " .. recyclerFolderName)
-        
-        -- Test the API connection
-        local testArgs = {
-            recyclerFolderName,
-            "UseBlock",
-            {
-                action = "test"
-            },
-            player.Character
-        }
-        
-        local testSuccess = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(testArgs))
-        end)
-        
-        if testSuccess then
-            log("✅ API connection successful")
-        else
-            log("⚠️ API connection test failed (may still work for release)")
-        end
-        
+        log("✅ PetRecycler folder found: " .. recyclerFolderName)
+        log("✅ Will use this folder for all interactions")
         return true
     else
-        log("⚠️ PetRecycler folder not found - make sure you're near the event area")
+        log("⚠️ Could not find PetRecycler folder!")
+        log("⚠️ Make sure you're near the recycler and it's loaded")
         return false
     end
 end
@@ -564,7 +522,7 @@ end
 -- MAIN FARMING CYCLE
 --------------------------------------------------------------
 local function farmCycle()
-    log("🔄 Starting farm cycle...")
+    log("Starting farm cycle...")
     refreshInventory()
     getTickets()
     countCrystalEggs()
@@ -572,9 +530,8 @@ local function farmCycle()
 
     -- Check conditions and get pet data
     local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
-    
     if not shouldRelease then
-        log("⏳ Not enough resources. Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds...")
+        log("❌ Not enough resources. Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds...")
         for i = 1, COOLDOWNS.RESOURCE_CHECK do
             if not running then break end
             if i % 30 == 0 then antiAfk() end
@@ -593,14 +550,14 @@ local function farmCycle()
         return
     end
 
-    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN
-    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT/60) .. "m " .. (COOLDOWNS.REWARD_WAIT%60) .. "s) for rewards cooldown...")
+    -- WAIT 7 MINUTES + 5 SECONDS COOLDOWN BEFORE CLAIMING
+    log("⏳ Waiting " .. COOLDOWNS.REWARD_WAIT .. " seconds (" .. math.floor(COOLDOWNS.REWARD_WAIT/60) .. " minutes " .. (COOLDOWNS.REWARD_WAIT%60) .. " seconds) for rewards cooldown...")
     for i = 1, COOLDOWNS.REWARD_WAIT do
         if not running then break end
         if i % 60 == 0 then
             local minutesLeft = math.floor((COOLDOWNS.REWARD_WAIT - i) / 60)
             local secondsLeft = (COOLDOWNS.REWARD_WAIT - i) % 60
-            log("⏳ " .. minutesLeft .. "m " .. secondsLeft .. "s remaining...")
+            log(" " .. minutesLeft .. "m " .. secondsLeft .. "s remaining...")
         end
         if i % 30 == 0 then antiAfk() end
         task.wait(1)
@@ -608,7 +565,7 @@ local function farmCycle()
 
     if not running then return end
 
-    -- Claim Reward
+    -- STEP 4: Claim Reward
     local claimSuccess = claimReward()
     if claimSuccess then
         log("✅ Reward claimed successfully")
@@ -616,13 +573,13 @@ local function farmCycle()
         log("⚠️ Could not claim reward, will try next cycle")
     end
 
-    -- Update counts
+    -- Count crystal eggs after successful release
     refreshInventory()
     countCrystalEggs()
     getTickets()
 
-    -- WAIT BEFORE NEXT CYCLE
-    log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next check...")
+    -- WAIT 30 SECONDS BEFORE NEXT CYCLE CHECK
+    log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
     for i = 1, COOLDOWNS.AFTER_CLAIM do
         if not running then break end
         if i % 30 == 0 then antiAfk() end
@@ -643,25 +600,28 @@ local function toggleFarm()
         stroke.Color = Color3.fromRGB(255, 0, 0)
         status.Text = "RUNNING..."
         status.TextColor3 = Color3.fromRGB(0, 255, 0)
-        log("🚀 Farmer started! Waiting for conditions...")
+        log("Strict Filter Farmer started! Waiting for conditions...")
         
-        -- Find and verify recycler
-        verifyRecyclerAccess()
+        -- Find and verify recycler folder on start
+        verifyRecyclerFolder()
         
         farmThread = task.spawn(function()
             while running do
                 local success, err = pcall(farmCycle)
                 if not success then
-                    log("❌ Error in farm cycle: " .. tostring(err))
-                    log("📋 Error details: " .. debug.traceback())
+                    log("Error in farm cycle: " .. tostring(err))
                 end
+                -- Only check every 60 seconds if no release happened
                 if running then
-                    task.wait(1)
+                    log("⏳ Waiting " .. COOLDOWNS.RESOURCE_CHECK .. " seconds before next condition check...")
+                    for i = 1, COOLDOWNS.RESOURCE_CHECK do
+                        if not running then break end
+                        if i % 30 == 0 then antiAfk() end
+                        task.wait(1)
+                    end
                 end
             end
         end)
-        
-        -- Start animation
         pcall(function()
             TweenService:Create(btn, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
                 Size = UDim2.new(0, 100, 0, 100)
@@ -675,17 +635,18 @@ local function toggleFarm()
         status.TextColor3 = Color3.fromRGB(255, 0, 0)
         if farmThread then task.cancel(farmThread) end
         pcall(function() btn.Size = UDim2.new(0, 90, 0, 90) end)
-        log("⏹️ Farmer stopped")
+        log("Farmer stopped")
     end
 end
 
 btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
--- Initial setup
+-- Initial verification
 task.wait(3)
-log("=" .. string.rep("=", 50))
-log("✅ NURSERY AUTO-FARMER LOADED!")
-log("✅ Press ♻️ button or R key to start/stop")
-log("✅ Found folder: " .. (findRecyclerFolder() or "Not found yet"))
-log("=" .. string.rep("=", 50))
+verifyRecyclerFolder()
+
+log("✅ PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
+log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
+log("✅ USING FOUND FOLDER: Will use folder name like " .. (recyclerFolderName or "f-XX") .. " for interactions")
+log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
