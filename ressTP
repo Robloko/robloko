@@ -128,42 +128,34 @@ local ALLOWED_PET_NAMES = {
 }
 
 --------------------------------------------------------------
--- FIND PET RECYCLER AND ITS SLOTNAME
+-- FIND PET RECYCLER
 --------------------------------------------------------------
 local function findPetRecycler()
     local Workspace = game:GetService("Workspace")
     local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
+
     if not HouseInteriors then
         warn("HouseInteriors not found!")
         return nil
     end
 
+    -- Recursive search for PetRecycler
     local function search(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
-                -- Try to get slotName from attributes or parent
-                local slotName = child:GetAttribute("SlotName") or child.Name
-                if not slotName or slotName == "" then
-                    -- Fallback: Use parent's name or grandparent's name
-                    slotName = child.Parent.Name
-                    if child.Parent.Parent then
-                        slotName = child.Parent.Parent.Name .. "_" .. slotName
-                    end
-                end
-                return child, slotName, child:GetFullName()
+                return child, child:GetFullName()
             end
             if child:IsA("Folder") then
-                local found, slot, path = search(child)
+                local found, path = search(child)
                 if found then
-                    return found, slot, path
+                    return found, path
                 end
             end
         end
         return nil
     end
 
-    local petRecycler, slotName, fullPath = search(HouseInteriors)
-    return petRecycler, slotName, fullPath
+    return search(HouseInteriors)
 end
 
 --------------------------------------------------------------
@@ -309,19 +301,16 @@ end
 local function log(msg) print("[Nursery Farmer] " .. tostring(msg)) end
 
 --------------------------------------------------------------
--- PET RELEASE LOGIC (DYNAMIC SLOTS)
+-- PET RELEASE LOGIC (USING PET RECYCLER)
 --------------------------------------------------------------
-local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
+local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
     local petIds = {}
-    local usedNeons = 0
-    local usedMegaNeons = 0
 
     -- Priority 1: Mega Neons
     for i, megaNeon in ipairs(megaNeonPets) do
         if i <= RELEASE_CONDITIONS.MIN_MEGA_NEONS then
             table.insert(petIds, megaNeon.uniqueId)
-            usedMegaNeons = usedMegaNeons + 1
             log("🚀 Adding MEGA NEON: " .. (megaNeon.id or "Unknown"))
         end
     end
@@ -330,7 +319,6 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
     for i, neon in ipairs(neonPets) do
         if i <= RELEASE_CONDITIONS.MIN_NEONS and #petIds < 18 then
             table.insert(petIds, neon.uniqueId)
-            usedNeons = usedNeons + 1
             log("🚀 Adding Neon: " .. (neon.id or "Unknown") .. " (Age: " .. (neon.age or 0) .. ")")
         end
     end
@@ -344,15 +332,15 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
         end
     end
 
-    log("🎯 Release Strategy: " ..
-        usedMegaNeons .. " mega neons + " ..
-        usedNeons .. " neons (any type, age 6+) + " ..
-        (#petIds - usedNeons - usedMegaNeons) ..
-        " allowed pets = " ..
-        #petIds .. " total pets")
-
-    if #petIds < 1 then
+    if #petIds == 0 then
         log("❌ No pets selected for release")
+        return false
+    end
+
+    -- Find PetRecycler
+    local petRecycler, fullPath = findPetRecycler()
+    if not petRecycler then
+        log("❌ PetRecycler not found!")
         return false
     end
 
@@ -362,23 +350,21 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
         uniques[petId] = true
     end
 
-    -- Release pets in dynamic slot
-    local releaseArgs = {
-        slotName, -- Use dynamic slotName
-        "UseBlock",
-        {
-            action = "use",
-            uniques = uniques
-        },
-        player.Character
-    }
-
+    -- Release pets using PetRecycler object
     local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+            petRecycler, -- Use PetRecycler object instead of slotName
+            "UseBlock",
+            {
+                action = "use",
+                uniques = uniques
+            },
+            player.Character
+        )
     end)
 
     if success then
-        log("✅ Released pets in slot: " .. slotName)
+        log("✅ Released pets successfully!")
         -- Collect tickets after successful release
         local ticketSuccess, ticketErr = pcall(function()
             return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
@@ -391,10 +377,9 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
         end
         return true
     else
-        log("❌ Failed to release in slot " .. slotName .. ": " .. tostring(err))
+        log("❌ Failed to release pets: " .. tostring(err))
+        return false
     end
-
-    return false
 end
 
 --------------------------------------------------------------
@@ -404,17 +389,6 @@ local function farmCycle()
     log("Starting farm cycle...")
     getTickets() -- Update tickets UI
     countCrystalEggs()
-
-    -- Find PetRecycler and its slotName
-    local petRecycler, slotName, fullPath = findPetRecycler()
-    if not petRecycler or not slotName then
-        log("❌ PetRecycler or slotName not found! Retrying in 60 seconds...")
-        for i = 1, COOLDOWNS.RESOURCE_CHECK do
-            if not running then break end
-            task.wait(1)
-        end
-        return
-    end
 
     -- Check conditions and get pet data
     local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
@@ -431,7 +405,7 @@ local function farmCycle()
 
     local releaseSuccess = false
     -- PET RELEASE (pets, neons, or mega neons)
-    releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets, slotName)
+    releaseSuccess = executePetRelease(allowedPets, neonPets, megaNeonPets)
 
     if not releaseSuccess then
         log("❌ Release process failed")
@@ -452,25 +426,29 @@ local function farmCycle()
 
     if not running then return end
 
-    -- STEP 4: Claim Reward (FOR ALL RELEASE TYPES)
+    -- STEP 4: Claim Reward (USING SLOTNAME, AS REQUESTED)
     log("🔹 Step 4: Claiming Reward...")
-    local claimArgs = {
-        slotName, -- Use dynamic slotName
-        "UseBlock",
-        {
-            action = "claim"
-        },
-        player.Character
-    }
+    for slot = 0, 99 do
+        local slotName = "f-" .. slot
+        local claimArgs = {
+            slotName,
+            "UseBlock",
+            {
+                action = "claim"
+            },
+            player.Character
+        }
 
-    local success, err = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
-    end)
+        local success, err = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
+        end)
 
-    if success then
-        log("🎉 Successfully claimed reward in slot: " .. slotName)
-    else
-        log("❌ Failed to claim reward in slot " .. slotName .. ": " .. tostring(err))
+        if success then
+            log("🎉 Successfully claimed reward in slot: " .. slotName)
+            break
+        else
+            log("❌ Failed to claim reward in slot " .. slotName .. ": " .. tostring(err))
+        end
     end
 
     -- Count crystal eggs after successful release
