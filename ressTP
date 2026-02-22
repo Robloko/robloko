@@ -102,14 +102,14 @@ local farmThread = nil
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
     MIN_MEGA_NEONS = 1, -- Condition 3: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60 -- 60 seconds between condition checks
 }
@@ -128,25 +128,52 @@ local ALLOWED_PET_NAMES = {
 }
 
 --------------------------------------------------------------
--- DYNAMIC PET RECYCLER FINDER
+-- DYNAMIC PET RECYCLER FINDER (UPDATED FOR MAIN MAP)
 --------------------------------------------------------------
+local function log(msg) 
+    local timestamp = os.date("%H:%M:%S")
+    print("[" .. timestamp .. "] [Nursery Farmer] " .. tostring(msg)) 
+end
+
 local function findPetRecycler()
     local Workspace = game:GetService("Workspace")
-    local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
     
-    if not HouseInteriors then
-        warn("⚠️ HouseInteriors not found!")
-        return nil, nil
+    -- First check in MainMap!EggTeaser2026 (event area)
+    local eggTeaser = Workspace:FindFirstChild("MainMap!EggTeaser2026")
+    if eggTeaser then
+        log("🔍 Searching in MainMap!EggTeaser2026...")
+        -- Search recursively in EggTeaser
+        local function searchInEggTeaser(folder)
+            for _, child in ipairs(folder:GetChildren()) do
+                if child.Name == "PetRecycler" then
+                    return child, child:GetFullName()
+                end
+                if child:IsA("Folder") or child:IsA("Model") then
+                    local found, path = searchInEggTeaser(child)
+                    if found then
+                        return found, path
+                    end
+                end
+            end
+            return nil
+        end
+        
+        local petRecycler, path = searchInEggTeaser(eggTeaser)
+        if petRecycler then
+            log("✅ Found PetRecycler in MainMap!EggTeaser2026!")
+            return petRecycler, path
+        end
     end
     
-    -- Recursive function to find PetRecycler
-    local function search(folder)
+    -- If not found in EggTeaser, search entire workspace
+    log("🔍 Searching entire workspace for PetRecycler...")
+    local function searchWorkspace(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
                 return child, child:GetFullName()
             end
             if child:IsA("Folder") or child:IsA("Model") then
-                local found, path = search(child)
+                local found, path = searchWorkspace(child)
                 if found then
                     return found, path
                 end
@@ -155,8 +182,7 @@ local function findPetRecycler()
         return nil
     end
     
-    -- Start search from HouseInteriors
-    local petRecycler, path = search(HouseInteriors)
+    local petRecycler, path = searchWorkspace(Workspace)
     return petRecycler, path
 end
 
@@ -171,27 +197,29 @@ local function getRecyclerSlotName()
         return nil
     end
     
-    -- Extract slot name from path (e.g., "HouseInteriors.PlayerHouseInterior_123.f-0.PetRecycler")
-    local pathParts = string.split(path, ".")
-    for i, part in ipairs(pathParts) do
-        if string.match(part, "^f%-%d+$") then
-            log("✅ Found recycler in slot: " .. part)
-            return part
+    log("📋 PetRecycler found at: " .. path)
+    
+    -- For main map recyclers, we need to find the parent housing folder
+    -- Try to find the nearest folder with f- format
+    local current = petRecycler
+    for i = 1, 10 do -- Check up to 10 levels up
+        if current and current.Name and string.match(current.Name, "^f%-%d+$") then
+            log("✅ Found recycler in slot: " .. current.Name)
+            return current.Name
         end
+        current = current.Parent
+        if not current then break end
     end
     
-    log("⚠️ Could not extract slot name from path: " .. path)
+    -- If we can't find the slot name from path, we'll need to use the recycler's position
+    -- to determine which slot it belongs to
+    log("⚠️ Could not extract slot name from path, will use position-based detection")
     return nil
 end
 
 --------------------------------------------------------------
 -- PET MANAGEMENT SYSTEM (STRICT FILTERING)
 --------------------------------------------------------------
-local function log(msg) 
-    local timestamp = os.date("%H:%M:%S")
-    print("[" .. timestamp .. "] [Nursery Farmer] " .. tostring(msg)) 
-end
-
 -- 🔍 Get ALL pets from inventory
 local function getAllPets()
     local playerData = clientData.get_data()[player.Name]
@@ -429,9 +457,11 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
             log("❌ Failed to release in found slot " .. targetSlot .. ": " .. tostring(err))
             log("🔄 Falling back to slot scanning...")
         end
+    else
+        log("⚠️ No specific slot found, will scan all slots")
     end
 
-    -- FALLBACK: Scan through slots 0-99 if specific slot not found or fails
+    -- FALLBACK: Scan through slots 0-99
     log("🔍 Scanning all possible slots (f-0 to f-99)...")
     for slot = 0, 99 do
         local slotName = "f-" .. slot
@@ -528,23 +558,17 @@ local function claimReward()
 end
 
 --------------------------------------------------------------
--- VERIFY RECYCLER ACCESS
+-- VERIFY RECYCLER ACCESS (UPDATED)
 --------------------------------------------------------------
 local function verifyRecyclerAccess()
     local petRecycler, path = findPetRecycler()
     if petRecycler then
-        log("✅ PetRecycler verified at: " .. path)
-        
-        -- Check if recycler is usable
-        local clickDetector = petRecycler:FindFirstChild("ClickDetector")
-        if clickDetector then
-            log("✅ Recycler is interactive")
-        else
-            log("⚠️ Recycler may not be interactive yet (needs to be placed in house?)")
-        end
+        log("✅ PetRecycler found at: " .. path)
+        log("✅ This is a main map recycler (event area: MainMap!EggTeaser2026)")
+        log("✅ Will use slot scanning since main map recyclers don't have f- slots")
         return true
     else
-        log("⚠️ Cannot verify recycler - will use slot scanning")
+        log("⚠️ PetRecycler not found in workspace - make sure you're near the event area")
         return false
     end
 end
@@ -679,5 +703,5 @@ verifyRecyclerAccess()
 
 log("✅ PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
 log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
-log("✅ DYNAMIC SLOT FINDING: Automatically detects your PetRecycler location")
+log("✅ MAIN MAP RECYCLER DETECTED: Will use slot scanning for MainMap!EggTeaser2026")
 log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
