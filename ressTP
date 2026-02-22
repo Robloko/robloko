@@ -131,7 +131,7 @@ local ALLOWED_PET_NAMES = {
 --------------------------------------------------------------
 -- FIND PET RECYCLER AND ITS PARENT SLOT
 --------------------------------------------------------------
-local function findPetRecycler()
+local function findPetRecyclerSlot()
     local Workspace = game:GetService("Workspace")
     local HouseInteriors = Workspace:FindFirstChild("HouseInteriors")
 
@@ -140,20 +140,23 @@ local function findPetRecycler()
         return nil
     end
 
-    -- Рекурсивная функция для поиска PetRecycler
+    -- Рекурсивная функция для поиска PetRecycler и его родительского слота
     local function search(folder)
         for _, child in ipairs(folder:GetChildren()) do
+            -- Если нашли PetRecycler, поднимаемся вверх, чтобы найти слот (например, "f-39")
             if child.Name == "PetRecycler" then
-                -- Находим родительский слот (например, "f-39")
                 local current = child
                 while current and current.Parent ~= HouseInteriors do
                     current = current.Parent
+                    -- Проверяем, что имя родителя соответствует формату слота (например, "f-39")
                     if current and current.Name:match("^f%-%d+$") then
                         return current.Name, child, current:GetFullName()
                     end
                 end
+                -- Если слот не найден, возвращаем nil
                 return nil, child, child:GetFullName()
             end
+            -- Рекурсивно ищем в папках
             if child:IsA("Folder") then
                 local slotName, recycler, path = search(child)
                 if slotName then
@@ -166,6 +169,28 @@ local function findPetRecycler()
 
     -- Начинаем поиск с HouseInteriors
     local slotName, petRecycler, fullPath = search(HouseInteriors)
+    if not slotName then
+        warn("Слот PetRecycler не найден! Попробуем альтернативный метод...")
+        -- Альтернативный метод: поиск всех слотов и проверка наличия PetRecycler внутри
+        for _, slot in ipairs(HouseInteriors:GetChildren()) do
+            if slot.Name:match("^f%-%d+$") then
+                local recycler = slot:FindFirstChild("PetRecycler", true)
+                if recycler then
+                    slotName = slot.Name
+                    petRecycler = recycler
+                    fullPath = recycler:GetFullName()
+                    break
+                end
+            end
+        end
+    end
+
+    if slotName then
+        print("Найден слот PetRecycler:", slotName, "Путь:", fullPath)
+    else
+        warn("Слот PetRecycler не найден!")
+    end
+
     return slotName, petRecycler, fullPath
 end
 
@@ -357,7 +382,7 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     end
 
     -- Find PetRecycler slot
-    local slotName, petRecycler, fullPath = findPetRecycler()
+    local slotName, petRecycler, fullPath = findPetRecyclerSlot()
     if not slotName then
         log("❌ PetRecycler slot not found!")
         return false
@@ -443,7 +468,7 @@ local function farmCycle()
 
     -- Claim Reward
     log("🔹 Claiming Reward...")
-    local slotName, petRecycler, fullPath = findPetRecycler()
+    local slotName, petRecycler, fullPath = findPetRecyclerSlot()
     if not slotName then
         log("❌ PetRecycler slot not found for claiming!")
         return
