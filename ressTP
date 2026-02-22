@@ -99,17 +99,18 @@ ticketsLabel.Parent = screenGui
 --------------------------------------------------------------
 local running = false
 local farmThread = nil
+local petRecyclerModel = nil -- Store the found recycler model
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
     MIN_MEGA_NEONS = 1, -- Condition 3: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60 -- 60 seconds between condition checks
 }
@@ -128,14 +129,14 @@ local ALLOWED_PET_NAMES = {
 }
 
 --------------------------------------------------------------
--- DYNAMIC PET RECYCLER FINDER (UPDATED FOR MAIN MAP)
+-- DYNAMIC PET RECYCLER FINDER (RETURNS THE MODEL)
 --------------------------------------------------------------
 local function log(msg) 
     local timestamp = os.date("%H:%M:%S")
     print("[" .. timestamp .. "] [Nursery Farmer] " .. tostring(msg)) 
 end
 
-local function findPetRecycler()
+local function findPetRecyclerModel()
     local Workspace = game:GetService("Workspace")
     
     -- First check in MainMap!EggTeaser2026 (event area)
@@ -158,10 +159,11 @@ local function findPetRecycler()
             return nil
         end
         
-        local petRecycler, path = searchInEggTeaser(eggTeaser)
-        if petRecycler then
+        local recycler, path = searchInEggTeaser(eggTeaser)
+        if recycler then
             log("✅ Found PetRecycler in MainMap!EggTeaser2026!")
-            return petRecycler, path
+            log("📋 Full path: " .. path)
+            return recycler
         end
     end
     
@@ -170,51 +172,137 @@ local function findPetRecycler()
     local function searchWorkspace(folder)
         for _, child in ipairs(folder:GetChildren()) do
             if child.Name == "PetRecycler" then
-                return child, child:GetFullName()
+                return child
             end
             if child:IsA("Folder") or child:IsA("Model") then
-                local found, path = searchWorkspace(child)
+                local found = searchWorkspace(child)
                 if found then
-                    return found, path
+                    return found
                 end
             end
         end
         return nil
     end
     
-    local petRecycler, path = searchWorkspace(Workspace)
-    return petRecycler, path
+    return searchWorkspace(Workspace)
 end
 
 --------------------------------------------------------------
--- GET RECYCLER SLOT NAME FROM MODEL
+-- GET RECYCLER PARENT FOLDER FOR SLOT NAME
 --------------------------------------------------------------
-local function getRecyclerSlotName()
-    local petRecycler, path = findPetRecycler()
+local function getRecyclerParentFolder()
+    if not petRecyclerModel then
+        petRecyclerModel = findPetRecyclerModel()
+    end
     
-    if not petRecycler then
-        log("⚠️ PetRecycler not found in workspace, falling back to slot scanning...")
+    if not petRecyclerModel then
+        log("⚠️ PetRecycler not found in workspace")
         return nil
     end
     
-    log("📋 PetRecycler found at: " .. path)
+    -- Get the parent folder (should be the slot folder like f-0, f-1, etc.)
+    local parent = petRecyclerModel.Parent
     
-    -- For main map recyclers, we need to find the parent housing folder
-    -- Try to find the nearest folder with f- format
-    local current = petRecycler
-    for i = 1, 10 do -- Check up to 10 levels up
-        if current and current.Name and string.match(current.Name, "^f%-%d+$") then
-            log("✅ Found recycler in slot: " .. current.Name)
-            return current.Name
+    -- Check if parent name matches f- pattern
+    if parent and string.match(parent.Name, "^f%-%d+$") then
+        log("✅ Found recycler in folder: " .. parent.Name)
+        return parent.Name
+    else
+        -- If direct parent isn't f- folder, try to find the housing folder
+        local current = petRecyclerModel
+        for i = 1, 5 do -- Check up to 5 levels up
+            current = current.Parent
+            if not current then break end
+            if string.match(current.Name, "^f%-%d+$") then
+                log("✅ Found recycler in folder (nested): " .. current.Name)
+                return current.Name
+            end
         end
-        current = current.Parent
-        if not current then break end
+        
+        -- For main map recyclers, they might not be in f- folders
+        log("⚠️ Recycler is not in an f- folder (main map/event recycler)")
+        -- Return the actual model path for main map recyclers
+        return nil -- We'll handle this case separately
+    end
+end
+
+--------------------------------------------------------------
+-- DIRECT INTERACTION WITH FOUND RECYCLER
+--------------------------------------------------------------
+local function interactWithRecycler(action, uniques)
+    if not petRecyclerModel then
+        petRecyclerModel = findPetRecyclerModel()
     end
     
-    -- If we can't find the slot name from path, we'll need to use the recycler's position
-    -- to determine which slot it belongs to
-    log("⚠️ Could not extract slot name from path, will use position-based detection")
-    return nil
+    if not petRecyclerModel then
+        log("❌ Cannot interact: PetRecycler not found")
+        return false
+    end
+    
+    log("🎯 Attempting direct interaction with PetRecycler at: " .. petRecyclerModel:GetFullName())
+    
+    -- Try different interaction methods
+    local success = false
+    
+    -- Method 1: Try ClickDetector if available
+    local clickDetector = petRecyclerModel:FindFirstChild("ClickDetector")
+    if clickDetector then
+        log("🖱️ Using ClickDetector")
+        pcall(function()
+            fireclickdetector(clickDetector)
+        end)
+        task.wait(1)
+        -- After clicking, we might need to send the API request
+    end
+    
+    -- Method 2: Try to find the parent slot and use HousingAPI
+    local parentFolder = getRecyclerParentFolder()
+    if parentFolder then
+        log("🏠 Using HousingAPI with folder: " .. parentFolder)
+        local args = {
+            parentFolder,
+            "UseBlock",
+            action == "use" and { action = "use", uniques = uniques } or { action = "claim" },
+            player.Character
+        }
+        
+        success = pcall(function()
+            local result = ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
+            return result ~= nil
+        end)
+    end
+    
+    -- Method 3: For main map recyclers, try direct RemoteEvent
+    if not success then
+        log("📡 Trying direct RemoteEvent interaction...")
+        
+        -- Try different possible remote events
+        local remotePaths = {
+            "PetRecyclerAPI/RecyclePets",
+            "PetRecyclerAPI/Activate",
+            "HousingAPI/ActivateFurniture",
+            "RecycleAPI/Recycle"
+        }
+        
+        for _, remotePath in ipairs(remotePaths) do
+            local remote = ReplicatedStorage:FindFirstChild(remotePath)
+            if remote then
+                log(" Attempting remote: " .. remotePath)
+                if action == "use" then
+                    success = pcall(function()
+                        remote:InvokeServer({ uniques = uniques })
+                    end)
+                else
+                    success = pcall(function()
+                        remote:InvokeServer({ action = "claim" })
+                    end)
+                end
+                if success then break end
+            end
+        end
+    end
+    
+    return success
 end
 
 --------------------------------------------------------------
@@ -372,7 +460,7 @@ local function shouldReleaseNow()
 end
 
 --------------------------------------------------------------
--- PET RELEASE LOGIC (WITH DYNAMIC SLOT)
+-- PET RELEASE LOGIC (USING FOUND FOLDER)
 --------------------------------------------------------------
 local function executePetRelease(allowedPets, neonPets, megaNeonPets)
     log("🔹 Starting PET release process...")
@@ -422,150 +510,70 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         uniques[petId] = true
     end
 
-    -- Try to find the correct slot first
-    local targetSlot = getRecyclerSlotName()
-    
-    if targetSlot then
-        -- Use the found slot
-        log("🎯 Using found recycler slot: " .. targetSlot)
-        local releaseArgs = {
-            targetSlot,
-            "UseBlock",
-            {
-                action = "use",
-                uniques = uniques
-            },
-            player.Character
-        }
+    -- INTERACT WITH THE FOUND RECYCLER DIRECTLY
+    local releaseSuccess = interactWithRecycler("use", uniques)
 
-        local success, err = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
+    if releaseSuccess then
+        log("✅ Successfully interacted with PetRecycler for release")
+        
+        -- Collect tickets
+        task.wait(1)
+        local ticketSuccess, ticketErr = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
         end)
-
-        if success then
-            log("✅ Successfully released pets in slot: " .. targetSlot)
-            -- Collect tickets
-            local ticketSuccess, ticketErr = pcall(function()
-                return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
-            end)
-            if ticketSuccess then
-                log("🎫 Tickets collected successfully!")
-                getTickets()
-            end
-            return true
-        else
-            log("❌ Failed to release in found slot " .. targetSlot .. ": " .. tostring(err))
-            log("🔄 Falling back to slot scanning...")
+        if ticketSuccess then
+            log("🎫 Tickets collected successfully!")
+            getTickets()
         end
+        return true
     else
-        log("⚠️ No specific slot found, will scan all slots")
+        log("❌ Failed to interact with PetRecycler")
+        return false
     end
-
-    -- FALLBACK: Scan through slots 0-99
-    log("🔍 Scanning all possible slots (f-0 to f-99)...")
-    for slot = 0, 99 do
-        local slotName = "f-" .. slot
-        local releaseArgs = {
-            slotName,
-            "UseBlock",
-            {
-                action = "use",
-                uniques = uniques
-            },
-            player.Character
-        }
-
-        local success, err = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(releaseArgs))
-        end)
-
-        if success then
-            log("✅ Released pets in slot: " .. slotName)
-            -- Collect tickets
-            local ticketSuccess, ticketErr = pcall(function()
-                return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
-            end)
-            if ticketSuccess then
-                log("🎫 Tickets collected successfully!")
-                getTickets()
-            end
-            return true
-        end
-    end
-
-    log("❌ No working slot found for pet release")
-    return false
 end
 
 --------------------------------------------------------------
--- CLAIM REWARD FUNCTION (WITH DYNAMIC SLOT)
+-- CLAIM REWARD FUNCTION (USING FOUND FOLDER)
 --------------------------------------------------------------
 local function claimReward()
     log("🔹 Claiming Reward...")
     
-    -- Try to find the correct slot first
-    local targetSlot = getRecyclerSlotName()
+    -- INTERACT WITH THE FOUND RECYCLER DIRECTLY
+    local claimSuccess = interactWithRecycler("claim")
     
-    if targetSlot then
-        -- Use the found slot
-        log("🎯 Using found recycler slot: " .. targetSlot)
-        local claimArgs = {
-            targetSlot,
-            "UseBlock",
-            {
-                action = "claim"
-            },
-            player.Character
-        }
-
-        local success, err = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
-        end)
-
-        if success then
-            log("🎉 Successfully claimed reward in slot: " .. targetSlot)
-            return true
-        else
-            log("❌ Failed to claim in found slot: " .. tostring(err))
-            log("🔄 Falling back to slot scanning...")
-        end
+    if claimSuccess then
+        log("🎉 Successfully claimed reward using PetRecycler")
+        return true
+    else
+        log("❌ Failed to claim reward")
+        return false
     end
-
-    -- FALLBACK: Scan through slots
-    for slot = 0, 99 do
-        local slotName = "f-" .. slot
-        local claimArgs = {
-            slotName,
-            "UseBlock",
-            {
-                action = "claim"
-            },
-            player.Character
-        }
-
-        local success, err = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(claimArgs))
-        end)
-
-        if success then
-            log("🎉 Successfully claimed reward in slot: " .. slotName)
-            return true
-        end
-    end
-
-    log("❌ No working slot found for claiming")
-    return false
 end
 
 --------------------------------------------------------------
--- VERIFY RECYCLER ACCESS (UPDATED)
+-- VERIFY RECYCLER ACCESS
 --------------------------------------------------------------
 local function verifyRecyclerAccess()
-    local petRecycler, path = findPetRecycler()
-    if petRecycler then
-        log("✅ PetRecycler found at: " .. path)
-        log("✅ This is a main map recycler (event area: MainMap!EggTeaser2026)")
-        log("✅ Will use slot scanning since main map recyclers don't have f- slots")
+    petRecyclerModel = findPetRecyclerModel()
+    if petRecyclerModel then
+        log("✅ PetRecycler found at: " .. petRecyclerModel:GetFullName())
+        
+        -- Check if it has ClickDetector
+        local clickDetector = petRecyclerModel:FindFirstChild("ClickDetector")
+        if clickDetector then
+            log("✅ Recycler has ClickDetector (interactive)")
+        else
+            log("ℹ️ Recycler may use remote events instead of ClickDetector")
+        end
+        
+        -- Check parent folder
+        local parentFolder = getRecyclerParentFolder()
+        if parentFolder then
+            log("✅ Recycler is in folder: " .. parentFolder)
+        else
+            log("ℹ️ Recycler is in main map (will use direct interaction)")
+        end
+        
         return true
     else
         log("⚠️ PetRecycler not found in workspace - make sure you're near the event area")
@@ -657,7 +665,7 @@ local function toggleFarm()
         status.TextColor3 = Color3.fromRGB(0, 255, 0)
         log("Strict Filter Farmer started! Waiting for conditions...")
         
-        -- Verify recycler on start
+        -- Find and verify recycler on start
         verifyRecyclerAccess()
         
         farmThread = task.spawn(function()
@@ -703,5 +711,5 @@ verifyRecyclerAccess()
 
 log("✅ PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
 log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
-log("✅ MAIN MAP RECYCLER DETECTED: Will use slot scanning for MainMap!EggTeaser2026")
+log("✅ USING FOUND RECYCLER: Direct interaction with PetRecycler model")
 log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
