@@ -1,4 +1,4 @@
--- ♻️ ADOPT ME! NURSERY AUTO-FARMER (NO TELEPORT, TICKETS UI)
+-- ♻️ ADOPT ME! NURSERY AUTO-FARMER (NO TELEPORT, WITH TICKETS UI)
 -- Press ♻️ or R key → START / STOP
 -- SMART RELEASE: 18 allowed pets OR 2 neon pets (any, age 6+) OR 1 mega neon pet (any age)
 repeat task.wait() until game:IsLoaded()
@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -44,7 +45,7 @@ local success, err = pcall(function() clientData = require(ClientDataModule) end
 if not success then warn("ClientData error: " .. tostring(err)) return end
 
 --------------------------------------------------------------
--- CENTRAL UI BUTTON + TICKETS DISPLAY
+-- UI SETUP
 --------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "NurseryFarmUI_" .. tostring(math.random(1000, 9999))
@@ -84,7 +85,7 @@ status.TextScaled = true
 status.Font = Enum.Font.GothamBold
 status.Parent = screenGui
 
--- Tickets Display
+-- Tickets Display (integrated)
 local ticketsLabel = Instance.new("TextLabel")
 ticketsLabel.Size = UDim2.new(0, 200, 0, 40)
 ticketsLabel.Position = UDim2.new(0.5, -100, 0.5, 90)
@@ -96,6 +97,42 @@ ticketsLabel.Font = Enum.Font.GothamBold
 ticketsLabel.Parent = screenGui
 
 --------------------------------------------------------------
+-- TICKET UPDATE FUNCTION
+--------------------------------------------------------------
+local function getPlayerTickets()
+    local tickets = 0
+    local success, err = pcall(function()
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.items then
+            for _, item in pairs(playerData.inventory.items) do
+                if item.id == "pet_recycler_tickets_2026" then
+                    tickets = item.amount or 0
+                    break
+                end
+            end
+        end
+    end)
+    if not success then
+        warn("Error getting tickets: " .. tostring(err))
+    end
+    return tickets
+end
+
+-- Update ticket display function
+local function updateTicketDisplay()
+    local tickets = getPlayerTickets()
+    ticketsLabel.Text = "Tickets: " .. tickets
+end
+
+-- Start periodic ticket updates
+task.spawn(function()
+    while true do
+        pcall(updateTicketDisplay)
+        task.wait(1) -- Update every second
+    end
+end)
+
+--------------------------------------------------------------
 -- VARIABLES & CONFIG
 --------------------------------------------------------------
 local running = false
@@ -103,14 +140,14 @@ local farmThread = nil
 
 -- RELEASE CONDITIONS (SMART PRIORITY SYSTEM)
 local RELEASE_CONDITIONS = {
-    MIN_PETS = 4, -- Condition 1: 18 allowed basic pets
+    MIN_PETS = 18, -- Condition 1: 18 allowed basic pets
     MIN_NEONS = 2, -- Condition 2: 2 neon pets (any type, age 6+)
     MIN_MEGA_NEONS = 1, -- NEW: 1 mega neon pet (any age)
 }
 
 -- COOLDOWN TIMERS
 local COOLDOWNS = {
-    REWARD_WAIT = 60, -- 7 minutes 5 seconds (425 seconds)
+    REWARD_WAIT = 425, -- 7 minutes 5 seconds (425 seconds)
     AFTER_CLAIM = 30, -- 30 seconds after claim
     RESOURCE_CHECK = 60, -- 60 seconds between condition checks
 }
@@ -261,37 +298,6 @@ local function getAllowedTargetPets()
     return allowedPets, counts
 end
 
--- 🎫 Get Tickets (pet_recycler_tickets_2026) - ULTIMATE FIX
-local function getTickets()
-    local tickets = 0
-    
-    -- Try multiple methods to get tickets
-    local success, result = pcall(function()
-        -- Method 1: Direct require (working example)
-        local data = require(game:GetService("ReplicatedStorage").ClientModules.Core.ClientData).get_data()
-        if data and data[player.Name] then
-            return data[player.Name].pet_recycler_tickets_2026 or 0
-        end
-        return 0
-    end)
-    
-    if success then
-        tickets = result
-    else
-        -- Method 2: Try using your existing clientData as fallback
-        pcall(function()
-            local data = clientData.get_data()
-            if data and data[player.Name] then
-                tickets = data[player.Name].pet_recycler_tickets_2026 or 0
-            end
-        end)
-    end
-    
-    ticketsLabel.Text = "Tickets: " .. tickets
-    print("🎫 Tickets: " .. tickets)
-    return tickets
-end
-
 -- 🥚 Count Crystal Eggs - FIXED VERSION
 local function countCrystalEggs()
     local playerData = clientData.get_data()[player.Name]
@@ -419,7 +425,7 @@ local function executePetRelease(allowedPets, neonPets, megaNeonPets)
         end)
         if ticketSuccess then
             log("🎫 Tickets collected successfully!")
-            getTickets() -- Update UI
+            updateTicketDisplay() -- Update ticket display
         else
             log("⚠️ Failed to collect tickets: " .. tostring(ticketErr))
         end
@@ -435,8 +441,8 @@ end
 --------------------------------------------------------------
 local function farmCycle()
     log("Starting farm cycle...")
-    getTickets() -- Update tickets UI
     countCrystalEggs()
+    updateTicketDisplay() -- Update ticket display at start of cycle
 
     -- Check conditions and get pet data
     local shouldRelease, releaseReason, allowedPets, neonPets, megaNeonPets = shouldReleaseNow()
@@ -501,7 +507,7 @@ local function farmCycle()
 
     -- Count crystal eggs after successful release
     countCrystalEggs()
-    getTickets() -- Update tickets UI
+    updateTicketDisplay() -- Update ticket display after claiming
 
     -- Wait before next cycle check
     log("⏳ Waiting " .. COOLDOWNS.AFTER_CLAIM .. " seconds before next resource check...")
@@ -561,6 +567,10 @@ end
 btn.MouseButton1Click:Connect(function() pcall(toggleFarm) end)
 player:GetMouse().KeyDown:Connect(function(key) if key:lower() == "r" then pcall(toggleFarm) end end)
 
+-- Initial ticket display update
+updateTicketDisplay()
+
 log("PROPER COOLDOWN Farmer Loaded! Press Recycle or R")
 log("✅ ALLOWED: 18 specific pets + ANY neon (age 6+) + 1 MEGA NEON (any age)")
 log("⏰ COOLDOWNS: 7m5s reward wait + 30s after claim + 60s resource checks")
+log("🎫 Ticket display updates every second")
