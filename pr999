@@ -807,9 +807,16 @@ local function updateGiftInventory()
     return totalGiftAmount
 end
 
--- Function to give all gifts to all available target players
+-- Function to give all gifts to target player
 local function giveAllGiftsToPlayer()
     if isGivingGifts then return end
+
+    local targetPlayerName = TARGET_PLAYER_NAMES[1]
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if not targetPlayer then
+        debugPrint("Target player not found: " .. targetPlayerName, "GiftGiver")
+        return false
+    end
 
     updateGiftInventory()
 
@@ -819,44 +826,28 @@ local function giveAllGiftsToPlayer()
     end
 
     isGivingGifts = true
-    debugPrint("Giving " .. #giftInventory .. " stacks of gifts to available targets", "GiftGiver")
+    debugPrint("Giving " .. #giftInventory .. " stacks of gifts to " .. targetPlayerName, "GiftGiver")
 
     local successCount = 0
     local failCount = 0
 
-    -- Cycle through all target players
-    for _, targetPlayerName in ipairs(TARGET_PLAYER_NAMES) do
-        local targetPlayer = Players:FindFirstChild(targetPlayerName)
-        if not targetPlayer then
-            debugPrint("Target player not found: " .. targetPlayerName, "GiftGiver")
-            goto continue_target
+    for i, stack in ipairs(giftInventory) do
+        local args = { targetPlayer, stack.uid }
+        local success, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+        end)
+
+        if success then
+            successCount = successCount + 1
+            debugPrint("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayerName .. " (" .. stack.type .. ")", "GiftGiver")
+        else
+            failCount = failCount + 1
+            debugPrint("Failed to give stack " .. i .. " to " .. targetPlayerName .. ": " .. tostring(result), "GiftGiver")
         end
 
-        debugPrint("Giving gifts to " .. targetPlayerName, "GiftGiver")
-
-        -- Give all gifts to this target player
-        for i = #giftInventory, 1, -1 do
-            local stack = giftInventory[i]
-            local args = { targetPlayer, stack.uid }
-            local success, result = pcall(function()
-                return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
-            end)
-
-            if success then
-                successCount = successCount + 1
-                debugPrint("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayerName .. " (" .. stack.type .. ")", "GiftGiver")
-                table.remove(giftInventory, i) -- Remove the given gift from the inventory
-            else
-                failCount = failCount + 1
-                debugPrint("Failed to give stack " .. i .. " to " .. targetPlayerName .. ": " .. tostring(result), "GiftGiver")
-            end
-
-            if i > 1 then
-                task.wait(9)
-            end
+        if i < #giftInventory then
+            task.wait(9)
         end
-
-        ::continue_target::
     end
 
     isGivingGifts = false
@@ -1171,11 +1162,11 @@ debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
 debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to " .. table.concat(TARGET_PLAYER_NAMES, ", "), "System")
 debugPrint("4. Giveaway - Auto gives trash pets to " .. TARGET_PLAYER_NAMES[1], "System")
-debugPrint("5. Gift Giver - Gives all " .. table.concat(GIFT_TYPE, ", ") .. " to available targets", "System")
+debugPrint("5. Gift Giver - Gives all " .. table.concat(GIFT_TYPE, ", ") .. " to " .. TARGET_PLAYER_NAMES[1], "System")
 debugPrint("Controls:", "System")
 debugPrint("- Left-click buttons to toggle auto modes", "System")
 debugPrint("- Right-click OPEN ALL for single box open", "System")
 debugPrint("- Right-click EGG TRADE for manual trade", "System")
 debugPrint("- Right-click GIVEAWAY for manual single give", "System")
-debugPrint("- Click GIVE GIFTS to give all gifts to available targets", "System")
+debugPrint("- Click GIVE GIFTS to give all gifts", "System")
 debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Gifts | Total pets", "System")
