@@ -1,5 +1,5 @@
 -- ==================================================================
--- COMPACT POTION RELEASER & BOX OPENER & EGG TRADER & GIVEAWAY SCRIPT
+-- COMPACT POTION RELEASER & BOX OPENER & EGG TRADER & GIVEAWAY & GIFT GIVER SCRIPT
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -73,6 +73,12 @@ local TARGET_GIVEAWAY_PETS = {
     "basic_egg_2022_robot",
     "basic_egg_2022_corgi"
 }
+
+-- Gift Giver Config
+local GIFT_TYPE = {"2d_tuesdays_2025_box", "admin_abuse_box"}
+local giftInventory = {}
+local totalGiftAmount = 0
+local isGivingGifts = false
 
 -- ==================================================================
 -- UTILITY FUNCTIONS
@@ -490,7 +496,6 @@ end
 -- Function to find specific eggs in inventory
 local function findEggsInInventory()
     local targetEggs = {
-        "endangered_2026_endangered_egg",
         "lny_2026_fire_foal",
         "lny_2026_fire_mare",
         "lny_2026_fire_stallion",
@@ -776,16 +781,107 @@ local function toggleGiveawayMode()
 end
 
 -- ==================================================================
--- COMBINED UI CREATION (4-IN-1)
+-- GIFT GIVER FUNCTIONS
+-- ==================================================================
+
+-- Function to update gift inventory
+local function updateGiftInventory()
+    giftInventory = {}
+    totalGiftAmount = 0
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if success then
+        local success2, allData = pcall(clientData.get_data, clientData)
+        if success2 and allData[player.Name] and allData[player.Name].inventory and allData[player.Name].inventory.gifts then
+            for uniqueId, giftData in pairs(allData[player.Name].inventory.gifts) do
+                for _, boxType in ipairs(GIFT_TYPE) do
+                    if giftData.id == boxType then
+                        local amount = giftData.amount or 1
+                        table.insert(giftInventory, {uid = uniqueId, amount = amount, type = boxType})
+                        totalGiftAmount = totalGiftAmount + amount
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return totalGiftAmount
+end
+
+-- Function to give all gifts to all available target players
+local function giveAllGiftsToPlayer()
+    if isGivingGifts then return end
+
+    updateGiftInventory()
+
+    if #giftInventory == 0 then
+        debugPrint("No gifts to give!", "GiftGiver")
+        return false
+    end
+
+    isGivingGifts = true
+    debugPrint("Giving " .. #giftInventory .. " stacks of gifts to available targets", "GiftGiver")
+
+    local successCount = 0
+    local failCount = 0
+
+    -- Cycle through all target players
+    for _, targetPlayerName in ipairs(TARGET_PLAYER_NAMES) do
+        local targetPlayer = Players:FindFirstChild(targetPlayerName)
+        if not targetPlayer then
+            debugPrint("Target player not found: " .. targetPlayerName, "GiftGiver")
+            goto continue_target
+        end
+
+        debugPrint("Giving gifts to " .. targetPlayerName, "GiftGiver")
+
+        -- Give all gifts to this target player
+        for i = #giftInventory, 1, -1 do
+            local stack = giftInventory[i]
+            local args = { targetPlayer, stack.uid }
+            local success, result = pcall(function()
+                return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+            end)
+
+            if success then
+                successCount = successCount + 1
+                debugPrint("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayerName .. " (" .. stack.type .. ")", "GiftGiver")
+                table.remove(giftInventory, i) -- Remove the given gift from the inventory
+            else
+                failCount = failCount + 1
+                debugPrint("Failed to give stack " .. i .. " to " .. targetPlayerName .. ": " .. tostring(result), "GiftGiver")
+            end
+
+            if i > 1 then
+                task.wait(9)
+            end
+        end
+
+        ::continue_target::
+    end
+
+    isGivingGifts = false
+    local remaining = updateGiftInventory()
+
+    if failCount == 0 then
+        debugPrint("Success! Gave " .. successCount .. " stacks", "GiftGiver")
+    else
+        debugPrint("Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)", "GiftGiver")
+    end
+
+    return true
+end
+
+-- ==================================================================
+-- COMBINED UI CREATION (5-IN-1)
 -- ==================================================================
 local function createCombinedUI()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PotionReleaseBoxOpenerEggTradeGiveawayUI"
+    screenGui.Name = "PotionReleaseBoxOpenerEggTradeGiveawayGiftGiverUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 220, 0, 180)
-    mainFrame.Position = UDim2.new(0, 10, 1, -190)
+    mainFrame.Size = UDim2.new(0, 220, 0, 230)
+    mainFrame.Position = UDim2.new(0, 10, 1, -240)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.BackgroundTransparency = 0.1
@@ -832,7 +928,7 @@ local function createCombinedUI()
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Auto Script 4-in-1"
+    title.Text = "Auto Script 5-in-1"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 14
     title.Parent = mainFrame
@@ -867,7 +963,7 @@ local function createCombinedUI()
     -- Open All Boxes button
     local openAllBoxesButton = Instance.new("TextButton")
     openAllBoxesButton.Size = UDim2.new(0.9, 0, 0, 25)
-    openAllBoxesButton.Position = UDim2.new(0.05, 0, 0.4, 0)
+    openAllBoxesButton.Position = UDim2.new(0.05, 0, 0.37, 0)
     openAllBoxesButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
     openAllBoxesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     openAllBoxesButton.Text = "OPEN ALL [OFF]"
@@ -882,7 +978,7 @@ local function createCombinedUI()
     -- Egg Trading button
     local eggTradeButton = Instance.new("TextButton")
     eggTradeButton.Size = UDim2.new(0.9, 0, 0, 25)
-    eggTradeButton.Position = UDim2.new(0.05, 0, 0.55, 0)
+    eggTradeButton.Position = UDim2.new(0.05, 0, 0.49, 0)
     eggTradeButton.BackgroundColor3 = Color3.fromRGB(120, 0, 200)
     eggTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     eggTradeButton.Text = "EGG TRADE [OFF]"
@@ -897,7 +993,7 @@ local function createCombinedUI()
     -- Giveaway button
     local giveawayButton = Instance.new("TextButton")
     giveawayButton.Size = UDim2.new(0.9, 0, 0, 25)
-    giveawayButton.Position = UDim2.new(0.05, 0, 0.7, 0)
+    giveawayButton.Position = UDim2.new(0.05, 0, 0.61, 0)
     giveawayButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     giveawayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     giveawayButton.Text = "Giveaway [OFF]"
@@ -909,10 +1005,25 @@ local function createCombinedUI()
     giveawayButtonCorner.CornerRadius = UDim.new(0, 4)
     giveawayButtonCorner.Parent = giveawayButton
 
+    -- Gift Giver button
+    local giftGiverButton = Instance.new("TextButton")
+    giftGiverButton.Size = UDim2.new(0.9, 0, 0, 25)
+    giftGiverButton.Position = UDim2.new(0.05, 0, 0.73, 0)
+    giftGiverButton.BackgroundColor3 = Color3.fromRGB(200, 100, 200)
+    giftGiverButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    giftGiverButton.Text = "Give Gifts [OFF]"
+    giftGiverButton.Font = Enum.Font.SourceSansBold
+    giftGiverButton.TextSize = 12
+    giftGiverButton.Parent = mainFrame
+
+    local giftGiverButtonCorner = Instance.new("UICorner")
+    giftGiverButtonCorner.CornerRadius = UDim.new(0, 4)
+    giftGiverButtonCorner.Parent = giftGiverButton
+
     -- Small label showing target players
     local targetPlayerLabel = Instance.new("TextLabel")
     targetPlayerLabel.Size = UDim2.new(1, -10, 0, 15)
-    targetPlayerLabel.Position = UDim2.new(0, 5, 0, 155)
+    targetPlayerLabel.Position = UDim2.new(0, 5, 0, 200)
     targetPlayerLabel.BackgroundTransparency = 1
     targetPlayerLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
     targetPlayerLabel.Text = "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", ")
@@ -932,9 +1043,10 @@ local function createCombinedUI()
         for _, petList in pairs(petInventory) do
             totalPets = totalPets + #petList
         end
+        local gifts = updateGiftInventory()
 
-        statusLabel.Text = string.format("Boxes: %d | Pets: %d | Eggs: %d | Pot: %s | All: %d",
-            boxCount, #pets, eggs, potions, totalPets)
+        statusLabel.Text = string.format("Boxes: %d | Pets: %d | Eggs: %d | Pot: %s | Gifts: %d | All: %d",
+            boxCount, #pets, eggs, potions, gifts, totalPets)
     end
 
     -- Connect potion button click
@@ -1021,6 +1133,14 @@ local function createCombinedUI()
         end
     end)
 
+    -- Connect gift giver button click
+    giftGiverButton.MouseButton1Click:Connect(function()
+        if not isGivingGifts then
+            giveAllGiftsToPlayer()
+            updateCombinedStatus()
+        end
+    end)
+
     -- Auto-update status
     coroutine.wrap(function()
         while true do
@@ -1035,7 +1155,8 @@ local function createCombinedUI()
         potionButton = potionButton,
         openAllBoxesButton = openAllBoxesButton,
         eggTradeButton = eggTradeButton,
-        giveawayButton = giveawayButton
+        giveawayButton = giveawayButton,
+        giftGiverButton = giftGiverButton
     }
 end
 
@@ -1044,15 +1165,17 @@ end
 -- ==================================================================
 -- Create the UI
 local ui = createCombinedUI()
-debugPrint("4-in-1 Auto Script loaded successfully!", "System")
+debugPrint("5-in-1 Auto Script loaded successfully!", "System")
 debugPrint("Features:", "System")
 debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
 debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to " .. table.concat(TARGET_PLAYER_NAMES, ", "), "System")
 debugPrint("4. Giveaway - Auto gives trash pets to " .. TARGET_PLAYER_NAMES[1], "System")
+debugPrint("5. Gift Giver - Gives all " .. table.concat(GIFT_TYPE, ", ") .. " to available targets", "System")
 debugPrint("Controls:", "System")
 debugPrint("- Left-click buttons to toggle auto modes", "System")
 debugPrint("- Right-click OPEN ALL for single box open", "System")
 debugPrint("- Right-click EGG TRADE for manual trade", "System")
 debugPrint("- Right-click GIVEAWAY for manual single give", "System")
-debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Total pets", "System")
+debugPrint("- Click GIVE GIFTS to give all gifts to available targets", "System")
+debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Gifts | Total pets", "System")
