@@ -43,7 +43,7 @@ local BOX_ID = "winter_2025_angus_box"
 -- Egg Trading Config
 local EggTradingMode = false
 local eggTradingCoroutine = nil
-local TARGET_PLAYER_NAME = "Ximatiann"
+local TARGET_PLAYER_NAMES = {"Ximatiann", "Armindse"}
 
 -- Giveaway Config
 local GiveawayMode = false
@@ -75,7 +75,7 @@ local TARGET_GIVEAWAY_PETS = {
 }
 
 -- Gift Giver Config
-local GIFT_TYPE = {"2d_tuesdays_2025_box", "admin_abuse_box"}
+local GIFT_TYPE = "2d_tuesdays_2025_box"
 local giftInventory = {}
 local totalGiftAmount = 0
 local isGivingGifts = false
@@ -90,6 +90,17 @@ local function debugPrint(msg, prefix)
     if DEBUG_MODE then
         print("[" .. prefix .. "] " .. msg)
     end
+end
+
+-- Function to find the first available player from the target list
+local function findFirstAvailablePlayer()
+    for _, playerName in ipairs(TARGET_PLAYER_NAMES) do
+        local targetPlayer = Players:FindFirstChild(playerName)
+        if targetPlayer then
+            return targetPlayer
+        end
+    end
+    return nil
 end
 
 -- ==================================================================
@@ -496,7 +507,6 @@ end
 -- Function to find specific eggs in inventory
 local function findEggsInInventory()
     local targetEggs = {
-        "endangered_2026_endangered_egg",
         "lny_2026_fire_foal",
         "lny_2026_fire_mare",
         "lny_2026_fire_stallion",
@@ -652,11 +662,9 @@ local function completeEggTradeWithPlayer(targetPlayerName)
     end
 end
 
--- Function to continuously trade eggs to fixed player
+-- Function to continuously trade eggs to all target players
 local function startContinuousEggTrading()
     while EggTradingMode do
-        local targetPlayerName = TARGET_PLAYER_NAME
-
         -- Check if eggs are available
         local eggs = findEggsInInventory()
         if #eggs == 0 then
@@ -665,15 +673,16 @@ local function startContinuousEggTrading()
             continue
         end
 
-        debugPrint("Eggs detected, sending trade request to " .. targetPlayerName, "EggTrade")
-
-        -- Perform trade only if eggs are detected
-        local success = completeEggTradeWithPlayer(targetPlayerName)
-        if not success then
-            debugPrint("Trade failed. Retrying in 15 seconds...", "EggTrade")
-            task.wait(15)
-        else
-            task.wait(math.random(8, 12))
+        -- Cycle through all target players
+        for _, targetPlayerName in ipairs(TARGET_PLAYER_NAMES) do
+            debugPrint("Eggs detected, sending trade request to " .. targetPlayerName, "EggTrade")
+            local success = completeEggTradeWithPlayer(targetPlayerName)
+            if success then
+                task.wait(math.random(8, 12))
+            else
+                debugPrint("Trade failed. Retrying in 15 seconds...", "EggTrade")
+                task.wait(15)
+            end
         end
     end
 end
@@ -682,7 +691,7 @@ end
 local function toggleEggTradingMode()
     EggTradingMode = not EggTradingMode
     if EggTradingMode then
-        debugPrint("Continuous Egg Trading: ENABLED (target: " .. TARGET_PLAYER_NAME .. ")", "EggTrade")
+        debugPrint("Continuous Egg Trading: ENABLED (targets: " .. table.concat(TARGET_PLAYER_NAMES, ", ") .. ")", "EggTrade")
         eggTradingCoroutine = coroutine.create(startContinuousEggTrading)
         coroutine.resume(eggTradingCoroutine)
     else
@@ -735,14 +744,12 @@ local function givePetToPlayer(targetPlayer, petType, petUniqueId)
     end
 end
 
--- Main giveaway loop - Always uses Ximatiann
+-- Main giveaway loop - Always uses first available target player
 local function startGiveaway()
     while GiveawayMode do
-        local targetPlayerName = TARGET_PLAYER_NAME
-        local targetPlayer = Players:FindFirstChild(targetPlayerName)
-
+        local targetPlayer = findFirstAvailablePlayer()
         if not targetPlayer then
-            debugPrint("Target player not found: " .. targetPlayerName .. ". Waiting...", "Giveaway")
+            debugPrint("No available target players. Waiting...", "Giveaway")
             task.wait(10)
             continue
         end
@@ -774,7 +781,7 @@ end
 local function toggleGiveawayMode()
     GiveawayMode = not GiveawayMode
     if GiveawayMode then
-        debugPrint("Giveaway STARTED for player: " .. TARGET_PLAYER_NAME, "Giveaway")
+        debugPrint("Giveaway STARTED for first available player", "Giveaway")
         giveawayCoroutine = coroutine.wrap(startGiveaway)()
     else
         debugPrint("Giveaway STOPPED", "Giveaway")
@@ -795,13 +802,10 @@ local function updateGiftInventory()
         local success2, allData = pcall(clientData.get_data, clientData)
         if success2 and allData[player.Name] and allData[player.Name].inventory and allData[player.Name].inventory.gifts then
             for uniqueId, giftData in pairs(allData[player.Name].inventory.gifts) do
-                for _, boxType in ipairs(GIFT_TYPE) do
-                    if giftData.id == boxType then
-                        local amount = giftData.amount or 1
-                        table.insert(giftInventory, {uid = uniqueId, amount = amount, type = boxType})
-                        totalGiftAmount = totalGiftAmount + amount
-                        break
-                    end
+                if giftData.id == GIFT_TYPE then
+                    local amount = giftData.amount or 1
+                    table.insert(giftInventory, {uid = uniqueId, amount = amount})
+                    totalGiftAmount = totalGiftAmount + amount
                 end
             end
         end
@@ -809,14 +813,13 @@ local function updateGiftInventory()
     return totalGiftAmount
 end
 
--- Function to give all gifts to target player
+-- Function to give all gifts to the first available target player
 local function giveAllGiftsToPlayer()
     if isGivingGifts then return end
 
-    local targetPlayerName = TARGET_PLAYER_NAME
-    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    local targetPlayer = findFirstAvailablePlayer()
     if not targetPlayer then
-        debugPrint("Target player not found: " .. targetPlayerName, "GiftGiver")
+        debugPrint("No available target players found!", "GiftGiver")
         return false
     end
 
@@ -828,7 +831,7 @@ local function giveAllGiftsToPlayer()
     end
 
     isGivingGifts = true
-    debugPrint("Giving " .. #giftInventory .. " stacks of gifts to " .. targetPlayerName, "GiftGiver")
+    debugPrint("Giving " .. #giftInventory .. " stacks of " .. GIFT_TYPE .. " to " .. targetPlayer.Name, "GiftGiver")
 
     local successCount = 0
     local failCount = 0
@@ -841,10 +844,10 @@ local function giveAllGiftsToPlayer()
 
         if success then
             successCount = successCount + 1
-            debugPrint("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayerName .. " (" .. stack.type .. ")", "GiftGiver")
+            debugPrint("Gave stack " .. i .. "/" .. #giftInventory .. " to " .. targetPlayer.Name, "GiftGiver")
         else
             failCount = failCount + 1
-            debugPrint("Failed to give stack " .. i .. " to " .. targetPlayerName .. ": " .. tostring(result), "GiftGiver")
+            debugPrint("Failed to give stack " .. i .. " to " .. targetPlayer.Name .. ": " .. tostring(result), "GiftGiver")
         end
 
         if i < #giftInventory then
@@ -856,7 +859,7 @@ local function giveAllGiftsToPlayer()
     local remaining = updateGiftInventory()
 
     if failCount == 0 then
-        debugPrint("Success! Gave " .. successCount .. " stacks", "GiftGiver")
+        debugPrint("Success! Gave " .. successCount .. " stacks to " .. targetPlayer.Name, "GiftGiver")
     else
         debugPrint("Partial: " .. successCount .. "✓ " .. failCount .. "✗ (" .. remaining .. " left)", "GiftGiver")
     end
@@ -1013,13 +1016,13 @@ local function createCombinedUI()
     giftGiverButtonCorner.CornerRadius = UDim.new(0, 4)
     giftGiverButtonCorner.Parent = giftGiverButton
 
-    -- Small label showing target player
+    -- Small label showing target players
     local targetPlayerLabel = Instance.new("TextLabel")
     targetPlayerLabel.Size = UDim2.new(1, -10, 0, 15)
     targetPlayerLabel.Position = UDim2.new(0, 5, 0, 200)
     targetPlayerLabel.BackgroundTransparency = 1
     targetPlayerLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    targetPlayerLabel.Text = "Target: " .. TARGET_PLAYER_NAME
+    targetPlayerLabel.Text = "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", ")
     targetPlayerLabel.Font = Enum.Font.SourceSans
     targetPlayerLabel.TextSize = 10
     targetPlayerLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -1082,8 +1085,13 @@ local function createCombinedUI()
         debugPrint("Attempting manual egg trade...", "EggTrade")
         local eggs = #findEggsInInventory()
         if eggs > 0 then
-            if completeEggTradeWithPlayer(TARGET_PLAYER_NAME) then
-                updateCombinedStatus()
+            local targetPlayer = findFirstAvailablePlayer()
+            if targetPlayer then
+                if completeEggTradeWithPlayer(targetPlayer.Name) then
+                    updateCombinedStatus()
+                end
+            else
+                debugPrint("No available target players for manual trade", "EggTrade")
             end
         else
             debugPrint("No eggs to trade", "EggTrade")
@@ -1101,9 +1109,9 @@ local function createCombinedUI()
     -- Right click giveaway for manual single give
     giveawayButton.MouseButton2Click:Connect(function()
         debugPrint("Attempting manual giveaway...", "Giveaway")
-        local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+        local targetPlayer = findFirstAvailablePlayer()
         if not targetPlayer then
-            debugPrint("Player not found: " .. TARGET_PLAYER_NAME, "Giveaway")
+            debugPrint("No available target players for giveaway", "Giveaway")
             return
         end
 
@@ -1162,9 +1170,9 @@ debugPrint("5-in-1 Auto Script loaded successfully!", "System")
 debugPrint("Features:", "System")
 debugPrint("1. Potion Releaser - Ages target pets to age 6", "System")
 debugPrint("2. Box Opener - Opens all winter_2025_angus_box", "System")
-debugPrint("3. Egg Trader - Auto trades eggs to " .. TARGET_PLAYER_NAME, "System")
-debugPrint("4. Giveaway - Auto gives trash pets to " .. TARGET_PLAYER_NAME, "System")
-debugPrint("5. Gift Giver - Gives all " .. table.concat(GIFT_TYPE, ", ") .. " to " .. TARGET_PLAYER_NAME, "System")
+debugPrint("3. Egg Trader - Auto trades eggs to first available player", "System")
+debugPrint("4. Giveaway - Auto gives trash pets to first available player", "System")
+debugPrint("5. Gift Giver - Gives all 2d_tuesdays_2025_box to first available player", "System")
 debugPrint("Controls:", "System")
 debugPrint("- Left-click buttons to toggle auto modes", "System")
 debugPrint("- Right-click OPEN ALL for single box open", "System")
