@@ -5,152 +5,44 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to find specific item by ID
-local function findItemById(targetId)
-    print("🔍 SEARCHING FOR ITEM: " .. targetId)
-    print("======================================")
+-- Simple function to print all inventory categories
+local function printInventoryCategories()
+    print("📋 INVENTORY CATEGORIES")
+    print("========================")
     
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         return clientData.get_data()[player.Name]
     end)
     
-    if not success or not data then
-        print("❌ Failed to get player data")
+    if not success or not data or not data.inventory then
+        print("❌ Failed to get inventory data")
         return
     end
     
-    local foundLocations = {}
-    
-    -- Search through EVERYTHING in data
-    local function searchTable(tbl, path, depth)
-        depth = depth or 0
-        if depth > 10 then return end -- Prevent going too deep
-        
-        for key, value in pairs(tbl) do
-            local currentPath = path .. "." .. tostring(key)
-            
-            -- Check if this key matches our target
-            if tostring(key) == targetId then
-                table.insert(foundLocations, {
-                    path = currentPath,
-                    key = key,
-                    value = value
-                })
-            end
-            
-            -- Check if value is a table and contains our target as a key
-            if type(value) == "table" then
-                -- Check if the table itself has our target as a key
-                if value[targetId] ~= nil then
-                    table.insert(foundLocations, {
-                        path = currentPath .. "[" .. targetId .. "]",
-                        key = targetId,
-                        value = value[targetId]
-                    })
-                end
-                
-                -- Recursively search deeper
-                searchTable(value, currentPath, depth + 1)
-            end
-            
-            -- Check if value itself equals or contains our target
-            if type(value) == "string" and value == targetId then
-                table.insert(foundLocations, {
-                    path = currentPath,
-                    key = key,
-                    value = value,
-                    note = "Value matches target ID"
-                })
+    local categories = {}
+    for category, categoryData in pairs(data.inventory) do
+        local itemCount = 0
+        if type(categoryData) == "table" then
+            for _ in pairs(categoryData) do
+                itemCount = itemCount + 1
             end
         end
+        table.insert(categories, {
+            name = category,
+            count = itemCount
+        })
     end
     
-    -- Start search from root data
-    searchTable(data, "data")
+    -- Sort categories alphabetically
+    table.sort(categories, function(a, b) return a.name < b.name end)
     
-    -- Display results
-    if #foundLocations == 0 then
-        print("❌ Item not found anywhere in player data")
-        
-        -- Show inventory structure to help debug
-        print("\n📋 INVENTORY STRUCTURE:")
-        if data.inventory then
-            for category, categoryData in pairs(data.inventory) do
-                print("\n📁 Category: " .. category)
-                if type(categoryData) == "table" then
-                    -- Show first 3 items in each category as example
-                    local count = 0
-                    for itemId, itemValue in pairs(categoryData) do
-                        count = count + 1
-                        if count <= 3 then
-                            print("   🏷️  " .. tostring(itemId))
-                            if type(itemValue) == "table" then
-                                -- Show properties
-                                for prop, val in pairs(itemValue) do
-                                    if prop == "id" or prop == "name" or prop == "type" then
-                                        print("      " .. prop .. ": " .. tostring(val))
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    if count > 3 then
-                        print("   ... and " .. (count - 3) .. " more items")
-                    end
-                end
-            end
-        end
-        
-        -- Also check events
-        if data.events then
-            print("\n📁 Events:")
-            for eventName, eventData in pairs(data.events) do
-                print("   📅 " .. eventName)
-                if type(eventData) == "table" then
-                    for itemId, _ in pairs(eventData) do
-                        print("      🏷️  " .. tostring(itemId))
-                        break -- Just show first one
-                    end
-                end
-            end
-        end
-        
-    else
-        print("✅ Item found in " .. #foundLocations .. " location(s)!")
-        print("")
-        
-        for i, location in ipairs(foundLocations) do
-            print("📍 Location #" .. i)
-            print("   Path: " .. location.path)
-            
-            if location.note then
-                print("   Note: " .. location.note)
-            end
-            
-            -- Show the value/content
-            print("   Content:")
-            if type(location.value) == "table" then
-                for k, v in pairs(location.value) do
-                    print("      " .. tostring(k) .. ": " .. tostring(v))
-                end
-            else
-                print("      " .. tostring(location.value))
-            end
-            print("   ---")
-        end
+    for _, cat in ipairs(categories) do
+        print(string.format("   📁 %s: %d items", cat.name, cat.count))
     end
     
-    -- Quick summary of where items are stored
-    print("\n📊 QUICK SUMMARY:")
-    if data.inventory then
-        print("Inventory categories found:")
-        for category, _ in pairs(data.inventory) do
-            print("   - " .. category)
-        end
-    end
+    print("\n📊 Total categories: " .. #categories)
 end
 
--- Run the function with your specific item ID
-local targetId = "2_d2ec3f41e8e64b93bec2c3cff6912333"
-findItemById(targetId)
+-- Run the function
+printInventoryCategories()
