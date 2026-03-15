@@ -5,43 +5,136 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Simple function to print all inventory categories
+-- Simple function to print inventory structure
 local function printInventoryCategories()
-    print("📋 INVENTORY CATEGORIES")
+    print("🔍 CHECKING INVENTORY...")
     print("========================")
     
-    local success, data = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return clientData.get_data()[player.Name]
-    end)
+    -- Try to get data in different ways
+    local data = nil
+    local success = false
     
-    if not success or not data or not data.inventory then
-        print("❌ Failed to get inventory data")
+    -- Method 1: Try requiring ClientData
+    local clientDataModule = ReplicatedStorage:FindFirstChild("ClientModules")
+    if clientDataModule then
+        local core = clientDataModule:FindFirstChild("Core")
+        if core then
+            local clientData = core:FindFirstChild("ClientData")
+            if clientData then
+                success, data = pcall(function()
+                    local module = require(clientData)
+                    return module.get_data()[player.Name]
+                end)
+            end
+        end
+    end
+    
+    -- Method 2: If that fails, try looking for data in common places
+    if not success or not data then
+        print("⚠️  Couldn't load ClientData, checking other locations...")
+        
+        -- Check if data exists in _G or other globals
+        if _G and _G.PlayerData then
+            data = _G.PlayerData[player.Name]
+            if data then
+                print("✅ Found data in _G.PlayerData")
+                success = true
+            end
+        end
+        
+        -- Check if data is stored in player
+        if not success and player:FindFirstChild("Data") then
+            data = player:FindFirstChild("Data"):GetAttribute("Data")
+            if data then
+                print("✅ Found data in player attribute")
+                success = true
+            end
+        end
+    end
+    
+    if not success or not data then
+        print("❌ Could not get player data")
+        
+        -- Instead, let's just list what's in ReplicatedStorage
+        print("\n📁 ReplicatedStorage contents:")
+        for _, obj in ipairs(ReplicatedStorage:GetChildren()) do
+            print("   " .. obj.Name)
+        end
         return
     end
     
-    local categories = {}
-    for category, categoryData in pairs(data.inventory) do
-        local itemCount = 0
-        if type(categoryData) == "table" then
-            for _ in pairs(categoryData) do
-                itemCount = itemCount + 1
+    print("\n📋 PLAYER DATA STRUCTURE")
+    print("========================")
+    
+    -- Print all top-level keys in data
+    print("Top-level keys in player data:")
+    for key, _ in pairs(data) do
+        print("   " .. tostring(key))
+    end
+    
+    -- Check specifically for inventory
+    print("\n🎒 INVENTORY INFORMATION")
+    print("========================")
+    
+    if data.inventory then
+        print("✅ inventory exists!")
+        print("\nInventory contents:")
+        
+        -- Print all categories in inventory
+        for category, categoryData in pairs(data.inventory) do
+            local itemType = type(categoryData)
+            local itemCount = 0
+            
+            if itemType == "table" then
+                for _ in pairs(categoryData) do
+                    itemCount = itemCount + 1
+                end
+                print(string.format("   📁 %s: %d items (%s)", category, itemCount, itemType))
+                
+                -- Show first item as example if there are items
+                if itemCount > 0 then
+                    for itemId, _ in pairs(categoryData) do
+                        print("      Example: " .. tostring(itemId))
+                        break
+                    end
+                end
+            else
+                print(string.format("   📁 %s: %s", category, tostring(categoryData)))
             end
         end
-        table.insert(categories, {
-            name = category,
-            count = itemCount
-        })
+    else
+        print("❌ No inventory found")
+        
+        -- Check if items are stored elsewhere
+        print("\nLooking for items in other locations:")
+        for key, value in pairs(data) do
+            if type(value) == "table" then
+                local hasItems = false
+                for subKey, _ in pairs(value) do
+                    hasItems = true
+                    break
+                end
+                if hasItems then
+                    print("   " .. key .. " might contain items")
+                end
+            end
+        end
     end
     
-    -- Sort categories alphabetically
-    table.sort(categories, function(a, b) return a.name < b.name end)
-    
-    for _, cat in ipairs(categories) do
-        print(string.format("   📁 %s: %d items", cat.name, cat.count))
+    -- Check for events
+    if data.events then
+        print("\n📅 EVENTS")
+        print("========================")
+        for eventName, eventData in pairs(data.events) do
+            if type(eventData) == "table" then
+                local count = 0
+                for _ in pairs(eventData) do
+                    count = count + 1
+                end
+                print(string.format("   %s: %d items", eventName, count))
+            end
+        end
     end
-    
-    print("\n📊 Total categories: " .. #categories)
 end
 
 -- Run the function
