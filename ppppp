@@ -1,83 +1,160 @@
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 -- Player
 local player = Players.LocalPlayer
 
--- Function to print all inventory categories
-local function printInventoryCategories()
-    print("🔍 INVENTORY CATEGORIES")
-    print("=======================")
+-- Function to safely inspect any object
+local function safeInspect(obj, name, depth)
+    depth = depth or 0
+    local indent = string.rep("  ", depth)
     
-    -- Get player data
-    local success, data = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return clientData.get_data()[player.Name]
-    end)
+    local objType = typeof(obj)
+    print(indent .. name .. " (" .. objType .. ")")
     
-    if not success or not data then
-        print("❌ Failed to get player data")
-        return
-    end
-    
-    -- Check if inventory exists
-    if not data.inventory then
-        print("❌ No inventory found for player")
-        return
-    end
-    
-    -- Print all categories in inventory
-    print("\n📦 INVENTORY CATEGORIES FOUND:")
-    print("-------------------------------")
-    
-    local categoryCount = 0
-    for categoryName, categoryData in pairs(data.inventory) do
-        categoryCount = categoryCount + 1
-        
-        -- Determine the type and size of the category
-        local dataType = typeof(categoryData)
-        local itemCount = 0
-        
-        if dataType == "table" then
-            for _ in pairs(categoryData) do
-                itemCount = itemCount + 1
-            end
+    if objType == "table" and depth < 2 then
+        for key, value in pairs(obj) do
+            safeInspect(value, "[" .. tostring(key) .. "]", depth + 1)
         end
-        
-        print(string.format("  📁 %s:", categoryName))
-        print(string.format("     Type: %s", dataType))
-        print(string.format("     Items: %d", itemCount))
-        
-        -- If it's a category with items, show a sample
-        if itemCount > 0 and dataType == "table" then
-            local firstKey, firstValue = next(categoryData)
-            if firstKey then
-                print(string.format("     Sample key: %s", tostring(firstKey)))
-                print(string.format("     Sample value type: %s", typeof(firstValue)))
-            end
-        end
-        print("")
     end
-    
-    if categoryCount == 0 then
-        print("  ❌ No categories found in inventory")
-    else
-        print("✅ Total categories: " .. categoryCount)
-    end
-    
-    -- Return the categories for potential further use
-    return data.inventory
 end
 
--- Run the function
-local inventory = printInventoryCategories()
-
--- Optional: If you want to see the raw structure
-print("\n📋 RAW INVENTORY KEYS:")
-print("======================")
-if inventory then
-    for key, _ in pairs(inventory) do
-        print("  - " .. tostring(key))
+-- Main function to find inventory categories
+local function findInventoryCategories()
+    print("🔍 SEARCHING FOR INVENTORY CATEGORIES")
+    print("======================================")
+    
+    -- METHOD 1: Check if player has inventory directly
+    print("\n📁 METHOD 1: Direct player check")
+    print("----------------------------------")
+    if player:FindFirstChild("Inventory") then
+        print("✅ Found Inventory as child of player")
+        safeInspect(player.Inventory, "player.Inventory")
+    elseif player:FindFirstChild("Data") then
+        print("✅ Found Data as child of player")
+        safeInspect(player.Data, "player.Data")
+    else
+        print("❌ No Inventory or Data found directly on player")
     end
+    
+    -- METHOD 2: Check PlayerGui for inventory frames
+    print("\n📁 METHOD 2: Checking PlayerGui")
+    print("--------------------------------")
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if playerGui then
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui.Name:lower():find("inventory") or gui.Name:lower():find("pet") then
+                print("✅ Found GUI: " .. gui.Name)
+            end
+        end
+    end
+    
+    -- METHOD 3: Try to find data modules
+    print("\n📁 METHOD 3: Searching for data modules")
+    print("----------------------------------------")
+    
+    -- Common data module paths
+    local dataPaths = {
+        ReplicatedStorage:FindFirstChild("Modules"),
+        ReplicatedStorage:FindFirstChild("ClientModules"),
+        ReplicatedStorage:FindFirstChild("Shared"),
+        ReplicatedStorage:FindFirstChild("Data"),
+        ReplicatedStorage:FindFirstChild("Core")
+    }
+    
+    for _, path in ipairs(dataPaths) do
+        if path then
+            print("Checking: " .. path:GetFullName())
+            for _, module in ipairs(path:GetChildren()) do
+                if module.ClassName == "ModuleScript" and (
+                    module.Name:lower():find("data") or 
+                    module.Name:lower():find("inventory") or
+                    module.Name:lower():find("player")
+                ) then
+                    print("  📄 Found module: " .. module.Name)
+                    
+                    -- Try to require it
+                    local success, result = pcall(function()
+                        return require(module)
+                    end)
+                    
+                    if success then
+                        print("    ✅ Successfully required")
+                        if type(result) == "table" then
+                            print("    Keys: " .. table.concat(table.keys or {}, ", "))
+                        end
+                    else
+                        print("    ❌ Failed to require")
+                    end
+                end
+            end
+        end
+    end
+    
+    -- METHOD 4: Try common global variables
+    print("\n📁 METHOD 4: Checking globals")
+    print("-------------------------------")
+    local globalsToCheck = {
+        _G.PlayerData,
+        _G.Data,
+        _G.Inventory,
+        shared.PlayerData,
+        shared.Data
+    }
+    
+    for i, global in ipairs(globalsToCheck) do
+        if global then
+            print("✅ Found global: _G[" .. i .. "]")
+            if type(global) == "table" and global[player.Name] then
+                print("  Has data for current player")
+                safeInspect(global[player.Name], "Player data", 1)
+            end
+        end
+    end
+    
+    -- METHOD 5: Wait and try to hook into existing functions
+    print("\n📁 METHOD 5: Looking for common functions")
+    print("------------------------------------------")
+    
+    -- Check if any RemoteEvents might give data
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote.ClassName == "RemoteFunction" and (
+            remote.Name:lower():find("data") or 
+            remote.Name:lower():find("inventory") or
+            remote.Name:lower():find("get")
+        ) then
+            print("✅ Found RemoteFunction: " .. remote:GetFullName())
+            
+            -- Try to invoke it
+            local success, result = pcall(function()
+                return remote:InvokeServer()
+            end)
+            
+            if success and result then
+                print("  Successfully invoked")
+                if type(result) == "table" then
+                    print("  Result keys: " .. table.concat(table.keys or {}, ", "))
+                end
+            end
+        end
+    end
+end
+
+-- Run the search
+findInventoryCategories()
+
+-- Also try to inspect the player object itself
+print("\n🔍 PLAYER OBJECT INSPECTION")
+print("============================")
+for _, child in ipairs(player:GetChildren()) do
+    print("Child: " .. child.Name .. " (" .. child.ClassName .. ")")
+end
+
+-- Check attributes
+print("\n📋 PLAYER ATTRIBUTES:")
+local attrs = player:GetAttributes()
+for key, value in pairs(attrs) do
+    print("  " .. key .. " = " .. tostring(value))
 end
