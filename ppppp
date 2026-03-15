@@ -20,135 +20,137 @@ local function findItemById(targetId)
         return
     end
     
-    local foundItems = {}
+    local foundLocations = {}
     
-    -- Search through all inventory categories
-    if data.inventory then
-        for category, categoryData in pairs(data.inventory) do
-            if type(categoryData) == "table" then
-                -- Check if the target ID exists directly in this category
-                if categoryData[targetId] then
-                    table.insert(foundItems, {
-                        category = category,
-                        id = targetId,
-                        data = categoryData[targetId],
-                        matchType = "exact_key"
+    -- Search through EVERYTHING in data
+    local function searchTable(tbl, path, depth)
+        depth = depth or 0
+        if depth > 10 then return end -- Prevent going too deep
+        
+        for key, value in pairs(tbl) do
+            local currentPath = path .. "." .. tostring(key)
+            
+            -- Check if this key matches our target
+            if tostring(key) == targetId then
+                table.insert(foundLocations, {
+                    path = currentPath,
+                    key = key,
+                    value = value
+                })
+            end
+            
+            -- Check if value is a table and contains our target as a key
+            if type(value) == "table" then
+                -- Check if the table itself has our target as a key
+                if value[targetId] ~= nil then
+                    table.insert(foundLocations, {
+                        path = currentPath .. "[" .. targetId .. "]",
+                        key = targetId,
+                        value = value[targetId]
                     })
                 end
                 
-                -- Also search through items that might have this as their id field
-                for itemKey, itemValue in pairs(categoryData) do
-                    if type(itemValue) == "table" then
-                        -- Check if item has an id field matching target
-                        if itemValue.id == targetId then
-                            table.insert(foundItems, {
-                                category = category,
-                                id = itemKey,
-                                data = itemValue,
-                                matchType = "id_field"
-                            })
-                        end
-                        
-                        -- Check other possible ID fields
-                        if itemValue.itemId == targetId or 
-                           itemValue.item_id == targetId or
-                           itemValue.uniqueId == targetId or
-                           itemValue.unique_id == targetId then
-                            table.insert(foundItems, {
-                                category = category,
-                                id = itemKey,
-                                data = itemValue,
-                                matchType = "alternate_field"
-                            })
-                        end
-                    end
-                end
+                -- Recursively search deeper
+                searchTable(value, currentPath, depth + 1)
             end
-        end
-    end
-    
-    -- Also check in player data events
-    if data.events then
-        for eventName, eventData in pairs(data.events) do
-            if type(eventData) == "table" then
-                if eventData[targetId] then
-                    table.insert(foundItems, {
-                        category = "events." .. eventName,
-                        id = targetId,
-                        data = eventData[targetId],
-                        matchType = "exact_key"
-                    })
-                end
-            end
-        end
-    end
-    
-    -- Check in pets inventory specifically
-    if data.inventory and data.inventory.pets then
-        for petId, petData in pairs(data.inventory.pets) do
-            if petId == targetId or (type(petData) == "table" and petData.id == targetId) then
-                table.insert(foundItems, {
-                    category = "inventory.pets",
-                    id = petId,
-                    data = petData,
-                    matchType = "pet"
+            
+            -- Check if value itself equals or contains our target
+            if type(value) == "string" and value == targetId then
+                table.insert(foundLocations, {
+                    path = currentPath,
+                    key = key,
+                    value = value,
+                    note = "Value matches target ID"
                 })
             end
         end
     end
     
+    -- Start search from root data
+    searchTable(data, "data")
+    
     -- Display results
-    if #foundItems == 0 then
-        print("❌ Item not found in inventory")
+    if #foundLocations == 0 then
+        print("❌ Item not found anywhere in player data")
         
-        -- Show sample of items to help debug
-        print("\n📋 First 20 items in inventory:")
-        local count = 0
+        -- Show inventory structure to help debug
+        print("\n📋 INVENTORY STRUCTURE:")
         if data.inventory then
             for category, categoryData in pairs(data.inventory) do
+                print("\n📁 Category: " .. category)
                 if type(categoryData) == "table" then
-                    for itemKey, _ in pairs(categoryData) do
+                    -- Show first 3 items in each category as example
+                    local count = 0
+                    for itemId, itemValue in pairs(categoryData) do
                         count = count + 1
-                        if count <= 20 then
-                            print(string.format("   [%s] %s", category, tostring(itemKey)))
+                        if count <= 3 then
+                            print("   🏷️  " .. tostring(itemId))
+                            if type(itemValue) == "table" then
+                                -- Show properties
+                                for prop, val in pairs(itemValue) do
+                                    if prop == "id" or prop == "name" or prop == "type" then
+                                        print("      " .. prop .. ": " .. tostring(val))
+                                    end
+                                end
+                            end
                         end
+                    end
+                    if count > 3 then
+                        print("   ... and " .. (count - 3) .. " more items")
                     end
                 end
             end
         end
+        
+        -- Also check events
+        if data.events then
+            print("\n📁 Events:")
+            for eventName, eventData in pairs(data.events) do
+                print("   📅 " .. eventName)
+                if type(eventData) == "table" then
+                    for itemId, _ in pairs(eventData) do
+                        print("      🏷️  " .. tostring(itemId))
+                        break -- Just show first one
+                    end
+                end
+            end
+        end
+        
     else
-        print("✅ Found " .. #foundItems .. " matches!")
+        print("✅ Item found in " .. #foundLocations .. " location(s)!")
         print("")
         
-        for i, item in ipairs(foundItems) do
-            print("📦 Match #" .. i)
-            print("   Location: " .. item.category)
-            print("   Match type: " .. item.matchType)
-            print("   Item key: " .. tostring(item.id))
+        for i, location in ipairs(foundLocations) do
+            print("📍 Location #" .. i)
+            print("   Path: " .. location.path)
             
-            if type(item.data) == "table" then
-                print("   Item data:")
-                for prop, value in pairs(item.data) do
-                    if type(value) ~= "table" then
-                        print("      " .. prop .. ": " .. tostring(value))
-                    else
-                        print("      " .. prop .. ": [table]")
-                    end
-                end
-                
-                -- Check if this is Sugar Dice
-                if item.data.id and type(item.data.id) == "string" then
-                    if item.data.id:find("sugar") and item.data.id:find("dice") then
-                        print("   🎲 This appears to be a Sugar Dice!")
-                    end
+            if location.note then
+                print("   Note: " .. location.note)
+            end
+            
+            -- Show the value/content
+            print("   Content:")
+            if type(location.value) == "table" then
+                for k, v in pairs(location.value) do
+                    print("      " .. tostring(k) .. ": " .. tostring(v))
                 end
             else
-                print("   Value: " .. tostring(item.data))
+                print("      " .. tostring(location.value))
             end
             print("   ---")
         end
     end
+    
+    -- Quick summary of where items are stored
+    print("\n📊 QUICK SUMMARY:")
+    if data.inventory then
+        print("Inventory categories found:")
+        for category, _ in pairs(data.inventory) do
+            print("   - " .. category)
+        end
+    end
 end
 
--- Run the function with your specific ID
-findItemById("2_d2ec3f41e8e64b93bec2c3cff6912333")
+-- Run the function with your specific item ID
+local targetId = "2_d2ec3f41e8e64b93bec2c3cff6912333"
+findItemById(targetId)
