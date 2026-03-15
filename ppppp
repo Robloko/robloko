@@ -5,10 +5,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Simple function to inspect Sugarfest inventory
-local function inspectSugarfest()
-    print("🍬 INSPECTING SUGARFEST INVENTORY")
-    print("==================================")
+-- Function to find Sugar Dice in inventory
+local function findSugarDice()
+    print("🎲 SEARCHING FOR SUGAR DICE")
+    print("============================")
     
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -20,106 +20,134 @@ local function inspectSugarfest()
         return
     end
     
-    -- Check for Sugarfest data in different possible locations
-    local sugarfestData = nil
+    local diceFound = {}
     
-    -- Try to find Sugarfest in inventory categories
+    -- Search through all inventory categories
     if data.inventory then
-        -- Check for sugarfest category
-        if data.inventory.sugarfest then
-            sugarfestData = data.inventory.sugarfest
-            print("📁 Found Sugarfest in inventory.sugarfest")
-        -- Check if sugarfest items are in a different category
-        elseif data.inventory.events and data.inventory.events.sugarfest then
-            sugarfestData = data.inventory.events.sugarfest
-            print("📁 Found Sugarfest in inventory.events.sugarfest")
+        -- Search through each category in inventory
+        for category, categoryData in pairs(data.inventory) do
+            if type(categoryData) == "table" then
+                -- Look for dice in this category
+                for itemId, itemInfo in pairs(categoryData) do
+                    -- Check various possible identifiers for Sugar Dice
+                    local itemName = tostring(itemId):lower()
+                    local itemId_lower = tostring(itemInfo and itemInfo.id or ""):lower()
+                    
+                    -- Look for sugar dice related names
+                    if itemName:find("sugar") and itemName:find("dice") or
+                       itemId_lower:find("sugar") and itemId_lower:find("dice") or
+                       itemName == "sugardice" or
+                       itemId_lower == "sugardice" or
+                       itemName == "sugar_dice" or
+                       itemId_lower == "sugar_dice" then
+                        
+                        table.insert(diceFound, {
+                            category = category,
+                            id = itemId,
+                            data = itemInfo
+                        })
+                    end
+                    
+                    -- Also check if the item data has name field
+                    if type(itemInfo) == "table" and itemInfo.name then
+                        local name_lower = itemInfo.name:lower()
+                        if name_lower:find("sugar") and name_lower:find("dice") then
+                            table.insert(diceFound, {
+                                category = category,
+                                id = itemId,
+                                data = itemInfo
+                            })
+                        end
+                    end
+                end
+            end
         end
     end
     
-    -- Also check in player data events table
-    if not sugarfestData and data.events and data.events.sugarfest then
-        sugarfestData = data.events.sugarfest
-        print("📁 Found Sugarfest in data.events.sugarfest")
+    -- Also check in events table
+    if data.events then
+        for eventName, eventData in pairs(data.events) do
+            if eventName:lower():find("sugar") and type(eventData) == "table" then
+                for itemId, itemInfo in pairs(eventData) do
+                    local itemId_lower = tostring(itemId):lower()
+                    if itemId_lower:find("dice") then
+                        table.insert(diceFound, {
+                            category = "events." .. eventName,
+                            id = itemId,
+                            data = itemInfo
+                        })
+                    end
+                end
+            end
+        end
     end
     
-    if not sugarfestData then
-        print("❌ No Sugarfest data found in inventory")
-        print("\n📋 Available inventory categories:")
+    -- Display results
+    if #diceFound == 0 then
+        print("❌ No Sugar Dice found in inventory")
+        
+        -- Show what categories were checked
+        print("\n📋 Checked inventory categories:")
         if data.inventory then
             for category, _ in pairs(data.inventory) do
                 print("   - " .. category)
             end
         end
-        return
-    end
-    
-    -- Count and display Sugarfest items
-    local itemCount = 0
-    for _ in pairs(sugarfestData) do
-        itemCount = itemCount + 1
-    end
-    
-    print("📊 Total Sugarfest items: " .. itemCount)
-    print("")
-    
-    if itemCount == 0 then
-        print("No Sugarfest items found")
-        return
-    end
-    
-    -- Show all Sugarfest items with their details
-    local count = 0
-    for itemKey, itemData in pairs(sugarfestData) do
-        count = count + 1
         
-        print("🍭 Item #" .. count)
-        print("   Key: " .. tostring(itemKey))
-        
-        -- Try to display item information based on structure
-        if type(itemData) == "table" then
-            if itemData.id then
-                print("   ID: " .. itemData.id)
-            end
-            if itemData.type then
-                print("   Type: " .. itemData.type)
-            end
-            if itemData.name then
-                print("   Name: " .. itemData.name)
-            end
-            if itemData.amount then
-                print("   Amount: " .. itemData.amount)
-            end
-            if itemData.claimed then
-                print("   Claimed: " .. tostring(itemData.claimed))
-            end
-            
-            -- Show any other properties
-            local hasOtherProps = false
-            for prop, value in pairs(itemData) do
-                if prop ~= "id" and prop ~= "type" and prop ~= "name" and prop ~= "amount" and prop ~= "claimed" then
-                    if not hasOtherProps then
-                        print("   Other properties:")
-                        hasOtherProps = true
+        -- Try to list all items to help debug
+        print("\n🔍 Listing all inventory items (first 20):")
+        local itemCount = 0
+        if data.inventory then
+            for category, categoryData in pairs(data.inventory) do
+                if type(categoryData) == "table" then
+                    for itemId, _ in pairs(categoryData) do
+                        itemCount = itemCount + 1
+                        if itemCount <= 20 then
+                            print("   [" .. category .. "] " .. tostring(itemId))
+                        end
                     end
-                    print("      " .. prop .. ": " .. tostring(value))
                 end
             end
-        else
-            print("   Value: " .. tostring(itemData))
         end
-        print("   ---")
-    end
-    
-    -- Also check for any Sugarfest-related progress/points
-    if data.sugarfest_points or data.SugarfestPoints then
-        print("\n🍬 Sugarfest Points:")
-        print("   Points: " .. tostring(data.sugarfest_points or data.SugarfestPoints))
-    end
-    
-    if data.sugarfest_level or data.SugarfestLevel then
-        print("   Level: " .. tostring(data.sugarfest_level or data.SugarfestLevel))
+    else
+        print("✅ Found " .. #diceFound .. " Sugar Dice!")
+        print("")
+        
+        -- Display each dice found
+        for i, dice in ipairs(diceFound) do
+            print("🎲 Sugar Dice #" .. i)
+            print("   Location: " .. dice.category)
+            print("   ID: " .. tostring(dice.id))
+            
+            if type(dice.data) == "table" then
+                -- Show all properties of the dice
+                print("   Properties:")
+                for prop, value in pairs(dice.data) do
+                    print("      " .. prop .. ": " .. tostring(value))
+                end
+            else
+                print("   Value: " .. tostring(dice.data))
+            end
+            print("   ---")
+        end
+        
+        -- Check for dice count/amount
+        local totalDice = 0
+        for _, dice in ipairs(diceFound) do
+            if type(dice.data) == "table" and dice.data.amount then
+                totalDice = totalDice + dice.data.amount
+            elseif type(dice.data) == "table" and dice.data.count then
+                totalDice = totalDice + dice.data.count
+            else
+                totalDice = totalDice + 1
+            end
+        end
+        
+        if totalDice > #diceFound then
+            print("📊 Total dice count (including stacks): " .. totalDice)
+        end
     end
 end
 
 -- Run the function
-inspectSugarfest()
+findSugarDice()
