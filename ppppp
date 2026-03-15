@@ -5,270 +5,52 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to recursively find all possible inventory categories
-local function findAllInventoryCategories()
-    print("🔍 SEARCHING FOR ALL INVENTORY CATEGORIES")
-    print("==========================================")
+-- Simple function to inspect pets inventory
+local function inspectPets()
+    print("🔍 INSPECTING PETS INVENTORY")
+    print("=============================")
     
-    -- Store found categories
-    local foundCategories = {}
-    
-    -- METHOD 1: Try to get player data through common modules
-    print("\n📁 METHOD 1: Checking common data modules")
-    print("------------------------------------------")
-    
-    -- List of possible module paths to check
-    local modulePaths = {
-        {parent = ReplicatedStorage, path = {"ClientModules", "Core", "ClientData"}},
-        {parent = ReplicatedStorage, path = {"Modules", "Data", "PlayerData"}},
-        {parent = ReplicatedStorage, path = {"Shared", "Data", "Inventory"}},
-        {parent = ReplicatedStorage, path = {"Core", "DataManager"}},
-        {parent = ReplicatedStorage, path = {"Inventory", "InventoryHandler"}},
-    }
-    
-    for _, moduleInfo in ipairs(modulePaths) do
-        local current = moduleInfo.parent
-        local found = true
-        
-        -- Navigate the path
-        for _, folderName in ipairs(moduleInfo.path) do
-            current = current:FindFirstChild(folderName)
-            if not current then
-                found = false
-                break
-            end
-        end
-        
-        if found and current.ClassName == "ModuleScript" then
-            print("✅ Found module: " .. current:GetFullName())
-            
-            -- Try to require it
-            local success, module = pcall(function()
-                return require(current)
-            end)
-            
-            if success and module then
-                print("   Successfully loaded module")
-                
-                -- Try to get player data
-                local data
-                if type(module) == "table" then
-                    -- Try different common function names
-                    if module.get_data then
-                        data = module.get_data()
-                    elseif module.GetData then
-                        data = module.GetData()
-                    elseif module.getPlayerData then
-                        data = module.getPlayerData(player.Name)
-                    elseif module.GetPlayerData then
-                        data = module.GetPlayerData(player.Name)
-                    elseif module[player.Name] then
-                        data = module[player.Name]
-                    end
-                end
-                
-                -- If we got data, check inventory
-                if data and data.inventory then
-                    print("\n📦 INVENTORY CATEGORIES FOUND:")
-                    print("================================")
-                    
-                    for category, items in pairs(data.inventory) do
-                        local itemCount = 0
-                        for _ in pairs(items) do
-                            itemCount = itemCount + 1
-                        end
-                        
-                        print(string.format("  ✅ %s: %d items", category, itemCount))
-                        table.insert(foundCategories, category)
-                        
-                        -- If it's pets, show first pet as example
-                        if category:lower() == "pets" and itemCount > 0 then
-                            local firstPetId, firstPet = next(items)
-                            if firstPet then
-                                print("     Example pet:")
-                                for prop, val in pairs(firstPet) do
-                                    print("       " .. prop .. ": " .. tostring(val))
-                                end
-                            end
-                        end
-                    end
-                    
-                    return foundCategories
-                end
-            end
-        end
-    end
-    
-    -- METHOD 2: Look for RemoteFunctions that might give inventory data
-    print("\n📁 METHOD 2: Checking RemoteFunctions")
-    print("--------------------------------------")
-    
-    local remoteNames = {
-        "GetInventory", "getInventory", "GetPlayerData", "getPlayerData",
-        "RequestData", "requestData", "InventoryData", "GetPets", "GetItems"
-    }
-    
-    for _, remoteName in ipairs(remoteNames) do
-        local remote = ReplicatedStorage:FindFirstChild(remoteName)
-        if not remote then
-            -- Search deeper
-            remote = ReplicatedStorage:FindFirstChild(remoteName, true)
-        end
-        
-        if remote and remote.ClassName == "RemoteFunction" then
-            print("✅ Found RemoteFunction: " .. remote:GetFullName())
-            
-            -- Try to invoke it
-            local success, result = pcall(function()
-                return remote:InvokeServer()
-            end)
-            
-            if success and result then
-                print("   Successfully invoked")
-                if type(result) == "table" then
-                    -- Check if it has inventory
-                    if result.inventory then
-                        print("\n📦 INVENTORY CATEGORIES:")
-                        for category, _ in pairs(result.inventory) do
-                            print("  ✅ " .. category)
-                            table.insert(foundCategories, category)
-                        end
-                    elseif result.pets or result.items then
-                        print("\n📦 POSSIBLE CATEGORIES:")
-                        for key, value in pairs(result) do
-                            if type(value) == "table" then
-                                print("  ✅ " .. key)
-                                table.insert(foundCategories, key)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    -- METHOD 3: Check PlayerGui for inventory UI elements (which reveal categories)
-    print("\n📁 METHOD 3: Analyzing Inventory UI")
-    print("------------------------------------")
-    
-    local playerGui = player:FindFirstChild("PlayerGui")
-    if playerGui then
-        -- Look for inventory frames
-        local function findInventoryUI(instance, depth)
-            if depth > 5 then return end
-            
-            -- Check if this instance might be an inventory category button
-            if instance:IsA("TextButton") or instance:IsA("ImageButton") or instance:IsA("Frame") then
-                local categoryNames = {
-                    "pets", "eggs", "gifts", "strollers", "food", "potions",
-                    "toys", "vehicles", "skins", "enchants", "boosters",
-                    "currency", "items", "accessories", "hats", "tools"
-                }
-                
-                for _, category in ipairs(categoryNames) do
-                    if instance.Name:lower():find(category) or 
-                       (instance.Text and instance.Text:lower():find(category)) then
-                        print(string.format("  ✅ Found UI element for '%s': %s", 
-                            category, instance:GetFullName()))
-                        table.insert(foundCategories, category)
-                    end
-                end
-            end
-            
-            -- Check children
-            for _, child in ipairs(instance:GetChildren()) do
-                findInventoryUI(child, depth + 1)
-            end
-        end
-        
-        findInventoryUI(playerGui, 0)
-    end
-    
-    -- METHOD 4: Common inventory categories in pet sim games
-    print("\n📁 METHOD 4: Common categories in pet sim games")
-    print("-----------------------------------------------")
-    
-    local commonCategories = {
-        "pets", "eggs", "gifts", "strollers", "food", "potions", 
-        "toys", "vehicles", "enchants", "boosters", "skins",
-        "accessories", "cages", "habitats", "decorations", "currency",
-        "fruits", "berries", "fish", "fossils", "crystals", "gems"
-    }
-    
-    print("Common categories to look for:")
-    for i, category in ipairs(commonCategories) do
-        if i % 5 == 1 then print("") end
-        io.write(string.format("  %-15s", category))
-    end
-    print("\n")
-    
-    -- METHOD 5: Check game's ReplicatedStorage for category-related modules
-    print("\n📁 METHOD 5: Looking for category modules")
-    print("------------------------------------------")
-    
-    local categoryKeywords = {
-        "pet", "egg", "gift", "stroller", "food", "potion", "toy",
-        "vehicle", "enchant", "booster", "skin", "accessory", "cage"
-    }
-    
-    for _, keyword in ipairs(categoryKeywords) do
-        local instances = ReplicatedStorage:FindDescendants()
-        for _, instance in ipairs(instances) do
-            if instance.Name:lower():find(keyword) and 
-               (instance.ClassName == "ModuleScript" or instance.ClassName == "Folder") then
-                print(string.format("  ✅ Found %s-related module: %s", 
-                    keyword, instance:GetFullName()))
-            end
-        end
-    end
-    
-    -- Print summary
-    print("\n📊 SUMMARY OF FOUND CATEGORIES")
-    print("===============================")
-    
-    -- Remove duplicates
-    local uniqueCategories = {}
-    for _, category in ipairs(foundCategories) do
-        uniqueCategories[category:lower()] = category
-    end
-    
-    if next(uniqueCategories) then
-        print("Categories detected in game:")
-        for category in pairs(uniqueCategories) do
-            print(string.format("  • %s", category))
-        end
-    else
-        print("No specific categories found yet. Try opening your inventory in-game and run again.")
-        print("\nCommon pet simulator categories you might have:")
-        print("  • pets")
-        print("  • eggs")
-        print("  • gifts")
-        print("  • strollers")
-        print("  • food")
-        print("  • potions")
-        print("  • toys")
-        print("  • vehicles")
-        print("  • enchants")
-        print("  • skins")
-    end
-end
-
--- Run the search
-findAllInventoryCategories()
-
--- Also check if there's a global Inventory variable
-print("\n🔍 CHECKING GLOBAL VARIABLES")
-print("=============================")
-for i = 1, 10 do
-    local globalName = "_G.Inventory" .. (i > 1 and tostring(i) or "")
-    local success, result = pcall(function()
-        return _G["Inventory" .. (i > 1 and tostring(i) or "")]
+    local success, data = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return clientData.get_data()[player.Name]
     end)
     
-    if success and result and type(result) == "table" then
-        print("Found _G.Inventory" .. (i > 1 and tostring(i) or "") .. ":")
-        for key, _ in pairs(result) do
-            print("  - " .. tostring(key))
+    if not success or not data then
+        print("❌ Failed to get player data")
+        return
+    end
+    
+    if not data.inventory or not data.inventory.sugarfest then
+        print("❌ No pets found in inventory")
+        return
+    end
+    
+    local petCount = 0
+    for _ in pairs(data.inventory.pets) do
+        petCount = petCount + 1
+    end
+    
+    print("📊 Total pets: " .. petCount)
+    print("")
+    
+    -- Show first 10 pets with basic info
+    local count = 0
+    for petUniqueID, petData in pairs(data.inventory.pets) do
+        count = count + 1
+        if count > 10 then
+            print("... and " .. (petCount - 10) .. " more pets")
+            break
         end
+        
+        print("🐾 " .. petData.id)
+        print("   Unique ID: " .. petUniqueID)
+        print("   Age: " .. (petData.properties and petData.properties.age or "?"))
+        print("   Neon: " .. tostring(petData.properties and petData.properties.neon or false))
+        print("   Mega Neon: " .. tostring(petData.properties and petData.properties.mega_neon or false))
+        print("   XP: " .. (petData.properties and petData.properties.xp or "?"))
+        print("   ---")
     end
 end
+
+-- Run the function
+inspectPets()
