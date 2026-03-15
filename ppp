@@ -5,52 +5,128 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Simple function to inspect pets inventory
-local function inspectPets()
-    print("🔍 INSPECTING PETS INVENTORY")
-    print("=============================")
+-- Deep inspection function to see all available data
+local function deepInspect(data, indent, maxDepth, currentDepth)
+    indent = indent or ""
+    maxDepth = maxDepth or 3
+    currentDepth = currentDepth or 0
     
-    local success, data = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return clientData.get_data()[player.Name]
-    end)
-    
-    if not success or not data then
-        print("❌ Failed to get player data")
+    if currentDepth > maxDepth then
+        print(indent .. "... (max depth reached)")
         return
     end
     
-    if not data.inventory or not data.inventory.pets then
-        print("❌ No pets found in inventory")
-        return
-    end
+    local dataType = typeof(data)
+    print(indent .. "Type: " .. dataType)
     
-    local petCount = 0
-    for _ in pairs(data.inventory.pets) do
-        petCount = petCount + 1
-    end
-    
-    print("📊 Total pets: " .. petCount)
-    print("")
-    
-    -- Show first 10 pets with basic info
-    local count = 0
-    for petUniqueID, petData in pairs(data.inventory.sugarfest) do
-        count = count + 1
-        if count > 10 then
-            print("... and " .. (petCount - 10) .. " more pets")
-            break
+    if dataType == "table" then
+        -- Print all keys in this table
+        for key, value in pairs(data) do
+            local keyType = typeof(key)
+            local valueType = typeof(value)
+            
+            print(indent .. "├─ [" .. tostring(key) .. "] (" .. keyType .. ") -> (" .. valueType .. ")")
+            
+            -- If value is a table, inspect it recursively
+            if valueType == "table" and next(value) ~= nil then
+                deepInspect(value, indent .. "│  ", maxDepth, currentDepth + 1)
+            elseif valueType == "table" and next(value) == nil then
+                print(indent .. "│  └─ (empty table)")
+            end
         end
-        
-        print("🐾 " .. petData.id)
-        print("   Unique ID: " .. petUniqueID)
-        print("   Age: " .. (petData.properties and petData.properties.age or "?"))
-        print("   Neon: " .. tostring(petData.properties and petData.properties.neon or false))
-        print("   Mega Neon: " .. tostring(petData.properties and petData.properties.mega_neon or false))
-        print("   XP: " .. (petData.properties and petData.properties.xp or "?"))
-        print("   ---")
+    else
+        print(indent .. "└─ Value: " .. tostring(data))
     end
 end
 
--- Run the function
-inspectPets() -- make small function to find inventory category like  pairs(data.inventory.pets (pets, gifts, itc 
+-- Main inspection function
+local function inspectPetsStructure()
+    print("🔍 DEEP INSPECTING PETS INVENTORY STRUCTURE")
+    print("=============================================")
+    
+    -- Try multiple ways to access data
+    print("\n📁 METHOD 1: Through ClientData")
+    print("-------------------------------")
+    local success, clientData = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData)
+    end)
+    
+    if success and clientData then
+        print("✅ ClientData loaded successfully")
+        
+        -- Try to get player data
+        local playerDataSuccess, playerData = pcall(function()
+            return clientData.get_data and clientData.get_data()[player.Name]
+        end)
+        
+        if playerDataSuccess and playerData then
+            print("✅ Player data found")
+            
+            -- Inspect inventory structure
+            if playerData.inventory then
+                print("\n📁 INVENTORY STRUCTURE:")
+                deepInspect(playerData.inventory, "", 3)
+            else
+                print("❌ No inventory found in player data")
+            end
+        else
+            print("❌ Could not get player data")
+        end
+    else
+        print("❌ Could not load ClientData")
+    end
+    
+    -- Try alternative method - check ReplicatedStorage for other modules
+    print("\n📁 METHOD 2: Exploring ReplicatedStorage")
+    print("----------------------------------------")
+    for _, child in ipairs(ReplicatedStorage:GetChildren()) do
+        print("Found: " .. child.Name .. " (" .. child.ClassName .. ")")
+        
+        -- If it's a ModuleScript, try to inspect it
+        if child.ClassName == "ModuleScript" then
+            local moduleSuccess, module = pcall(function()
+                return require(child)
+            end)
+            
+            if moduleSuccess and module then
+                print("  └─ Can be required")
+            end
+        end
+    end
+    
+    -- Try to find any pet-related modules
+    print("\n📁 METHOD 3: Searching for pet-related modules")
+    print("---------------------------------------------")
+    local petModules = {}
+    
+    local function searchForPets(folder, path)
+        path = path or ""
+        for _, child in ipairs(folder:GetChildren()) do
+            local fullPath = path .. "/" .. child.Name
+            if child.Name:lower():find("pet") or child.Name:lower():find("egg") or child.Name:lower():find("hatch") then
+                table.insert(petModules, {
+                    name = child.Name,
+                    path = fullPath,
+                    class = child.ClassName
+                })
+            end
+            if child.ClassName == "Folder" or child.ClassName == "ModuleScript" then
+                searchForPets(child, fullPath)
+            end
+        end
+    end
+    
+    searchForPets(ReplicatedStorage, "ReplicatedStorage")
+    
+    if #petModules > 0 then
+        print("Found " .. #petModules .. " pet-related modules:")
+        for _, mod in ipairs(petModules) do
+            print("  • " .. mod.path .. " (" .. mod.class .. ")")
+        end
+    else
+        print("No pet-related modules found")
+    end
+end
+
+-- Run the inspection
+inspectPetsStructure()
