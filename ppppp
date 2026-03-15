@@ -5,10 +5,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to find Sugar Dice in inventory
-local function findSugarDice()
-    print("🎲 SEARCHING FOR SUGAR DICE")
-    print("============================")
+-- Function to find specific item by ID
+local function findItemById(targetId)
+    print("🔍 SEARCHING FOR ITEM: " .. targetId)
+    print("======================================")
     
     local success, data = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -20,42 +20,45 @@ local function findSugarDice()
         return
     end
     
-    local diceFound = {}
+    local foundItems = {}
     
     -- Search through all inventory categories
     if data.inventory then
-        -- Search through each category in inventory
         for category, categoryData in pairs(data.inventory) do
             if type(categoryData) == "table" then
-                -- Look for dice in this category
-                for itemId, itemInfo in pairs(categoryData) do
-                    -- Check various possible identifiers for Sugar Dice
-                    local itemName = tostring(itemId):lower()
-                    local itemId_lower = tostring(itemInfo and itemInfo.id or ""):lower()
-                    
-                    -- Look for sugar dice related names
-                    if itemName:find("sugar") and itemName:find("dice") or
-                       itemId_lower:find("sugar") and itemId_lower:find("dice") or
-                       itemName == "sugardice" or
-                       itemId_lower == "sugardice" or
-                       itemName == "sugar_dice" or
-                       itemId_lower == "sugar_dice" then
-                        
-                        table.insert(diceFound, {
-                            category = category,
-                            id = itemId,
-                            data = itemInfo
-                        })
-                    end
-                    
-                    -- Also check if the item data has name field
-                    if type(itemInfo) == "table" and itemInfo.name then
-                        local name_lower = itemInfo.name:lower()
-                        if name_lower:find("sugar") and name_lower:find("dice") then
-                            table.insert(diceFound, {
+                -- Check if the target ID exists directly in this category
+                if categoryData[targetId] then
+                    table.insert(foundItems, {
+                        category = category,
+                        id = targetId,
+                        data = categoryData[targetId],
+                        matchType = "exact_key"
+                    })
+                end
+                
+                -- Also search through items that might have this as their id field
+                for itemKey, itemValue in pairs(categoryData) do
+                    if type(itemValue) == "table" then
+                        -- Check if item has an id field matching target
+                        if itemValue.id == targetId then
+                            table.insert(foundItems, {
                                 category = category,
-                                id = itemId,
-                                data = itemInfo
+                                id = itemKey,
+                                data = itemValue,
+                                matchType = "id_field"
+                            })
+                        end
+                        
+                        -- Check other possible ID fields
+                        if itemValue.itemId == targetId or 
+                           itemValue.item_id == targetId or
+                           itemValue.uniqueId == targetId or
+                           itemValue.unique_id == targetId then
+                            table.insert(foundItems, {
+                                category = category,
+                                id = itemKey,
+                                data = itemValue,
+                                matchType = "alternate_field"
                             })
                         end
                     end
@@ -64,90 +67,88 @@ local function findSugarDice()
         end
     end
     
-    -- Also check in events table
+    -- Also check in player data events
     if data.events then
         for eventName, eventData in pairs(data.events) do
-            if eventName:lower():find("sugar") and type(eventData) == "table" then
-                for itemId, itemInfo in pairs(eventData) do
-                    local itemId_lower = tostring(itemId):lower()
-                    if itemId_lower:find("dice") then
-                        table.insert(diceFound, {
-                            category = "events." .. eventName,
-                            id = itemId,
-                            data = itemInfo
-                        })
-                    end
+            if type(eventData) == "table" then
+                if eventData[targetId] then
+                    table.insert(foundItems, {
+                        category = "events." .. eventName,
+                        id = targetId,
+                        data = eventData[targetId],
+                        matchType = "exact_key"
+                    })
                 end
             end
         end
     end
     
-    -- Display results
-    if #diceFound == 0 then
-        print("❌ No Sugar Dice found in inventory")
-        
-        -- Show what categories were checked
-        print("\n📋 Checked inventory categories:")
-        if data.inventory then
-            for category, _ in pairs(data.inventory) do
-                print("   - " .. category)
+    -- Check in pets inventory specifically
+    if data.inventory and data.inventory.pets then
+        for petId, petData in pairs(data.inventory.pets) do
+            if petId == targetId or (type(petData) == "table" and petData.id == targetId) then
+                table.insert(foundItems, {
+                    category = "inventory.pets",
+                    id = petId,
+                    data = petData,
+                    matchType = "pet"
+                })
             end
         end
+    end
+    
+    -- Display results
+    if #foundItems == 0 then
+        print("❌ Item not found in inventory")
         
-        -- Try to list all items to help debug
-        print("\n🔍 Listing all inventory items (first 20):")
-        local itemCount = 0
+        -- Show sample of items to help debug
+        print("\n📋 First 20 items in inventory:")
+        local count = 0
         if data.inventory then
             for category, categoryData in pairs(data.inventory) do
                 if type(categoryData) == "table" then
-                    for itemId, _ in pairs(categoryData) do
-                        itemCount = itemCount + 1
-                        if itemCount <= 20 then
-                            print("   [" .. category .. "] " .. tostring(itemId))
+                    for itemKey, _ in pairs(categoryData) do
+                        count = count + 1
+                        if count <= 20 then
+                            print(string.format("   [%s] %s", category, tostring(itemKey)))
                         end
                     end
                 end
             end
         end
     else
-        print("✅ Found " .. #diceFound .. " Sugar Dice!")
+        print("✅ Found " .. #foundItems .. " matches!")
         print("")
         
-        -- Display each dice found
-        for i, dice in ipairs(diceFound) do
-            print("🎲 Sugar Dice #" .. i)
-            print("   Location: " .. dice.category)
-            print("   ID: " .. tostring(dice.id))
+        for i, item in ipairs(foundItems) do
+            print("📦 Match #" .. i)
+            print("   Location: " .. item.category)
+            print("   Match type: " .. item.matchType)
+            print("   Item key: " .. tostring(item.id))
             
-            if type(dice.data) == "table" then
-                -- Show all properties of the dice
-                print("   Properties:")
-                for prop, value in pairs(dice.data) do
-                    print("      " .. prop .. ": " .. tostring(value))
+            if type(item.data) == "table" then
+                print("   Item data:")
+                for prop, value in pairs(item.data) do
+                    if type(value) ~= "table" then
+                        print("      " .. prop .. ": " .. tostring(value))
+                    else
+                        print("      " .. prop .. ": [table]")
+                    end
+                end
+                
+                -- Check if this is Sugar Dice
+                if item.data.id and type(item.data.id) == "string" then
+                    if item.data.id:find("sugar") and item.data.id:find("dice") then
+                        print("   🎲 This appears to be a Sugar Dice!")
+                    end
                 end
             else
-                print("   Value: " .. tostring(dice.data))
+                print("   Value: " .. tostring(item.data))
             end
             print("   ---")
-        end
-        
-        -- Check for dice count/amount
-        local totalDice = 0
-        for _, dice in ipairs(diceFound) do
-            if type(dice.data) == "table" and dice.data.amount then
-                totalDice = totalDice + dice.data.amount
-            elseif type(dice.data) == "table" and dice.data.count then
-                totalDice = totalDice + dice.data.count
-            else
-                totalDice = totalDice + 1
-            end
-        end
-        
-        if totalDice > #diceFound then
-            print("📊 Total dice count (including stacks): " .. totalDice)
         end
     end
 end
 
--- Run the function
-findSugarDice()
+-- Run the function with your specific ID
+findItemById("2_d2ec3f41e8e64b93bec2c3cff6912333")
