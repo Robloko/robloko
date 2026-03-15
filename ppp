@@ -5,9 +5,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Function to inspect all inventory categories
-local function inspectFullInventory()
-    print("🔍 INSPECTING FULL INVENTORY")
+-- Simple function to inspect pets inventory
+local function inspectPets()
+    print("🔍 INSPECTING PETS INVENTORY")
     print("=============================")
     
     local success, data = pcall(function()
@@ -20,170 +20,37 @@ local function inspectFullInventory()
         return
     end
     
-    if not data.inventory then
-        print("❌ No inventory found")
+    if not data.inventory or not data.inventory.pets then
+        print("❌ No pets found in inventory")
         return
     end
     
-    -- Define categories to check
-    local categories = {
-        pets = "🐾",
-        gifts = "🎁",
-        items = "📦",
-        stickers = "🏷️",
-        vehicles = "🚗",
-        toys = "🧸",
-        food = "🍖",
-        potions = "🧪"
-    }
-    
-    print("📊 INVENTORY OVERVIEW")
-    print("=====================")
-    
-    -- First pass: count items in each category
-    for category, emoji in pairs(categories) do
-        if data.inventory[category] then
-            local count = 0
-            for _ in pairs(data.inventory[category]) do
-                count = count + 1
-            end
-            print(string.format("%s %s: %d items", emoji, category:upper(), count))
-        else
-            print(string.format("%s %s: 0 items", emoji, category:upper()))
-        end
+    local petCount = 0
+    for _ in pairs(data.inventory.pets) do
+        petCount = petCount + 1
     end
     
+    print("📊 Total pets: " .. petCount)
     print("")
-    print("📝 DETAILED INSPECTION")
-    print("======================")
     
-    -- Function to display items in a category
-    local function displayCategory(categoryName, emoji, maxItems)
-        if not data.inventory[categoryName] then
-            print(string.format("%s No %s found", emoji, categoryName))
-            return
+    -- Show first 10 pets with basic info
+    local count = 0
+    for petUniqueID, petData in pairs(data.inventory.sugarfest) do
+        count = count + 1
+        if count > 10 then
+            print("... and " .. (petCount - 10) .. " more pets")
+            break
         end
         
-        local items = data.inventory[categoryName]
-        local itemCount = 0
-        for _ in pairs(items) do
-            itemCount = itemCount + 1
-        end
-        
-        if itemCount == 0 then
-            print(string.format("%s No %s found", emoji, categoryName))
-            return
-        end
-        
-        print(string.format("%s %s (%d items):", emoji, categoryName:upper(), itemCount))
-        
-        local displayed = 0
-        for id, itemData in pairs(items) do
-            displayed = displayed + 1
-            if displayed > maxItems then
-                print(string.format("   ... and %d more %s", itemCount - maxItems, categoryName))
-                break
-            end
-            
-            -- Different display format based on category
-            if categoryName == "pets" then
-                print(string.format("   🐾 ID: %s", itemData.id or "Unknown"))
-                print(string.format("      Unique: %s", id))
-                if itemData.properties then
-                    print(string.format("      Age: %s, Neon: %s, Mega: %s", 
-                        itemData.properties.age or "?",
-                        tostring(itemData.properties.neon or false),
-                        tostring(itemData.properties.mega_neon or false)))
-                end
-            elseif categoryName == "gifts" then
-                print(string.format("   🎁 Gift: %s", id))
-                if itemData.type then
-                    print(string.format("      Type: %s", itemData.type))
-                end
-            elseif categoryName == "items" or categoryName == "itc" then
-                print(string.format("   📦 Item: %s", id))
-                if itemData.type then
-                    print(string.format("      Type: %s", itemData.type))
-                end
-                if itemData.amount then
-                    print(string.format("      Amount: %s", itemData.amount))
-                end
-            else
-                -- Generic display for other categories
-                print(string.format("   %s %s", emoji, id))
-                for key, value in pairs(itemData) do
-                    if type(value) ~= "table" then
-                        print(string.format("      %s: %s", key, tostring(value)))
-                    end
-                end
-            end
-            print("      ---")
-        end
-        print("")
-    end
-    
-    -- Display each category with details (showing first 5 items max)
-    displayCategory("pets", "🐾", 5)
-    displayCategory("gifts", "🎁", 5)
-    displayCategory("items", "📦", 5)
-    displayCategory("stickers", "🏷️", 5)
-    displayCategory("vehicles", "🚗", 5)
-    displayCategory("toys", "🧸", 5)
-    displayCategory("food", "🍖", 5)
-    displayCategory("potions", "🧪", 5)
-    
-    -- Check for any other categories that might exist
-    print("🔍 ADDITIONAL CATEGORIES")
-    print("========================")
-    for key, value in pairs(data.inventory) do
-        if type(value) == "table" and not categories[key] then
-            local count = 0
-            for _ in pairs(value) do
-                count = count + 1
-            end
-            if count > 0 then
-                print(string.format("   Found extra category: '%s' with %d items", key, count))
-            end
-        end
+        print("🐾 " .. petData.id)
+        print("   Unique ID: " .. petUniqueID)
+        print("   Age: " .. (petData.properties and petData.properties.age or "?"))
+        print("   Neon: " .. tostring(petData.properties and petData.properties.neon or false))
+        print("   Mega Neon: " .. tostring(petData.properties and petData.properties.mega_neon or false))
+        print("   XP: " .. (petData.properties and petData.properties.xp or "?"))
+        print("   ---")
     end
 end
 
 -- Run the function
-inspectFullInventory()
-
--- Optional: Create a simpler function just to check if specific categories exist
-local function checkCategories(categoriesToCheck)
-    print("🔍 CHECKING SPECIFIC CATEGORIES")
-    print("================================")
-    
-    local success, data = pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        return clientData.get_data()[player.Name]
-    end)
-    
-    if not success or not data or not data.inventory then
-        print("❌ Failed to get inventory data")
-        return
-    end
-    
-    for _, categoryName in ipairs(categoriesToCheck) do
-        if data.inventory[categoryName] then
-            local count = 0
-            for _ in pairs(data.inventory[categoryName]) do
-                count = count + 1
-            end
-            print(string.format("✅ %s: %d items found", categoryName, count))
-            
-            -- Show first item as example
-            for id, itemData in pairs(data.inventory[categoryName]) do
-                print(string.format("   Example - ID: %s", id))
-                break
-            end
-        else
-            print(string.format("❌ %s category not found", categoryName))
-        end
-    end
-end
-
--- Example: Check specific categories
--- checkCategories({"pets", "gifts", "items", "itc"})
+inspectPets() -- make small function to find inventory category like  pairs(data.inventory.pets (pets, gifts, itc 
