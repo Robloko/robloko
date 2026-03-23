@@ -1,0 +1,199 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Player
+local player = Players.LocalPlayer
+
+-- Function to print all available GIFTS in inventory and return first gift ID
+local function getFirstGiftId()
+    local gifts = {}
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        -- Check for gifts in inventory
+        if playerData and playerData.inventory and playerData.inventory.gifts then
+            for giftId, giftData in pairs(playerData.inventory.gifts) do
+                if giftData.id then
+                    table.insert(gifts, {
+                        id = giftId,
+                        name = giftData.id,
+                        amount = giftData.amount or 1
+                    })
+                end
+            end
+        end
+    end)
+
+    if not success then
+        print("Error reading gift inventory: " .. tostring(errorMsg))
+        return nil
+    end
+
+    if #gifts == 0 then
+        print("No gifts found in your inventory!")
+        return nil
+    end
+
+    print("=== AVAILABLE GIFTS IN INVENTORY ===")
+    for i, gift in ipairs(gifts) do
+        print(string.format("%d. %s (ID: %s) - Amount: %d", i, gift.name, gift.id, gift.amount))
+    end
+    print("Total gift items: " .. #gifts)
+    print("====================================")
+    
+    -- Return the first gift ID found
+    return gifts[1].id
+end
+
+-- Function to click at specific coordinates
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
+
+-- Main execution
+local function main()
+    print("Starting SugarFest 2026 Gift Inspection Script...")
+    
+    -- Step 1: Find gifts in inventory
+    local giftId = getFirstGiftId()
+    
+    if not giftId then
+        print("No gifts available to equip and use!")
+        return
+    end
+    
+    print("Found gift ID: " .. giftId)
+    wait(2)
+    
+    -- Step 2: Equip the found gift
+    print("Equipping gift: " .. giftId)
+    local equipArgs = {
+        giftId,
+        {
+            use_sound_delay = true,
+            equip_as_last = false
+        }
+    }
+    
+    local equipSuccess, equipError = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(equipArgs))
+    end)
+    
+    if not equipSuccess then
+        print("Error equipping gift: " .. tostring(equipError))
+        return
+    end
+    
+    print("Gift equipped successfully!")
+    wait(3)
+    
+    -- Step 3: Wait for GUI and click PlayButton
+    print("Waiting for GUI to load...")
+    repeat task.wait() until player.PlayerGui
+    
+    local button = player.PlayerGui:FindFirstChild("NewsApp") 
+        and player.PlayerGui.NewsApp:FindFirstChild("EnclosingFrame")
+        and player.PlayerGui.NewsApp.EnclosingFrame:FindFirstChild("MainFrame")
+        and player.PlayerGui.NewsApp.EnclosingFrame.MainFrame:FindFirstChild("Buttons")
+        and player.PlayerGui.NewsApp.EnclosingFrame.MainFrame.Buttons:FindFirstChild("PlayButton")
+    
+    if button then
+        if button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
+            firesignal(button.MouseButton1Down)
+            task.wait(0.05)
+            firesignal(button.MouseButton1Up)
+            firesignal(button.MouseButton1Click)
+            print("Successfully clicked PlayButton")
+        else
+            warn("Button exists but is not visible/active")
+        end
+    else
+        warn("PlayButton not found in GUI hierarchy")
+    end
+    
+    wait(3)
+    
+    -- Step 4: Single coordinate click at (520, 485)
+    print("Clicking at 520, 485")
+    clickAt(520, 485)
+    
+    wait(2)
+    
+    -- Step 5: Use the tool with START command
+    print("Starting tool usage with START command...")
+    local startArgs = {
+        giftId,
+        "START"
+    }
+    
+    local startSuccess, startError = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(startArgs))
+    end)
+    
+    if not startSuccess then
+        print("Error starting tool: " .. tostring(startError))
+    else
+        print("Tool START command sent successfully")
+    end
+    
+    wait(2)
+    
+    -- Step 6: Disable interaction
+    print("Disabling interaction...")
+    local disableArgs = {true}
+    
+    local disableSuccess, disableError = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("InteractablesAPI/DisableInteractionWithMe"):FireServer(unpack(disableArgs))
+    end)
+    
+    if not disableSuccess then
+        print("Error disabling interaction: " .. tostring(disableError))
+    else
+        print("Interaction disabled successfully")
+    end
+    
+    wait(3)
+    
+    -- Step 7: Eject all held babies
+    print("Ejecting all held babies...")
+    local ejectSuccess, ejectError = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/EjectAllHeldBabies"):FireServer()
+    end)
+    
+    if not ejectSuccess then
+        print("Error ejecting babies: " .. tostring(ejectError))
+    else
+        print("All babies ejected successfully")
+    end
+    
+    wait(3)
+    
+    -- Step 8: Use the tool with END command
+    print("Ending tool usage with END command...")
+    local endArgs = {
+        giftId,
+        "END"
+    }
+    
+    local endSuccess, endError = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(endArgs))
+    end)
+    
+    if not endSuccess then
+        print("Error ending tool: " .. tostring(endError))
+    else
+        print("Tool END command sent successfully")
+    end
+    
+    print("SugarFest 2026 Gift processing complete!")
+end
+
+-- Run the script
+main()
