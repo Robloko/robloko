@@ -35,24 +35,34 @@ startButton.Text = "START"
 startButton.TextScaled = true
 startButton.Parent = frame
 
--- Function to check the inventory for sugarfest_2026_dice
-local function checkDiceInventory()
+-- Function to find all sugarfest_2026_dice in the inventory
+local function findDiceInInventory()
     local backpack = player:WaitForChild("Backpack")
-    local diceCount = 0
+    local diceList = {}
 
     for _, item in ipairs(backpack:GetChildren()) do
-        if item.Name == "sugarfest_2026_dice" then
-            diceCount = diceCount + 1
+        if item:IsA("Tool") and item.Name:lower():find("sugarfest_2026_dice") then
+            local uniqueId = item:GetAttribute("UniqueId")
+            if uniqueId then
+                table.insert(diceList, uniqueId)
+            end
         end
     end
 
-    diceCountLabel.Text = "Dice: " .. diceCount
-    return diceCount > 0
+    return diceList
 end
 
--- Function to start the dice game sequence
+-- Function to update the dice count label
+local function updateDiceCount()
+    local diceList = findDiceInInventory()
+    diceCountLabel.Text = "Dice: " .. #diceList
+    return #diceList > 0, diceList
+end
+
+-- Function to start the dice game sequence for all found dice
 local function startDiceGame()
-    if not checkDiceInventory() then
+    local hasDice, diceList = updateDiceCount()
+    if not hasDice then
         warn("No sugarfest_2026_dice found in inventory!")
         return
     end
@@ -61,32 +71,35 @@ local function startDiceGame()
     startButton.Text = "RUNNING..."
     startButton.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
 
-    -- Call the dice game sequence
-    local args = {
-        {
-            dice_item_unique = "2_0ae496b5f4d946eb935b15dbae1ba620"
+    -- Loop through all found dice and trigger the sequence
+    for _, uniqueId in ipairs(diceList) do
+        -- Call the dice game sequence for each unique ID
+        local args = {
+            {
+                dice_item_unique = uniqueId
+            }
         }
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Sugarfest2026.Game.BoardGame.BoardGameNetService:10"):FireServer(unpack(args))
+        game:GetService("ReplicatedStorage"):WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Sugarfest2026.Game.BoardGame.BoardGameNetService:10"):FireServer(unpack(args))
 
-    local args = {
-        "2_0ae496b5f4d946eb935b15dbae1ba620",
-        "START"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+        local args = {
+            uniqueId,
+            "START"
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
 
-    local args = {
-        true
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("InteractablesAPI/DisableInteractionWithMe"):FireServer(unpack(args))
+        local args = {
+            true
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("InteractablesAPI/DisableInteractionWithMe"):FireServer(unpack(args))
 
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/EjectAllHeldBabies"):FireServer()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/EjectAllHeldBabies"):FireServer()
 
-    local args = {
-        "2_0ae496b5f4d946eb935b15dbae1ba620",
-        "END"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+        local args = {
+            uniqueId,
+            "END"
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args))
+    end
 
     -- Re-enable the button after the sequence
     startButton.Text = "START"
@@ -97,4 +110,4 @@ end
 startButton.MouseButton1Click:Connect(startDiceGame)
 
 -- Initial check for dice
-checkDiceInventory()
+updateDiceCount()
