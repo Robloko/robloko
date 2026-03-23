@@ -5,69 +5,58 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Player
 local player = Players.LocalPlayer
 
--- Remote event for dice
-local remoteEvent = ReplicatedStorage:WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Sugarfest2026.Game.BoardGame.BoardGameNetService:10")
+-- Function to inspect all inventory items
+local function inspectInventory()
+    print("🔍 INSPECTING FULL INVENTORY")
+    print("============================")
 
--- Function to inspect dice inventory
-local function inspectDice()
-    print("🔍 INSPECTING DICE INVENTORY")
-    print("=============================")
+    local success, data = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return clientData.get_data()[player.Name]
+    end)
 
-    -- Fire the remote event to get dice data
-    local args = {
-        {
-            dice_item_unique = "2_0ae496b5f4d946eb935b15dbae1ba620"
-        }
-    }
+    if not success or not data then
+        print("❌ Failed to get player data")
+        return
+    end
 
-    -- Function to handle the server's response
-    local function onServerResponse(result)
-        print("Server response received:")
-        print("--------------------------")
+    if not data.inventory then
+        print("❌ No inventory found")
+        return
+    end
 
-        -- Check if the result contains dice data
-        if not result or type(result) ~= "table" then
-            print("❌ Failed to get dice data or invalid response")
-            return
+    -- Iterate through all inventory categories (e.g., pets, dice, etc.)
+    for category, items in pairs(data.inventory) do
+        print("📦 Category: " .. category)
+        print("-----------------------------")
+
+        local itemCount = 0
+        for itemUniqueID, itemData in pairs(items) do
+            itemCount = itemCount + 1
         end
 
-        -- Count the number of dice
-        local diceCount = 0
-        if result.dice then
-            for _ in pairs(result.dice) do
-                diceCount = diceCount + 1
-            end
-        else
-            -- If the result is a list of dice directly
-            diceCount = #result
-        end
-
-        print("📊 Total dice: " .. diceCount)
+        print("📊 Total " .. category .. ": " .. itemCount)
         print("")
 
-        -- Show first 10 dice with basic info (if available)
+        -- Show first 10 items in this category
         local count = 0
-        for diceUniqueID, diceData in pairs(result.dice or result) do
+        for itemUniqueID, itemData in pairs(items) do
             count = count + 1
             if count > 10 then
-                print("... and " .. (diceCount - 10) .. " more dice")
+                print("... and " .. (itemCount - 10) .. " more " .. category)
                 break
             end
 
-            print("🎲 Dice Unique ID: " .. diceUniqueID)
-            if diceData.id then
-                print("   ID: " .. diceData.id)
+            print("🔹 " .. (itemData.id or "Unknown ID"))
+            print("   Unique ID: " .. itemUniqueID)
+            if itemData.properties then
+                print("   Age: " .. (itemData.properties.age or "?"))
+                print("   XP: " .. (itemData.properties.xp or "?"))
             end
             print("   ---")
         end
     end
-
-    -- Connect the function to the remote event's OnClientEvent
-    remoteEvent.OnClientEvent:Connect(onServerResponse)
-
-    -- Fire the remote event
-    remoteEvent:FireServer(unpack(args))
 end
 
 -- Run the function
-inspectDice()
+inspectInventory()
