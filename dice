@@ -1,24 +1,73 @@
-local player = game.Players.LocalPlayer
-local inventory = -- Replace this with the actual inventory container, e.g., player:FindFirstChild("Inventory") or similar
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Example: If dice are stored in ReplicatedStorage under a specific folder
-local diceContainer = game:GetService("ReplicatedStorage"):FindFirstChild("dice") or
-                      game:GetService("ReplicatedStorage"):FindFirstChild("caramel")
+-- Player
+local player = Players.LocalPlayer
 
-local diceCount = 0
+-- Remote event for dice
+local remoteEvent = ReplicatedStorage:WaitForChild("adoptme_new_net"):WaitForChild("adoptme_legacy_shared.ContentPacks.Sugarfest2026.Game.BoardGame.BoardGameNetService:10")
 
--- Function to check if an item is a dice (by name)
-local function isDice(item)
-    return item.Name:lower():find("dice")
-end
+-- Function to inspect dice inventory
+local function inspectDice()
+    print("🔍 INSPECTING DICE INVENTORY")
+    print("=============================")
 
--- Iterate through the container and count dice
-if diceContainer then
-    for _, item in ipairs(diceContainer:GetChildren()) do
-        if isDice(item) then
-            diceCount = diceCount + 1
+    -- Fire the remote event to get dice data
+    local args = {
+        {
+            dice_item_unique = "2_0ae496b5f4d946eb935b15dbae1ba620"
+        }
+    }
+
+    -- Function to handle the server's response
+    local function onServerResponse(result)
+        print("Server response received:")
+        print("--------------------------")
+
+        -- Check if the result contains dice data
+        if not result or type(result) ~= "table" then
+            print("❌ Failed to get dice data or invalid response")
+            return
+        end
+
+        -- Count the number of dice
+        local diceCount = 0
+        if result.dice then
+            for _ in pairs(result.dice) do
+                diceCount = diceCount + 1
+            end
+        else
+            -- If the result is a list of dice directly
+            diceCount = #result
+        end
+
+        print("📊 Total dice: " .. diceCount)
+        print("")
+
+        -- Show first 10 dice with basic info (if available)
+        local count = 0
+        for diceUniqueID, diceData in pairs(result.dice or result) do
+            count = count + 1
+            if count > 10 then
+                print("... and " .. (diceCount - 10) .. " more dice")
+                break
+            end
+
+            print("🎲 Dice Unique ID: " .. diceUniqueID)
+            if diceData.id then
+                print("   ID: " .. diceData.id)
+            end
+            print("   ---")
         end
     end
+
+    -- Connect the function to the remote event's OnClientEvent
+    remoteEvent.OnClientEvent:Connect(onServerResponse)
+
+    -- Fire the remote event
+    remoteEvent:FireServer(unpack(args))
 end
 
-print("Number of dice found:", diceCount)
+-- Run the function
+inspectDice()
