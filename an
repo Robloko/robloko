@@ -342,13 +342,13 @@ local function handleFurnitureActivation(furnitureName)
         debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
         return false
     end
-   
+
     local char = player.Character
     if not char then
         debugPrint("Cannot activate furniture: No character found")
         return false
     end
-   
+
     local args = {
         player,
         furnitureData.folderId,
@@ -356,29 +356,42 @@ local function handleFurnitureActivation(furnitureName)
         {
             cframe = furnitureData.cframe
         },
-        char -- Use localPlayer character instead of pet
+        char
     }
-   
+
     debugPrint("Activating " .. furnitureName .. " in folder " .. furnitureData.folderId .. " with part " .. furnitureData.partName)
-   
+
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateFurniture"):InvokeServer(unpack(args))
     end)
-   
+
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
-        task.wait(20) -- Wait for ailment cure
+        task.wait(30) -- Увеличено с 20 до 30 секунд
+
         local currentChar = player.Character or player.CharacterAdded:Wait()
-        pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates"):FireServer(currentChar)
+        if not currentChar then
+            warn("Персонаж не найден после активации мебели!")
+            return false
+        end
+
+        local exitSeatStates = ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/ExitSeatStates", 5)
+        if not exitSeatStates then
+            warn("ExitSeatStates не найден!")
+            return false
+        end
+
+        local exitSuccess, exitErr = pcall(function()
+            exitSeatStates:FireServer(currentChar)
         end)
-        debugPrint("Called ExitSeatStates after 20s wait for " .. furnitureName)
+
+        if not exitSuccess then
+            warn("Ошибка ExitSeatStates: " .. exitErr)
+            return false
+        end
+
+        debugPrint("Called ExitSeatStates after wait for " .. furnitureName)
         task.wait(2)
-        
-        -- Call spawn after furniture use
-        respawnCharacter()
-        task.wait(5) -- Wait for spawn to complete
-        
         return true
     else
         debugPrint("Failed to activate: " .. furnitureName .. " - " .. tostring(result))
