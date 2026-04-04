@@ -1,95 +1,79 @@
--- Сервисы
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- LocalPlayer
 local player = Players.LocalPlayer
 
--- Функция для поиска метода DoNeonFusion
-local function findNeonFusionMethod()
-    -- Проверяем в ReplicatedStorage.API
-    local api = ReplicatedStorage:FindFirstChild("API")
-    if api then
-        local petAPI = api:FindFirstChild("PetAPI")
-        if petAPI then
-            local doNeonFusion = petAPI:FindFirstChild("DoNeonFusion")
-            if doNeonFusion then
-                return doNeonFusion
-            end
-        end
-    end
-
-    -- Проверяем в ReplicatedStorage.Remotes
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    if remotes then
-        local doNeonFusion = remotes:FindFirstChild("DoNeonFusion")
-        if doNeonFusion then
-            return doNeonFusion
-        end
-    end
-
-    -- Проверяем напрямую в ReplicatedStorage
-    local doNeonFusion = ReplicatedStorage:FindFirstChild("DoNeonFusion")
-    if doNeonFusion then
-        return doNeonFusion
-    end
-
-    return nil
-end
-
--- Функция для поиска и слияния неоновых питомцев
+-- Функция для выполнения Neon Fusion
 local function performNeonFusion()
-    print("Ищем неоновых питомцев для слияния...")
-
-    -- Находим метод DoNeonFusion
-    local doNeonFusion = findNeonFusionMethod()
-    if not doNeonFusion then
-        print("Ошибка: метод DoNeonFusion не найден!")
-        return
-    end
-
     -- Получаем данные игрока
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local playerData = clientData.get_data()[player.Name]
+    local success, playerData = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    end)
 
-    if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        print("Ошибка: данные питомцев не найдены!")
-        return
+    if not success or not playerData or not playerData.inventory or not playerData.inventory.pets then
+        warn("Не удалось получить данные питомцев!")
+        return 0
     end
 
-    -- Группируем неоновых питомцев возраста 6+ по типу
-    local neonPetsByType = {}
+    -- Группируем питомцев возраста 6+ по типу
+    local ageSixPetsByType = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData.properties and petData.properties.age == 6 and petData.properties.neon then
+        if petData.properties and petData.properties.age == 6 and not petData.properties.neon then
             local petType = petData.id
-            if not neonPetsByType[petType] then
-                neonPetsByType[petType] = {}
+            if not ageSixPetsByType[petType] then
+                ageSixPetsByType[petType] = {}
             end
-            table.insert(neonPetsByType[petType], uniqueId)
+            table.insert(ageSixPetsByType[petType], uniqueId)
         end
     end
 
-    -- Проверяем каждый тип на наличие 4+ питомцев
-    for petType, petIds in pairs(neonPetsByType) do
-        if #petIds >= 4 then
-            print(string.format("Найдено 4+ неоновых питомца типа %s. Начинаем слияние...", petType))
+    -- Количество выполненных слияний
+    local fusionsPerformed = 0
 
-            -- Берём первых 4 питомца
+    -- Проверяем каждый тип питомцев
+    for petType, petIds in pairs(ageSixPetsByType) do
+        -- Если есть 4+ питомца одного типа, сливаем их
+        while #petIds >= 4 do
+            print(`Найдено 4+ питомцев типа {petType}. Выполняем Neon Fusion...`)
+
+            -- Берём первых 4 питомцев
             local fusionSet = {petIds[1], petIds[2], petIds[3], petIds[4]}
 
-            -- Выполняем слияние
-            local success, err = pcall(function()
-                return doNeonFusion:InvokeServer(fusionSet)
+            -- Выполняем Neon Fusion
+            local fusionSuccess, fusionError = pcall(function()
+                return ReplicatedStorage.API.PetAPI.DoNeonFusion:InvokeServer(fusionSet)
             end)
 
-            if success then
-                print(string.format("Успешно слито 4 неоновых питомца типа %s!", petType))
+            if fusionSuccess then
+                print(`Успешно слито 4 питомцев типа {petType} в неонового!`)
+                fusionsPerformed += 1
+
+                -- Удаляем слитых питомцев из списка
+                for i = 1, 4 do
+                    table.remove(petIds, 1)
+                end
+
+                -- Ждём 3 секунды, чтобы сервер успел обработать слияние
+                task.wait(3)
             else
-                print("Ошибка при слиянии: " .. tostring(err))
+                warn(`Не удалось выполнить Neon Fusion: {fusionError}`)
+                break
             end
         end
     end
+
+    if fusionsPerformed > 0 then
+        print(`Neon Fusion завершён. Выполнено слияний: {fusionsPerformed}`)
+    else
+        print("Нет подходящих питомцев для Neon Fusion (нужно 4 питомца одного типа возраста 6+).")
+    end
+
+    return fusionsPerformed
 end
 
--- Запускаем функцию каждые 10 секунд
+-- Вызываем функцию каждые 10 секунд
 while true do
     performNeonFusion()
     task.wait(10)
