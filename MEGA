@@ -1,56 +1,71 @@
--- Services
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local function performMegaFusion()
+    debugPrint("Checking for eligible Mega Fusion sets...")
+    local fusionsPerformed = 0
 
--- Function to fuse 4 neon pets of the same type (age 6) into a mega pet
-local function fuseNeonPetsToMega()
-    -- Get player data
-    local success, playerData = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[game.Players.LocalPlayer.Name]
+    pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if not playerData or not playerData.inventory or not playerData.inventory.pets then
+            debugPrint("No pet inventory data found!")
+            return 0
+        end
+
+        -- Step 1: Group all age 6+ NEON pets by their type
+        local ageSixNeonPetsByType = {}
+        for uniqueId, petData in pairs(playerData.inventory.pets) do
+            if petData.properties and petData.properties.neon and (petData.properties.age or 0) == 6 then
+                local petType = petData.id
+                if not ageSixNeonPetsByType[petType] then
+                    ageSixNeonPetsByType[petType] = {}
+                end
+                table.insert(ageSixNeonPetsByType[petType], {
+                    unique_id = uniqueId,
+                    name = petType
+                })
+            end
+        end
+
+        -- Step 2: Check each pet type for 4+ NEON pets and perform mega fusion
+        for petType, pets in pairs(ageSixNeonPetsByType) do
+            while #pets >= 4 do
+                debugPrint(string.format("Found 4+ age 6 NEON pets of type: %s. Attempting Mega Fusion...", petType))
+
+                -- Step 3: Take the first 4 NEON pets of this type
+                local fusionSet = {}
+                for i = 1, 4 do
+                    table.insert(fusionSet, pets[i].unique_id)
+                    debugPrint(" - Using NEON pet: " .. pets[i].unique_id)
+                end
+
+                -- Step 4: Perform Mega Fusion
+                local success, err = pcall(function()
+                    return ReplicatedStorage.API:FindFirstChild("PetAPI/DoMegaFusion"):InvokeServer(fusionSet)
+                end)
+
+                if success then
+                    debugPrint(string.format("SUCCESS: Fused 4 NEON %s into a MEGA!", petType))
+                    fusionsPerformed = fusionsPerformed + 1
+
+                    -- Remove the fused pets from the array
+                    for i = 1, 4 do
+                        table.remove(pets, 1)
+                    end
+
+                    task.wait(3) -- Wait for server to process
+                else
+                    debugPrint("FAILED to perform Mega Fusion: " .. tostring(err))
+                    break -- Stop trying this pet type if fusion fails
+                end
+            end
+        end
+
+        if fusionsPerformed > 0 then
+            debugPrint(string.format("Mega Fusion completed: %d fusions performed", fusionsPerformed))
+        else
+            debugPrint("No eligible Mega Fusion sets found (need 4 NEON pets of same type at age 6)")
+        end
     end)
 
-    if not success or not playerData or not playerData.inventory or not playerData.inventory.pets then
-        warn("Failed to get player data or pet inventory!")
-        return false
-    end
-
-    -- Group neon pets by type and age 6
-    local neonPetsByType = {}
-    for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData.properties and petData.properties.neon and (petData.properties.age or 0) == 6 then
-            local petType = petData.id
-            if not neonPetsByType[petType] then
-                neonPetsByType[petType] = {}
-            end
-            table.insert(neonPetsByType[petType], uniqueId)
-        end
-    end
-
-    -- Check for eligible sets (4 neon pets of the same type)
-    for petType, petIds in pairs(neonPetsByType) do
-        if #petIds >= 4 then
-            print("Found 4+ neon pets of type: " .. petType .. ". Attempting Mega Fusion...")
-
-            -- Take the first 4 pets of this type
-            local fusionSet = {petIds[1], petIds[2], petIds[3], petIds[4]}
-
-            -- Call the Mega Fusion API
-            local fusionSuccess, fusionResult = pcall(function()
-                return ReplicatedStorage.API["PetAPI/DoMegaFusion"]:InvokeServer(fusionSet)
-            end)
-
-            if fusionSuccess then
-                print("SUCCESS: Fused 4 neon " .. petType .. " into a Mega pet!")
-                return true
-            else
-                warn("FAILED to perform Mega Fusion: " .. tostring(fusionResult))
-                return false
-            end
-        end
-    end
-
-    warn("No eligible Mega Fusion sets found (need 4 neon pets of the same type, age 6).")
-    return false
+    return fusionsPerformed
 end
-
--- Example usage:
-fuseNeonPetsToMega()
