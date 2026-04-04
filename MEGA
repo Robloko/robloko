@@ -5,19 +5,34 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- LocalPlayer
 local player = Players.LocalPlayer
 
--- Функция для выполнения Neon Fusion
-local function performNeonFusion()
-    -- Получаем данные игрока
-    local success, playerData = pcall(function()
-        return require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
-    end)
+-- Debug mode
+local DEBUG_MODE = true
 
-    if not success or not playerData or not playerData.inventory or not playerData.inventory.pets then
-        warn("Не удалось получить данные питомцев!")
+-- Function to print debug messages
+local function debugPrint(message)
+    if DEBUG_MODE then
+        print("[NeonFusion] " .. message)
+    end
+end
+
+-- Function to perform Neon Fusion
+local function performNeonFusion()
+    debugPrint("Checking for eligible Neon Fusion sets...")
+
+    -- Get player data
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success or not clientData then
+        debugPrint("Failed to load client data")
         return 0
     end
 
-    -- Группируем питомцев возраста 6+ по типу
+    local playerData = clientData.get_data()[player.Name]
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        debugPrint("No pet inventory data found!")
+        return 0
+    end
+
+    -- Group pets by type (age 6, not neon)
     local ageSixPetsByType = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData.properties and petData.properties.age == 6 and not petData.properties.neon then
@@ -29,52 +44,48 @@ local function performNeonFusion()
         end
     end
 
-    -- Количество выполненных слияний
+    -- Perform fusion for each pet type with 4+ pets
     local fusionsPerformed = 0
-
-    -- Проверяем каждый тип питомцев
     for petType, petIds in pairs(ageSixPetsByType) do
-        -- Если есть 4+ питомца одного типа, сливаем их
         while #petIds >= 4 do
-            print(`Найдено 4+ питомцев типа {petType}. Выполняем Neon Fusion...`)
+            debugPrint(string.format("Found 4+ age 6 pets of type: %s. Attempting Neon Fusion...", petType))
 
-            -- Берём первых 4 питомцев
+            -- Take first 4 pets
             local fusionSet = {petIds[1], petIds[2], petIds[3], petIds[4]}
 
-            -- Выполняем Neon Fusion
-            local fusionSuccess, fusionError = pcall(function()
+            -- Call Neon Fusion API
+            local success, err = pcall(function()
                 return ReplicatedStorage.API.PetAPI.DoNeonFusion:InvokeServer(fusionSet)
             end)
 
-            if fusionSuccess then
-                print(`Успешно слито 4 питомцев типа {petType} в неонового!`)
-                fusionsPerformed += 1
+            if success then
+                debugPrint(string.format("SUCCESS: Fused 4 %s into a Neon!", petType))
+                fusionsPerformed = fusionsPerformed + 1
 
-                -- Удаляем слитых питомцев из списка
+                -- Remove fused pets from the list
                 for i = 1, 4 do
                     table.remove(petIds, 1)
                 end
 
-                -- Ждём 3 секунды, чтобы сервер успел обработать слияние
-                task.wait(3)
+                task.wait(3) -- Wait for server to process
             else
-                warn(`Не удалось выполнить Neon Fusion: {fusionError}`)
+                debugPrint("FAILED to perform Neon Fusion: " .. tostring(err))
                 break
             end
         end
     end
 
     if fusionsPerformed > 0 then
-        print(`Neon Fusion завершён. Выполнено слияний: {fusionsPerformed}`)
+        debugPrint(string.format("Neon Fusion completed: %d fusions performed", fusionsPerformed))
     else
-        print("Нет подходящих питомцев для Neon Fusion (нужно 4 питомца одного типа возраста 6+).")
+        debugPrint("No eligible Neon Fusion sets found (need 4 pets of same type at age 6)")
     end
 
     return fusionsPerformed
 end
 
--- Вызываем функцию каждые 10 секунд
+-- Run fusion every 30 seconds
 while true do
     performNeonFusion()
-    task.wait(10)
+    task.wait(30)
 end
