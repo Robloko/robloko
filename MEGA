@@ -1,68 +1,76 @@
-local function performNeonFusion()
-    debugPrint("Checking for eligible Neon Fusion sets...")
-    local fusionsPerformed = 0
-    pcall(function()
-        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-        local playerData = clientData.get_data()[player.Name]
-        if not playerData or not playerData.inventory or not playerData.inventory.pets then
-            debugPrint("No pet inventory data found!")
-            return 0
-        end
+-- Simple Neon Fuser Script
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
 
-        -- Шаг 1: Группируем всех питомцев возраста 6+ по их типу
-        local ageSixPetsByType = {}
-        for uniqueId, petData in pairs(playerData.inventory.pets) do
-            if petData.properties and (petData.properties.age or 0) == 6 and petData.properties.neon then
-                local petType = petData.id
-                if not ageSixPetsByType[petType] then
-                    ageSixPetsByType[petType] = {}
-                end
-                table.insert(ageSixPetsByType[petType], {
-                    unique_id = uniqueId,
-                    name = petType
-                })
+-- Function to fuse age 6 pets into neon
+local function fuseNeonPets()
+    print("Searching for age 6 pets to fuse...")
+    
+    -- Get player's pet inventory
+    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+    local playerData = clientData.get_data()[player.Name]
+    
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        print("No pets found in inventory!")
+        return
+    end
+    
+    -- Group age 6 pets by their type
+    local ageSixPets = {}
+    
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        local age = petData.properties.age or 0
+        local isNeon = petData.properties.neon or false
+        local petType = petData.id
+        
+        -- Only collect non-neon pets at age 6
+        if age == 6 and not isNeon then
+            if not ageSixPets[petType] then
+                ageSixPets[petType] = {}
             end
+            table.insert(ageSixPets[petType], uniqueId)
         end
-
-        -- Шаг 2: Проверяем каждый тип питомцев на наличие 4+ особей и выполняем слияние
-        for petType, pets in pairs(ageSixPetsByType) do
-            while #pets >= 4 do
-                debugPrint(string.format("Found 4+ age 6 pets of type: %s. Attempting Neon Fusion...", petType))
-
-                -- Шаг 3: Берём первых 4 питомцев этого типа
-                local fusionSet = {}
+    end
+    
+    -- Fuse each group of 4
+    local fused = 0
+    for petType, petList in pairs(ageSixPets) do
+        while #petList >= 4 do
+            print(string.format("Fusing 4 %s into neon...", petType))
+            
+            -- Take first 4 pets
+            local fusionSet = {}
+            for i = 1, 4 do
+                table.insert(fusionSet, petList[i])
+            end
+            
+            -- Perform fusion
+            local success, err = pcall(function()
+                return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
+            end)
+            
+            if success then
+                print("Successfully created neon " .. petType .. "!")
+                fused = fused + 1
+                -- Remove fused pets from list
                 for i = 1, 4 do
-                    table.insert(fusionSet, pets[i].unique_id)
-                    debugPrint(" - Using pet: " .. pets[i].unique_id)
+                    table.remove(petList, 1)
                 end
-
-                -- Шаг 4: Выполняем Neon Fusion
-                local success, err = pcall(function()
-                    return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
-                end)
-
-                if success then
-                    debugPrint(string.format("SUCCESS: Fused 4 %s into a Neon!", petType))
-                    fusionsPerformed = fusionsPerformed + 1
-
-                    -- Удаляем слитых питомцев из массива
-                    for i = 1, 4 do
-                        table.remove(pets, 1)
-                    end
-
-                    task.wait(3) -- Ждём, пока сервер обработает слияние
-                else
-                    debugPrint("FAILED to perform Neon Fusion: " .. tostring(err))
-                    break -- Прекращаем попытки для этого типа, если слияние не удалось
-                end
+                task.wait(2) -- Wait between fusions
+            else
+                print("Fusion failed: " .. tostring(err))
+                break
             end
         end
-
-        if fusionsPerformed > 0 then
-            debugPrint(string.format("Neon Fusion completed: %d fusions performed", fusionsPerformed))
-        else
-            debugPrint("No eligible Neon Fusion sets found (need 4 pets of same type at age 6)")
-        end
-    end)
-    return fusionsPerformed
+    end
+    
+    if fused == 0 then
+        print("No age 6 pets found to fuse. Need 4 of the same type at age 6!")
+    else
+        print(string.format("Completed %d neon fusion(s)!", fused))
+    end
 end
+
+-- Run the fuser
+fuseNeonPets()
