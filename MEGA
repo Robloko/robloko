@@ -1,0 +1,63 @@
+-- Simple Neon Fusion Function
+local function fuseNeonPets()
+    local player = game.Players.LocalPlayer
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    
+    -- Get player's pet inventory
+    local clientData = require(replicatedStorage.ClientModules.Core.ClientData)
+    local playerData = clientData.get_data()[player.Name]
+    
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        return 0 -- No pets found
+    end
+    
+    -- Group pets by type (id) that are age 6 and NOT already neon
+    local petsByType = {}
+    
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        local age = petData.properties and petData.properties.age or 0
+        local isNeon = petData.properties and petData.properties.neon or false
+        
+        -- Only collect age 6, non-neon pets
+        if age == 6 and not isNeon then
+            local petType = petData.id
+            if not petsByType[petType] then
+                petsByType[petType] = {}
+            end
+            table.insert(petsByType[petType], uniqueId)
+        end
+    end
+    
+    -- Fuse any type that has 4 or more pets
+    local fused = 0
+    
+    for petType, petIds in pairs(petsByType) do
+        while #petIds >= 4 do
+            -- Take first 4 pets
+            local fusionSet = {petIds[1], petIds[2], petIds[3], petIds[4]}
+            
+            -- Attempt fusion
+            local success = pcall(function()
+                replicatedStorage.API["PetAPI/DoNeonFusion"]:InvokeServer(fusionSet)
+            end)
+            
+            if success then
+                fused = fused + 1
+                -- Remove fused pets from list
+                for i = 1, 4 do
+                    table.remove(petIds, 1)
+                end
+            else
+                break -- Stop if fusion fails
+            end
+            
+            task.wait(1) -- Small delay between fusions
+        end
+    end
+    
+    return fused -- Returns number of fusions performed
+end
+
+-- Usage:
+local fusions = fuseNeonPets()
+print("Fused " .. fusions .. " neon pet(s)")
