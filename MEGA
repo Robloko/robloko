@@ -1,43 +1,48 @@
--- Simple Neon Fuser Script
+-- Neon Pet Viewer + Auto Fuser
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
--- Function to fuse age 6 pets into neon
 local function fuseNeonPets()
-    print("Searching for age 6 pets to fuse...")
+    local data = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    local neons = {}
+    local age6Neons = {}
     
-    -- Get player's pet inventory
-    local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
-    local playerData = clientData.get_data()[player.Name]
-    
-    if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        print("No pets found in inventory!")
-        return
-    end
-    
-    -- Group age 6 pets by their type
-    local ageSixPets = {}
-    
-    for uniqueId, petData in pairs(playerData.inventory.pets) do
-        local age = petData.properties.age or 0
-        local isNeon = petData.properties.neon or false
-        local petType = petData.id
-        
-        -- Only collect non-neon pets at age 6
-        if age == 6 and not isNeon then
-            if not ageSixPets[petType] then
-                ageSixPets[petType] = {}
+    -- First, find all neon pets
+    for id, pet in pairs(data.inventory.pets) do
+        if pet.properties.neon then
+            local age = pet.properties.age or 0
+            local petName = pet.id
+            table.insert(neons, petName .. " (Age: " .. age .. ")")
+            
+            -- Track age 6 neons for fusing
+            if age == 6 then
+                if not age6Neons[petName] then
+                    age6Neons[petName] = {}
+                end
+                table.insert(age6Neons[petName], id)
             end
-            table.insert(ageSixPets[petType], uniqueId)
         end
     end
     
-    -- Fuse each group of 4
+    -- Show all neon pets
+    print("=== NEON PETS IN INVENTORY ===")
+    if #neons > 0 then
+        for i, pet in ipairs(neons) do
+            print(i .. ". " .. pet)
+        end
+        print("Total Neons: " .. #neons)
+    else
+        print("No neon pets found!")
+    end
+    
+    -- Fuse age 6 neons into mega
+    print("\n=== CHECKING FOR MEGA FUSIONS ===")
     local fused = 0
-    for petType, petList in pairs(ageSixPets) do
+    
+    for petType, petList in pairs(age6Neons) do
         while #petList >= 4 do
-            print(string.format("Fusing 4 %s into neon...", petType))
+            print(string.format("Fusing 4 age 6 %s neons into MEGA...", petType))
             
             -- Take first 4 pets
             local fusionSet = {}
@@ -45,31 +50,50 @@ local function fuseNeonPets()
                 table.insert(fusionSet, petList[i])
             end
             
-            -- Perform fusion
+            -- Perform fusion (using correct API endpoint for mega)
             local success, err = pcall(function()
-                return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
+                -- Try mega fusion endpoint
+                local megaAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/DoMegaFusion")
+                if megaAPI then
+                    return megaAPI:InvokeServer(fusionSet)
+                else
+                    -- Alternative: Try neon fusion again (might create mega if already neon)
+                    return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
+                end
             end)
             
             if success then
-                print("Successfully created neon " .. petType .. "!")
+                print("✓ Successfully created MEGA " .. petType .. "!")
                 fused = fused + 1
                 -- Remove fused pets from list
                 for i = 1, 4 do
                     table.remove(petList, 1)
                 end
-                task.wait(2) -- Wait between fusions
+                task.wait(2)
             else
-                print("Fusion failed: " .. tostring(err))
+                print("✗ Fusion failed: " .. tostring(err))
                 break
             end
         end
     end
     
-    if fused == 0 then
-        print("No age 6 pets found to fuse. Need 4 of the same type at age 6!")
+    if fused > 0 then
+        print(string.format("\n✓ Completed %d mega fusion(s)!", fused))
     else
-        print(string.format("Completed %d neon fusion(s)!", fused))
+        print("\nNo age 6 neons found to fuse. Need 4 of the same neon pet at age 6 to make mega!")
     end
+    
+    -- Show updated neon count
+    task.wait(3)
+    local newData = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    local newNeonCount = 0
+    for id, pet in pairs(newData.inventory.pets) do
+        if pet.properties.neon and not pet.properties.mega then
+            newNeonCount = newNeonCount + 1
+        end
+    end
+    print("\n=== UPDATED INVENTORY ===")
+    print("Remaining neons: " .. newNeonCount)
 end
 
 -- Run the fuser
