@@ -49,6 +49,7 @@ local autoPotionCoroutine = nil
 local PetID = nil
 local selectedPetName = nil
 local PetsShow = {}
+local currentSelectedPetKey = nil
 
 -- Ailment to Furniture Mapping
 local AILMENT_TASKS = {
@@ -385,78 +386,95 @@ local function listAllFurniture()
 end
 
 -- ==================================================================
--- AUTO SELECT DOG OR CAT FROM INVENTORY
+-- PET LIST DROPDOWN (EXCLUDES practice_dog)
 -- ==================================================================
 
--- Find and select Dog or Cat from inventory
-local function findAndSelectDogOrCat()
-    debugPrint("========================================")
-    debugPrint("SEARCHING FOR DOG OR CAT IN INVENTORY")
-    debugPrint("========================================")
-    
+-- Get all valid pets (excludes practice_dog and neons by default for farming)
+local function getAllValidPets()
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        debugPrint("No pets found in inventory!")
-        return nil
+        return {}
     end
     
-    local dogPet = nil
-    local catPet = nil
-    local otherPets = {}
-    
-    -- First, find all dogs and cats
+    local validPets = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id then
+        if petData and petData.id and petData.properties then
             local petName = string.lower(petData.id)
-            local age = petData.properties and petData.properties.age or 0
-            
-            if string.find(petName, "dog") then
-                dogPet = {
+            -- EXCLUDE practice_dog
+            if not string.find(petName, "practice_dog") then
+                table.insert(validPets, {
                     unique = uniqueId,
                     id = petData.id,
-                    age = age,
-                    name = petData.id
-                }
-                debugPrint("🐕 Found DOG: " .. petData.id .. " (Age: " .. age .. ")")
-            elseif string.find(petName, "cat") then
-                catPet = {
-                    unique = uniqueId,
-                    id = petData.id,
-                    age = age,
-                    name = petData.id
-                }
-                debugPrint("🐈 Found CAT: " .. petData.id .. " (Age: " .. age .. ")")
-            else
-                table.insert(otherPets, {
-                    unique = uniqueId,
-                    id = petData.id,
-                    age = age,
+                    age = petData.properties.age or 0,
+                    neon = petData.properties.neon or false,
                     name = petData.id
                 })
             end
         end
     end
     
-    -- Priority: Dog first, then Cat, then any other pet
-    local selectedPet = dogPet or catPet or otherPets[1]
+    -- Sort by priority: Dog > Cat > Others, then by age (higher age first)
+    table.sort(validPets, function(a, b)
+        local aIsDog = string.find(string.lower(a.id), "dog") and true or false
+        local bIsDog = string.find(string.lower(b.id), "dog") and true or false
+        local aIsCat = string.find(string.lower(a.id), "cat") and true or false
+        local bIsCat = string.find(string.lower(b.id), "cat") and true or false
+        
+        if aIsDog and not bIsDog then return true end
+        if not aIsDog and bIsDog then return false end
+        if aIsCat and not bIsCat and not bIsDog then return true end
+        if not aIsCat and bIsCat and not aIsDog then return false end
+        
+        return a.age > b.age
+    end)
+    
+    return validPets
+end
+
+-- Find best Dog or Cat (excludes practice_dog)
+local function findBestDogOrCat()
+    debugPrint("========================================")
+    debugPrint("SEARCHING FOR DOG OR CAT (EXCLUDING practice_dog)")
+    debugPrint("========================================")
+    
+    local validPets = getAllValidPets()
+    
+    local dogPet = nil
+    local catPet = nil
+    
+    for _, pet in ipairs(validPets) do
+        local petName = string.lower(pet.id)
+        
+        if string.find(petName, "dog") and not string.find(petName, "practice") then
+            if not dogPet or pet.age > dogPet.age then
+                dogPet = pet
+            end
+            debugPrint("🐕 Found DOG: " .. pet.id .. " (Age: " .. pet.age .. ")")
+        elseif string.find(petName, "cat") then
+            if not catPet or pet.age > catPet.age then
+                catPet = pet
+            end
+            debugPrint("🐈 Found CAT: " .. pet.id .. " (Age: " .. pet.age .. ")")
+        end
+    end
+    
+    -- Priority: Dog first, then Cat
+    local selectedPet = dogPet or catPet
     
     if selectedPet then
         debugPrint("========================================")
-        debugPrint("✅ SELECTED: " .. selectedPet.name)
+        debugPrint("✅ SELECTED: " .. selectedPet.id)
         debugPrint("   ID: " .. selectedPet.unique)
         debugPrint("   Age: " .. selectedPet.age)
         debugPrint("========================================")
-        
-        PetID = selectedPet.unique
-        selectedPetName = selectedPet.name
         return selectedPet
     else
-        debugPrint("❌ No pets found in inventory!")
+        debugPrint("❌ No Dog or Cat found in inventory!")
         return nil
     end
 end
 
--- Equip the selected pet
+-- Equip selected pet
 local function equipSelectedPet(petUniqueID)
     if not petUniqueID then
         return false
@@ -1084,7 +1102,11 @@ local function getAllPetIDsFromInventory()
     local allPets = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id then
-            table.insert(allPets, uniqueId)
+            local petName = string.lower(petData.id)
+            -- Exclude practice_dog from trading too
+            if not string.find(petName, "practice_dog") then
+                table.insert(allPets, uniqueId)
+            end
         end
     end
     return allPets
@@ -1160,47 +1182,164 @@ local function toggleAutoAcceptMode()
 end
 
 -- ==================================================================
--- UI CREATION
+-- PET LIST DROPDOWN UI
 -- ==================================================================
 
-local function updatePetsDropdown(dropdownButton)
+local function updatePetsDropdown(dropdownButton, dropdownListFrame)
+    -- Clear existing options
+    for _, child in ipairs(dropdownListFrame:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+    
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
         dropdownButton.Text = "No Pets Found"
         return
     end
     
-    -- Find Dog or Cat for display
+    local List = {}
+    PetsShow = {}
+    
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id then
+        if petData and petData.id and petData.properties then
             local petName = string.lower(petData.id)
-            if string.find(petName, "dog") or string.find(petName, "cat") then
-                local age = petData.properties and petData.properties.age or 0
-                dropdownButton.Text = string.format("%s (Age: %d)", petData.id, age)
-                return
+            -- EXCLUDE practice_dog from dropdown
+            if not string.find(petName, "practice_dog") then
+                local displayName = tostring(petData.id)
+                local petAge = petData.properties.age or 0
+                local neonStatus = petData.properties.neon and " 🔥NEON" or ""
+                local key = string.format("%s (Age: %d)%s", displayName, petAge, neonStatus)
+                
+                PetsShow[key] = {
+                    unique = uniqueId,
+                    id = petData.id,
+                    age = petAge,
+                    neon = petData.properties.neon,
+                    properties = petData.properties
+                }
+                table.insert(List, key)
             end
         end
     end
     
-    -- If no dog/cat, show first pet
-    for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id then
-            local age = petData.properties and petData.properties.age or 0
-            dropdownButton.Text = string.format("%s (Age: %d)", petData.id, age)
-            return
-        end
+    table.sort(List)
+    
+    if #List > 0 then
+        dropdownButton.Text = "Select a Pet (" .. #List .. ")"
+    else
+        dropdownButton.Text = "No Pets Found"
     end
     
-    dropdownButton.Text = "No Pets Found"
+    -- Create dropdown options
+    for i, petKey in ipairs(List) do
+        local optionButton = Instance.new("TextButton")
+        optionButton.Size = UDim2.new(1, 0, 0, 20)
+        optionButton.Position = UDim2.new(0, 0, 0, (i - 1) * 20)
+        optionButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        optionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        optionButton.Text = petKey
+        optionButton.Font = Enum.Font.SourceSans
+        optionButton.TextSize = 11
+        optionButton.Parent = dropdownListFrame
+        
+        optionButton.MouseButton1Click:Connect(function()
+            dropdownButton.Text = petKey
+            dropdownListFrame.Visible = false
+            local selectedPet = PetsShow[petKey]
+            if selectedPet and selectedPet.unique then
+                PetID = selectedPet.unique
+                selectedPetName = selectedPet.id
+                debugPrint("Manually selected: " .. selectedPet.id .. " (Age: " .. selectedPet.age .. ")")
+                equipSelectedPet(PetID)
+                
+                -- Update status label if exists
+                if ui and ui.statusLabel then
+                    ui.statusLabel.Text = "Status: Manual selection - " .. selectedPet.id
+                end
+            end
+        end)
+    end
+    
+    dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 20)
 end
 
-local function createSimpleUI()
+local function createPetsDropdown(parentFrame, position)
+    local dropdownFrame = Instance.new("Frame")
+    dropdownFrame.Size = UDim2.new(0, 180, 0, 35)
+    dropdownFrame.Position = position
+    dropdownFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    dropdownFrame.BorderSizePixel = 0
+    dropdownFrame.BackgroundTransparency = 0.1
+    dropdownFrame.Parent = parentFrame
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = dropdownFrame
+    
+    local dropdownTitle = Instance.new("TextLabel")
+    dropdownTitle.Size = UDim2.new(1, 0, 0, 15)
+    dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
+    dropdownTitle.BackgroundTransparency = 1
+    dropdownTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dropdownTitle.Text = "📋 Pet List (No practice_dog)"
+    dropdownTitle.Font = Enum.Font.SourceSansBold
+    dropdownTitle.TextSize = 10
+    dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
+    dropdownTitle.Parent = dropdownFrame
+    
+    local dropdownButton = Instance.new("TextButton")
+    dropdownButton.Size = UDim2.new(1, 0, 0, 20)
+    dropdownButton.Position = UDim2.new(0, 0, 0, 15)
+    dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    dropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dropdownButton.Text = "Loading pets..."
+    dropdownButton.Font = Enum.Font.SourceSans
+    dropdownButton.TextSize = 11
+    dropdownButton.Parent = dropdownFrame
+    
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 4)
+    buttonCorner.Parent = dropdownButton
+    
+    local dropdownListFrame = Instance.new("ScrollingFrame")
+    dropdownListFrame.Size = UDim2.new(1, 0, 0, 200)
+    dropdownListFrame.Position = UDim2.new(0, 0, 1, 0)
+    dropdownListFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    dropdownListFrame.BorderSizePixel = 0
+    dropdownListFrame.Visible = false
+    dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    dropdownListFrame.ScrollBarThickness = 3
+    dropdownListFrame.Parent = dropdownFrame
+    
+    local listCorner = Instance.new("UICorner")
+    listCorner.CornerRadius = UDim.new(0, 4)
+    listCorner.Parent = dropdownListFrame
+    
+    local dropdownToggle = false
+    dropdownButton.MouseButton1Click:Connect(function()
+        dropdownToggle = not dropdownToggle
+        dropdownListFrame.Visible = dropdownToggle
+        if dropdownToggle then
+            updatePetsDropdown(dropdownButton, dropdownListFrame)
+        end
+    end)
+    
+    return dropdownFrame, dropdownButton, dropdownListFrame
+end
+
+-- ==================================================================
+-- UI CREATION
+-- ==================================================================
+
+local function createMainUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "PetFarmUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
     
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 200, 0, 250)
+    frame.Size = UDim2.new(0, 220, 0, 280)
     frame.Position = UDim2.new(0, 10, 0, 10)
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     frame.BorderSizePixel = 0
@@ -1234,25 +1373,10 @@ local function createSimpleUI()
     title.TextSize = 12
     title.Parent = frame
     
-    -- Selected pet display
-    local selectedPetLabel = Instance.new("TextLabel")
-    selectedPetLabel.Size = UDim2.new(1, 0, 0, 20)
-    selectedPetLabel.Position = UDim2.new(0, 0, 0, 45)
-    selectedPetLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    selectedPetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    selectedPetLabel.Text = "Selected: Looking for Dog/Cat..."
-    selectedPetLabel.Font = Enum.Font.SourceSans
-    selectedPetLabel.TextSize = 10
-    selectedPetLabel.Parent = frame
-    
-    local selectedCorner = Instance.new("UICorner")
-    selectedCorner.CornerRadius = UDim.new(0, 4)
-    selectedCorner.Parent = selectedPetLabel
-    
     -- Player name input
     local playerNameBox = Instance.new("TextBox")
-    playerNameBox.Size = UDim2.new(0, 180, 0, 20)
-    playerNameBox.Position = UDim2.new(0, 10, 0, 70)
+    playerNameBox.Size = UDim2.new(0, 200, 0, 20)
+    playerNameBox.Position = UDim2.new(0, 10, 0, 45)
     playerNameBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     playerNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
     playerNameBox.PlaceholderText = "Enter player name for trade"
@@ -1265,10 +1389,10 @@ local function createSimpleUI()
     boxCorner.CornerRadius = UDim.new(0, 4)
     boxCorner.Parent = playerNameBox
     
-    -- Send Trade button
+    -- Trade buttons row
     local tradeButton = Instance.new("TextButton")
-    tradeButton.Size = UDim2.new(0, 88, 0, 20)
-    tradeButton.Position = UDim2.new(0, 10, 0, 95)
+    tradeButton.Size = UDim2.new(0, 98, 0, 20)
+    tradeButton.Position = UDim2.new(0, 10, 0, 70)
     tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
     tradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     tradeButton.Text = "Send Trade"
@@ -1280,10 +1404,9 @@ local function createSimpleUI()
     tradeCorner.CornerRadius = UDim.new(0, 4)
     tradeCorner.Parent = tradeButton
     
-    -- Add All Pets button
     local addPetsButton = Instance.new("TextButton")
-    addPetsButton.Size = UDim2.new(0, 88, 0, 20)
-    addPetsButton.Position = UDim2.new(0, 102, 0, 95)
+    addPetsButton.Size = UDim2.new(0, 98, 0, 20)
+    addPetsButton.Position = UDim2.new(0, 112, 0, 70)
     addPetsButton.BackgroundColor3 = Color3.fromRGB(170, 0, 170)
     addPetsButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     addPetsButton.Text = "Add All Pets"
@@ -1295,10 +1418,10 @@ local function createSimpleUI()
     addCorner.CornerRadius = UDim.new(0, 4)
     addCorner.Parent = addPetsButton
     
-    -- Auto Trade button
+    -- Auto features row 1
     local autoTradeButton = Instance.new("TextButton")
-    autoTradeButton.Size = UDim2.new(0, 88, 0, 20)
-    autoTradeButton.Position = UDim2.new(0, 10, 0, 120)
+    autoTradeButton.Size = UDim2.new(0, 98, 0, 20)
+    autoTradeButton.Position = UDim2.new(0, 10, 0, 95)
     autoTradeButton.BackgroundColor3 = Color3.fromRGB(215, 120, 0)
     autoTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     autoTradeButton.Text = "Auto Trade [OFF]"
@@ -1310,10 +1433,9 @@ local function createSimpleUI()
     autoTradeCorner.CornerRadius = UDim.new(0, 4)
     autoTradeCorner.Parent = autoTradeButton
     
-    -- Auto Potion button
     local autoPotionButton = Instance.new("TextButton")
-    autoPotionButton.Size = UDim2.new(0, 88, 0, 20)
-    autoPotionButton.Position = UDim2.new(0, 102, 0, 120)
+    autoPotionButton.Size = UDim2.new(0, 98, 0, 20)
+    autoPotionButton.Position = UDim2.new(0, 112, 0, 95)
     autoPotionButton.BackgroundColor3 = Color3.fromRGB(0, 170, 170)
     autoPotionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     autoPotionButton.Text = "Auto Potion [OFF]"
@@ -1325,10 +1447,10 @@ local function createSimpleUI()
     autoPotionCorner.CornerRadius = UDim.new(0, 4)
     autoPotionCorner.Parent = autoPotionButton
     
-    -- Auto Accept button
+    -- Auto features row 2
     local autoAcceptButton = Instance.new("TextButton")
-    autoAcceptButton.Size = UDim2.new(0, 88, 0, 20)
-    autoAcceptButton.Position = UDim2.new(0, 10, 0, 145)
+    autoAcceptButton.Size = UDim2.new(0, 98, 0, 20)
+    autoAcceptButton.Position = UDim2.new(0, 10, 0, 120)
     autoAcceptButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
     autoAcceptButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     autoAcceptButton.Text = "Auto Accept [OFF]"
@@ -1340,10 +1462,9 @@ local function createSimpleUI()
     autoAcceptCorner.CornerRadius = UDim.new(0, 4)
     autoAcceptCorner.Parent = autoAcceptButton
     
-    -- Auto PetPen button
     local autoPetPenButton = Instance.new("TextButton")
-    autoPetPenButton.Size = UDim2.new(0, 88, 0, 20)
-    autoPetPenButton.Position = UDim2.new(0, 102, 0, 145)
+    autoPetPenButton.Size = UDim2.new(0, 98, 0, 20)
+    autoPetPenButton.Position = UDim2.new(0, 112, 0, 120)
     autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0)
     autoPetPenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     autoPetPenButton.Text = "Auto PetPen [ON]"
@@ -1355,10 +1476,13 @@ local function createSimpleUI()
     autoPetPenCorner.CornerRadius = UDim.new(0, 4)
     autoPetPenCorner.Parent = autoPetPenButton
     
+    -- Pet dropdown
+    local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsDropdown(frame, UDim2.new(0, 10, 0, 148))
+    
     -- PetFarm button
     local petFarmButton = Instance.new("TextButton")
-    petFarmButton.Size = UDim2.new(0, 180, 0, 25)
-    petFarmButton.Position = UDim2.new(0, 10, 0, 175)
+    petFarmButton.Size = UDim2.new(0, 200, 0, 25)
+    petFarmButton.Position = UDim2.new(0, 10, 0, 190)
     petFarmButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     petFarmButton.Text = "🚀 START PETFARM"
@@ -1373,7 +1497,7 @@ local function createSimpleUI()
     -- Status label
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 0, 0, 205)
+    statusLabel.Position = UDim2.new(0, 0, 0, 220)
     statusLabel.BackgroundTransparency = 1
     statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
     statusLabel.Text = "Status: Initializing..."
@@ -1382,10 +1506,19 @@ local function createSimpleUI()
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = frame
     
+    -- Auto-update dropdown periodically
+    coroutine.wrap(function()
+        while true do
+            if petsDropdownListFrame and not petsDropdownListFrame.Visible then
+                updatePetsDropdown(petsDropdownButton, petsDropdownListFrame)
+            end
+            task.wait(10)
+        end
+    end)()
+    
     return {
         frame = frame,
         sessionLabel = sessionLabel,
-        selectedPetLabel = selectedPetLabel,
         playerNameBox = playerNameBox,
         tradeButton = tradeButton,
         addPetsButton = addPetsButton,
@@ -1394,7 +1527,9 @@ local function createSimpleUI()
         autoAcceptButton = autoAcceptButton,
         autoPetPenButton = autoPetPenButton,
         petFarmButton = petFarmButton,
-        statusLabel = statusLabel
+        statusLabel = statusLabel,
+        petsDropdownButton = petsDropdownButton,
+        petsDropdownListFrame = petsDropdownListFrame
     }
 end
 
@@ -1405,36 +1540,37 @@ end
 local function autoStart()
     debugPrint("========================================")
     debugPrint("🐕 AUTO-START: LOOKING FOR DOG OR CAT")
+    debugPrint("(Excluding practice_dog)")
     debugPrint("========================================")
     
-    -- Update UI status
     if ui then
-        ui.statusLabel.Text = "Status: Searching for Dog/Cat..."
+        ui.statusLabel.Text = "Status: Searching for Dog/Cat (no practice_dog)..."
         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
     end
     
-    -- Wait for game to load
     task.wait(3)
     
-    -- Find and select Dog or Cat
-    local selectedPet = findAndSelectDogOrCat()
+    local selectedPet = findBestDogOrCat()
     
     if selectedPet then
-        -- Update UI with selected pet
         if ui then
-            ui.selectedPetLabel.Text = "Selected: " .. selectedPet.name .. " (Age: " .. selectedPet.age .. ")"
-            ui.statusLabel.Text = "Status: Equipping pet..."
+            ui.statusLabel.Text = "Status: Found " .. selectedPet.id .. " - Equipping..."
         end
         
-        -- Equip the pet
+        PetID = selectedPet.unique
+        selectedPetName = selectedPet.id
+        
         local equipSuccess = equipSelectedPet(selectedPet.unique)
         
         if equipSuccess then
             if ui then
-                ui.statusLabel.Text = "Status: Pet equipped! Starting PetFarm..."
+                ui.statusLabel.Text = "Status: ✅ RUNNING - " .. selectedPet.id .. " (Age: " .. selectedPet.age .. ")"
+                ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+                if ui.petsDropdownButton then
+                    ui.petsDropdownButton.Text = selectedPet.id .. " (Age: " .. selectedPet.age .. ")"
+                end
             end
             
-            -- Start Auto PetPen
             if not AutoPetPenMode then
                 toggleAutoPetPenMode()
                 if ui and ui.autoPetPenButton then
@@ -1443,7 +1579,6 @@ local function autoStart()
                 end
             end
             
-            -- Start PetFarm
             if not PetFarmMode then
                 togglePetFarmMode()
                 if ui and ui.petFarmButton then
@@ -1452,29 +1587,24 @@ local function autoStart()
                 end
             end
             
-            if ui then
-                ui.statusLabel.Text = "Status: ✅ RUNNING - Pet: " .. selectedPet.name
-                ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-            end
-            
             debugPrint("========================================")
             debugPrint("✅ PETFARM IS NOW RUNNING!")
-            debugPrint("   Pet: " .. selectedPet.name)
+            debugPrint("   Pet: " .. selectedPet.id)
             debugPrint("   ID: " .. selectedPet.unique)
+            debugPrint("   Age: " .. selectedPet.age)
             debugPrint("========================================")
         else
             if ui then
                 ui.statusLabel.Text = "Status: ❌ Failed to equip pet!"
                 ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
             end
-            debugPrint("❌ Failed to equip pet!")
         end
     else
         if ui then
-            ui.statusLabel.Text = "Status: ❌ No Dog or Cat found in inventory!"
+            ui.statusLabel.Text = "Status: ❌ No Dog or Cat found (practice_dog excluded)"
             ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         end
-        debugPrint("❌ No Dog or Cat found in inventory!")
+        debugPrint("❌ No valid Dog or Cat found! practice_dog is EXCLUDED.")
     end
 end
 
@@ -1482,8 +1612,7 @@ end
 -- INITIALIZATION
 -- ==================================================================
 
--- Create UI
-local ui = createSimpleUI()
+local ui = createMainUI()
 
 -- Initialize session tracking
 lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
@@ -1538,7 +1667,7 @@ if ui then
         ui.petFarmButton.Text = PetFarmMode and "🛑 STOP PETFARM" or "🚀 START PETFARM"
         ui.petFarmButton.BackgroundColor3 = PetFarmMode and Color3.fromRGB(170, 0, 0) or Color3.fromRGB(0, 170, 0)
         if PetFarmMode then
-            ui.statusLabel.Text = "Status: ✅ RUNNING - Pet: " .. (selectedPetName or "Selected")
+            ui.statusLabel.Text = "Status: ✅ RUNNING - " .. (selectedPetName or "Selected")
             ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         else
             ui.statusLabel.Text = "Status: ⏸️ STOPPED"
@@ -1553,14 +1682,16 @@ listAllFurniture()
 
 -- Auto-start everything
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
-debugPrint("Will automatically find and select Dog or Cat from inventory")
+debugPrint("practice_dog is EXCLUDED from selection")
 task.wait(3)
 autoStart()
 
 debugPrint("========================================")
 debugPrint("🐾 PetFarm Script Fully Loaded!")
+debugPrint("   - practice_dog is EXCLUDED")
 debugPrint("   - Auto-selects Dog or Cat from inventory")
 debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
+debugPrint("   - Pet dropdown shows all valid pets")
 debugPrint("========================================")
