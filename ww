@@ -204,40 +204,27 @@ local function equipPet(petUniqueID)
     return true
 end
 
--- Find YOUR pet in workspace (looks by name or just takes the first pet since you only have one equipped)
-local function findMyPetInWorkspace()
-    -- First, try to find by checking if the pet has an Owner attribute
+-- Find Dog or Cat in workspace (by name)
+local function findDogOrCatInWorkspace()
     local petsFolder = workspace:FindFirstChild("Pets")
     if petsFolder then
         for _, pet in ipairs(petsFolder:GetChildren()) do
             if pet:IsA("Model") then
-                -- Check for Owner attribute
-                local owner = pet:FindFirstChild("Owner")
-                if owner and owner.Value == player then
-                    debugPrint("Found YOUR pet by Owner attribute: " .. pet.Name)
+                local petName = pet.Name
+                if petName == "Dog" or petName == "Cat" then
+                    debugPrint("✅ Found in workspace: " .. petName)
                     return pet
                 end
             end
         end
     end
     
-    -- If no Owner attribute found, just take the first pet in Workspace.Pets
-    -- Since you only have one pet equipped at a time, this will work
-    if petsFolder then
-        for _, pet in ipairs(petsFolder:GetChildren()) do
-            if pet:IsA("Model") then
-                debugPrint("Found pet in Workspace.Pets (using as YOUR pet): " .. pet.Name)
-                return pet
-            end
-        end
-    end
-    
-    -- Also check for pet by name (Cobaka, Dog, etc.)
+    -- Also search entire workspace
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") then
-            local nameLower = string.lower(obj.Name)
-            if nameLower == "cobaka" or nameLower == "dog" or nameLower == "cat" or string.find(nameLower, "pet") then
-                debugPrint("Found YOUR pet by name: " .. obj.Name)
+            local petName = obj.Name
+            if petName == "Dog" or petName == "Cat" then
+                debugPrint("✅ Found in workspace: " .. petName .. " at " .. obj:GetFullName())
                 return obj
             end
         end
@@ -246,101 +233,74 @@ local function findMyPetInWorkspace()
     return nil
 end
 
--- Wait for YOUR pet to appear in workspace
-local function waitForMyPetInWorkspace(timeout)
+-- Wait for Dog/Cat to appear in workspace
+local function waitForDogOrCatInWorkspace(timeout)
     timeout = timeout or 20
     local startTime = os.time()
     
-    debugPrint("Waiting for YOUR pet to appear in workspace...")
-    debugPrint("Note: Your pet name should be visible in Workspace.Pets")
+    debugPrint("Waiting for Dog or Cat to appear in Workspace.Pets...")
     
     while os.time() - startTime < timeout do
-        local myPet = findMyPetInWorkspace()
-        if myPet then
-            debugPrint("✅ YOUR pet appeared after " .. (os.time() - startTime) .. " seconds!")
-            debugPrint("   Pet Name: " .. myPet.Name)
-            return myPet
+        local pet = findDogOrCatInWorkspace()
+        if pet then
+            debugPrint("✅ Dog/Cat appeared after " .. (os.time() - startTime) .. " seconds!")
+            return pet
         end
         
-        -- Debug: Show what's in Workspace.Pets
         if (os.time() - startTime) % 5 == 0 and (os.time() - startTime) > 0 then
             local petsFolder = workspace:FindFirstChild("Pets")
             if petsFolder then
                 local petNames = {}
-                for _, pet in ipairs(petsFolder:GetChildren()) do
-                    table.insert(petNames, pet.Name)
+                for _, p in ipairs(petsFolder:GetChildren()) do
+                    table.insert(petNames, p.Name)
                 end
-                debugPrint("Pets in workspace: " .. table.concat(petNames, ", "))
+                debugPrint("Current pets in workspace: " .. table.concat(petNames, ", "))
             end
         end
         
         task.wait(1)
     end
     
-    debugPrint("❌ YOUR pet did not appear in workspace within " .. timeout .. " seconds!")
+    debugPrint("❌ Dog/Cat did not appear within " .. timeout .. " seconds!")
     return nil
 end
 
--- Ensure pet is equipped and present (YOUR pet only)
-local function ensureMyPetEquippedAndPresent(petUniqueID, timeout)
-    timeout = timeout or 20
-    if not petUniqueID then
-        debugPrint("Cannot ensure pet equipped: petUniqueID is nil!")
-        return false
-    end
-
-    debugPrint("Ensuring YOUR pet is equipped: " .. tostring(petUniqueID))
-
-    if not isPetEquipped(petUniqueID) then
-        debugPrint("Pet not equipped, equipping now...")
-        local success = equipPet(petUniqueID)
-        if not success then
-            debugPrint("Failed to equip YOUR pet!")
-            return false
-        end
-    else
-        debugPrint("YOUR pet is already equipped! Looking for it in workspace...")
-    end
-    
-    -- Wait for YOUR pet to appear in workspace
-    task.wait(2)
-    
-    local petObject = waitForMyPetInWorkspace(timeout)
-    if petObject then
-        debugPrint("✅ YOUR pet is now present in workspace and ready!")
-        return true
-    else
-        debugPrint("⚠️ YOUR pet equipped but not found in workspace!")
-        debugPrint("This is OK - the pet will still work with furniture")
-        debugPrint("Continuing anyway...")
-        return true -- Continue anyway since pet is equipped
-    end
-end
-
--- Find first dog pet in inventory
-local function findMyDogPet()
+-- Find Dog or Cat pet in inventory
+local function findDogOrCatInInventory()
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
         debugPrint("No pets found in inventory!")
         return nil
     end
 
-    -- First try to find a dog
+    -- First try to find Dog
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id then
             local petName = string.lower(petData.id)
-            if string.find(petName, "dog") then
-                debugPrint("Found YOUR Dog pet: " .. petData.id .. " (ID: " .. uniqueId .. ")")
+            if petName == "dog" or string.find(petName, "dog") then
+                debugPrint("Found DOG in inventory: " .. petData.id .. " (ID: " .. uniqueId .. ")")
+                currentPetName = petData.id
+                return uniqueId, petData.id
+            end
+        end
+    end
+    
+    -- Then try to find Cat
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        if petData and petData.id then
+            local petName = string.lower(petData.id)
+            if petName == "cat" or string.find(petName, "cat") then
+                debugPrint("Found CAT in inventory: " .. petData.id .. " (ID: " .. uniqueId .. ")")
                 currentPetName = petData.id
                 return uniqueId, petData.id
             end
         end
     end
 
-    -- If no dog found, find any pet that's equipped or first available
+    -- If no Dog or Cat found, use first available pet
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id then
-            debugPrint("No Dog found, using: " .. petData.id)
+            debugPrint("No Dog/Cat found, using: " .. petData.id)
             currentPetName = petData.id
             return uniqueId, petData.id
         end
@@ -348,6 +308,46 @@ local function findMyDogPet()
 
     debugPrint("No pets found in inventory!")
     return nil
+end
+
+-- Ensure Dog/Cat is equipped and present
+local function ensureDogOrCatEquipped(timeout)
+    timeout = timeout or 20
+    
+    -- Find Dog or Cat in inventory
+    local petID, petName = findDogOrCatInInventory()
+    if not petID then
+        debugPrint("❌ No Dog or Cat found in inventory!")
+        return false
+    end
+    
+    debugPrint("Found pet: " .. petName .. " (ID: " .. petID .. ")")
+    petFarmPetID = petID
+    lastValidPetID = petID
+
+    -- Check if already equipped
+    if not isPetEquipped(petID) then
+        debugPrint("Equipping " .. petName .. "...")
+        local success = equipPet(petID)
+        if not success then
+            debugPrint("❌ Failed to equip pet!")
+            return false
+        end
+        task.wait(3)
+    else
+        debugPrint("✅ " .. petName .. " is already equipped!")
+    end
+    
+    -- Wait for Dog/Cat to appear in workspace
+    local petObject = waitForDogOrCatInWorkspace(timeout)
+    if petObject then
+        debugPrint("✅ " .. petName .. " is now in workspace and ready!")
+        return true
+    else
+        debugPrint("⚠️ " .. petName .. " equipped but not found in workspace!")
+        debugPrint("Continuing anyway...")
+        return true
+    end
 end
 
 -- Get all pet IDs from inventory
@@ -789,7 +789,7 @@ local function handleWalkAilment()
     task.wait(5)
 
     debugPrint("Re-equipping pet after respawn...")
-    local reequipSuccess = ensureMyPetEquippedAndPresent(petFarmPetID, 10)
+    local reequipSuccess = ensureDogOrCatEquipped(10)
     if reequipSuccess then
         debugPrint("Successfully re-equipped pet after respawn")
         task.wait(2)
@@ -880,7 +880,7 @@ local function handleRideAilment()
     task.wait(5)
 
     debugPrint("Re-equipping pet after respawn...")
-    local reequipSuccess = ensureMyPetEquippedAndPresent(petFarmPetID, 10)
+    local reequipSuccess = ensureDogOrCatEquipped(10)
     if reequipSuccess then
         debugPrint("Successfully re-equipped pet after respawn")
         task.wait(2)
@@ -1004,7 +1004,7 @@ local function handleSickAilment()
     end
 end
 
--- Find furniture by name (in YOUR house only)
+-- Find furniture by name
 local function findFurnitureByName(name)
     local hi = workspace:FindFirstChild("HouseInteriors")
     if not hi then
@@ -1013,25 +1013,24 @@ local function findFurnitureByName(name)
     end
 
     for _, folder in ipairs(hi:GetChildren()) do
-        -- Only look in folders that belong to YOU
         if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
             local model = folder:FindFirstChild(name)
             if model and model:IsA("Model") then
-                debugPrint("Found " .. name .. " in YOUR house: " .. folder.Name)
+                debugPrint("Found " .. name .. " in " .. folder.Name)
                 return model
             end
         end
     end
     
-    debugPrint("Furniture not found in YOUR house: " .. name)
+    debugPrint("Furniture not found: " .. name)
     return nil
 end
 
--- Activate furniture with YOUR pet
+-- Activate furniture with pet
 local function activateFurniture(furnitureName, pet)
     local furnitureModel = findFurnitureByName(furnitureName)
     if not furnitureModel then
-        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found in YOUR house")
+        debugPrint("Cannot activate furniture: " .. furnitureName .. " - not found")
         return false
     end
 
@@ -1056,7 +1055,7 @@ local function activateFurniture(furnitureName, pet)
     end
 end
 
--- Use furniture with YOUR pet
+-- Use furniture with Dog/Cat
 local function useFurnitureWithPet(furnitureName)
     local char = player.Character or player.CharacterAdded:Wait()
     if not char then
@@ -1066,42 +1065,21 @@ local function useFurnitureWithPet(furnitureName)
 
     task.wait(2)
 
-    -- Find YOUR pet in workspace
-    local petObject = findMyPetInWorkspace()
+    -- Find Dog or Cat in workspace
+    local petObject = findDogOrCatInWorkspace()
 
     if petObject then
-        debugPrint("Found YOUR pet for activation: " .. petObject.Name)
+        debugPrint("Found pet for activation: " .. petObject.Name)
         local success = activateFurniture(furnitureName, petObject)
         if success then
             task.wait(20)
             return true
         else
-            debugPrint("Failed to activate furniture with YOUR pet")
+            debugPrint("Failed to activate furniture with pet")
             return false
         end
     else
-        debugPrint("YOUR pet not found in workspace!")
-        debugPrint("Trying to use furniture without pet reference...")
-        
-        -- Try to activate furniture without pet reference (some games allow this)
-        local furnitureModel = findFurnitureByName(furnitureName)
-        if furnitureModel then
-            local args = {
-                player,
-                furnitureModel.Parent.Name,
-                furnitureModel.Name,
-                {
-                    cframe = furnitureModel:GetPivot()
-                }
-            }
-            local success, result = safeRemoteCall({"HousingAPI/ActivateFurniture"}, "InvokeServer", unpack(args))
-            if success then
-                debugPrint("Successfully activated furniture without pet!")
-                task.wait(20)
-                return true
-            end
-        end
-        
+        debugPrint("No Dog/Cat found in workspace for activation!")
         return false
     end
 end
@@ -1154,9 +1132,9 @@ local function resolveMysteryAilment(ailmentId)
     return true
 end
 
--- Monitor and handle ailments for YOUR pet only
+-- Monitor and handle ailments
 local function monitorAndHandleAilments()
-    debugPrint("Starting ailment monitoring system for YOUR pet...")
+    debugPrint("Starting ailment monitoring system...")
     local lastAilmentScanTime = 0
     local SCAN_INTERVAL = 10
 
@@ -1175,14 +1153,11 @@ local function monitorAndHandleAilments()
 
         local foundActionableAilments = false
         for ailmentId, ailmentData in pairs(playerData.ailments_manager.ailments) do
-            -- Only handle ailments for YOUR selected pet
             if ailmentId == petFarmPetID then
                 foundActionableAilments = true
                 for ailmentType, furnitureName in pairs(AILMENT_TASKS) do
                     if ailmentData[ailmentType] and type(ailmentData[ailmentType]) == "table" then
                         if not lastTaskTime[ailmentType] or (currentTime - lastTaskTime[ailmentType]) >= TASK_COOLDOWN then
-                            debugPrint("Detected ailment: " .. ailmentType .. " for YOUR pet")
-                            
                             if ailmentType == "play" then
                                 local success = handlePlayAilment()
                                 if success then
@@ -1227,7 +1202,7 @@ local function monitorAndHandleAilments()
         end
 
         if not foundActionableAilments and currentTime - lastAilmentScanTime >= 60 then
-            debugPrint("No actionable ailments detected for YOUR selected pet")
+            debugPrint("No actionable ailments detected for selected pet")
             lastAilmentScanTime = currentTime
         end
 
@@ -1235,9 +1210,9 @@ local function monitorAndHandleAilments()
     end
 end
 
--- Start PetFarm for YOUR pet
+-- Start PetFarm
 local function startPetFarm()
-    debugPrint("Starting PetFarm system for YOUR pet...")
+    debugPrint("Starting PetFarm system...")
 
     if not petFarmPetID then
         debugPrint("No pet selected for PetFarm!")
@@ -1252,14 +1227,13 @@ local function startPetFarm()
         return
     end
 
-    debugPrint("Ensuring YOUR pet is equipped and present...")
-    local ensured = ensureMyPetEquippedAndPresent(petFarmPetID, 18)
+    debugPrint("Ensuring Dog/Cat is equipped and present...")
+    local ensured = ensureDogOrCatEquipped(18)
     if not ensured then
-        debugPrint("Warning: Could not verify pet in workspace, but continuing anyway...")
-        -- Don't stop PetFarm, just continue
+        debugPrint("Warning: Could not verify pet, but continuing...")
     end
 
-    debugPrint("Starting ailment monitoring for YOUR pet...")
+    debugPrint("Starting ailment monitoring...")
     monitorAndHandleAilments()
 
     debugPrint("PetFarm stopped.")
@@ -1275,14 +1249,14 @@ local function togglePetFarmMode()
             return
         end
 
-        debugPrint("Starting PetFarm with YOUR pet: " .. tostring(petFarmPetID))
+        debugPrint("Starting PetFarm with pet: " .. tostring(petFarmPetID))
 
-        local success = ensureMyPetEquippedAndPresent(petFarmPetID, 15)
+        local success = ensureDogOrCatEquipped(15)
         if not success then
-            debugPrint("Warning: Could not verify pet in workspace, but starting anyway...")
+            debugPrint("Warning: Pet may not be visible, but starting anyway...")
         end
 
-        debugPrint("PetFarm started successfully for YOUR pet!")
+        debugPrint("PetFarm started successfully!")
         petFarmCoroutine = coroutine.wrap(startPetFarm)()
     else
         debugPrint("PetFarm stopped.")
@@ -1292,29 +1266,31 @@ local function togglePetFarmMode()
     end
 end
 
--- AUTO START FUNCTION - Finds YOUR dog and starts PetFarm
+-- AUTO START FUNCTION - Finds Dog/Cat and starts PetFarm
 local function autoStartPetFarm()
     debugPrint("========================================")
-    debugPrint("AUTO-START INITIATED - LOOKING FOR YOUR PET")
+    debugPrint("AUTO-START INITIATED")
+    debugPrint("Looking for Dog or Cat in inventory...")
     debugPrint("========================================")
     
     task.wait(3)
     
-    local petID, petName = findMyDogPet()
+    local petID, petName = findDogOrCatInInventory()
     
     if petID then
-        debugPrint("Found YOUR pet to use: " .. petName .. " (" .. petID .. ")")
+        debugPrint("✅ Found pet: " .. petName)
+        debugPrint("Pet ID: " .. petID)
         petFarmPetID = petID
         lastValidPetID = petID
         
         if not PetFarmMode then
-            debugPrint("Auto-starting PetFarm with YOUR " .. petName)
+            debugPrint("🚀 Auto-starting PetFarm with " .. petName)
             togglePetFarmMode()
         else
             debugPrint("PetFarm already running")
         end
     else
-        debugPrint("No pets found in your inventory! Cannot auto-start PetFarm")
+        debugPrint("❌ No Dog or Cat found in inventory!")
         debugPrint("Waiting 10 seconds and retrying...")
         task.wait(10)
         autoStartPetFarm()
@@ -1626,8 +1602,9 @@ local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFra
             if selectedPet and selectedPet.unique then
                 petFarmPetID = selectedPet.unique
                 lastValidPetID = selectedPet.unique
+                currentPetName = selectedPet.id
                 debugPrint("Selected pet: " .. petKey .. " (ID: " .. selectedPet.unique .. ")")
-                local success = ensureMyPetEquippedAndPresent(selectedPet.unique, 15)
+                local success = ensureDogOrCatEquipped(15)
                 if success then
                     debugPrint("Pet equipped successfully!")
                 else
@@ -1864,9 +1841,9 @@ ui.autoPetPenButton.MouseButton1Click:Connect(toggleAutoPetPenMode)
 ui.petFarmButton.MouseButton1Click:Connect(togglePetFarmMode)
 
 -- ============================================
--- AUTO-START: Find YOUR pet and start PetFarm
+-- AUTO-START: Find Dog or Cat and start PetFarm
 -- ============================================
 debugPrint("PetFarm script loaded! Auto-starting in 3 seconds...")
-debugPrint("NOTE: Script will work with your equipped pet")
+debugPrint("Looking for Dog or Cat in your inventory...")
 task.wait(3)
 autoStartPetFarm()
