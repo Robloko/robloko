@@ -211,26 +211,25 @@ local function waitForPetInWorkspace(petUniqueID, timeout)
     debugPrint("Waiting for pet to appear in workspace...")
     
     while os.time() - startTime < timeout do
-        -- Check all pets in workspace
-        for _, pet in ipairs(Workspace:GetDescendants()) do
-            if pet:IsA("Model") and pet:FindFirstChild("Owner") then
-                local owner = pet.Owner.Value
-                if owner == player then
-                    -- Check if this pet matches our unique ID (if we have it)
-                    if pet:FindFirstChild("UniqueId") then
-                        local petUnique = pet.UniqueId.Value
-                        if petUnique == petUniqueID then
-                            debugPrint("Found pet in workspace: " .. pet.Name)
-                            return pet
-                        end
-                    else
-                        -- If we can't verify by UniqueId, assume it's our pet
-                        debugPrint("Found potential pet in workspace: " .. pet.Name)
-                        return pet
-                    end
+        -- Check Workspace.Pets folder first
+        local petsFolder = workspace:FindFirstChild("Pets")
+        if petsFolder then
+            for _, pet in ipairs(petsFolder:GetChildren()) do
+                if pet:IsA("Model") then
+                    debugPrint("Found pet in Workspace.Pets: " .. pet.Name)
+                    return pet
                 end
             end
         end
+        
+        -- Check entire workspace for Dog/Cat
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and (obj.Name == "Dog" or obj.Name == "Cat" or string.find(string.lower(obj.Name), "pet")) then
+                debugPrint("Found pet in workspace: " .. obj:GetFullName())
+                return obj
+            end
+        end
+        
         task.wait(1)
         debugPrint("Waiting for pet to spawn... attempt " .. tostring(os.time() - startTime) .. "/" .. timeout)
     end
@@ -239,7 +238,7 @@ local function waitForPetInWorkspace(petUniqueID, timeout)
     return nil
 end
 
--- Ensure pet is equipped and present in workspace
+-- Ensure pet is equipped and present
 local function ensurePetEquippedAndPresent(petUniqueID, timeout)
     timeout = timeout or 20
     if not petUniqueID then
@@ -249,7 +248,6 @@ local function ensurePetEquippedAndPresent(petUniqueID, timeout)
 
     debugPrint("Ensuring pet is equipped: " .. tostring(petUniqueID))
 
-    -- Check if already equipped
     if not isPetEquipped(petUniqueID) then
         local success = equipPet(petUniqueID)
         if not success then
@@ -261,7 +259,7 @@ local function ensurePetEquippedAndPresent(petUniqueID, timeout)
     end
     
     -- Wait for pet to appear in workspace
-    task.wait(3) -- Give time for pet to spawn
+    task.wait(3)
     
     local petObject = waitForPetInWorkspace(petUniqueID, timeout)
     if petObject then
@@ -284,26 +282,22 @@ local function findFirstDogOrCatPet()
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id then
             local petName = string.lower(petData.id)
-            -- Look for dog or cat pets
-            if string.find(petName, "dog") or 
-               string.find(petName, "cat") or
-               string.find(petName, "practice_dog") then
+            if string.find(petName, "dog") or string.find(petName, "cat") or string.find(petName, "practice_dog") then
                 debugPrint("Found dog/cat pet: " .. petData.id .. " (ID: " .. uniqueId .. ")")
                 return uniqueId, petData.id
             end
         end
     end
 
-    -- If no dog/cat found, get first available pet
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id then
-            debugPrint("No dog/cat found, using first available pet: " .. petData.id .. " (ID: " .. uniqueId .. ")")
+            debugPrint("No dog/cat found, using: " .. petData.id)
             return uniqueId, petData.id
         end
     end
 
-    debugPrint("No pets found in inventory at all!")
-    return nil, nil
+    debugPrint("No pets found in inventory!")
+    return nil
 end
 
 -- Get all pet IDs from inventory
@@ -960,10 +954,11 @@ local function handleSickAilment()
     end
 end
 
--- Find furniture by name
+-- FIXED: Find furniture by name
 local function findFurnitureByName(name)
-    local hi = Workspace:FindFirstChild("HouseInteriors")
+    local hi = workspace:FindFirstChild("HouseInteriors")
     if not hi then
+        debugPrint("HouseInteriors not found!")
         return nil
     end
 
@@ -976,13 +971,7 @@ local function findFurnitureByName(name)
             end
         end
     end
-
-    local model = Workspace:FindFirstChild(name, true)
-    if model and model:IsA("Model") then
-        debugPrint("Found " .. name .. " in workspace (fallback)")
-        return model
-    end
-
+    
     debugPrint("Furniture not found: " .. name)
     return nil
 end
@@ -1016,7 +1005,7 @@ local function activateFurniture(furnitureName, pet)
     end
 end
 
--- Use furniture with pet
+-- FIXED: Use furniture with pet (without Owner check)
 local function useFurnitureWithPet(furnitureName)
     local char = player.Character or player.CharacterAdded:Wait()
     if not char then
@@ -1026,24 +1015,29 @@ local function useFurnitureWithPet(furnitureName)
 
     task.wait(2)
 
+    -- Find pet in Workspace.Pets folder (without Owner check)
     local petObject = nil
-    for attempt = 1, 10 do
-        -- Look for pet in workspace
-        for _, pet in ipairs(Workspace:GetDescendants()) do
-            if pet:IsA("Model") and pet:FindFirstChild("Owner") then
-                if pet.Owner.Value == player then
-                    petObject = pet
-                    break
-                end
+    local petsFolder = workspace:FindFirstChild("Pets")
+    
+    if petsFolder then
+        for _, pet in ipairs(petsFolder:GetChildren()) do
+            if pet:IsA("Model") then
+                petObject = pet
+                debugPrint("Found pet in Workspace.Pets: " .. pet.Name)
+                break
             end
         end
-        
-        if petObject then
-            break
+    end
+    
+    -- If not found in Pets folder, search entire workspace for Dog/Cat
+    if not petObject then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and (obj.Name == "Dog" or obj.Name == "Cat" or string.find(string.lower(obj.Name), "pet")) then
+                petObject = obj
+                debugPrint("Found pet in workspace: " .. obj:GetFullName())
+                break
+            end
         end
-        
-        debugPrint("Pet not found in workspace, attempt " .. attempt .. "/10")
-        task.wait(2)
     end
 
     if petObject then
@@ -1248,16 +1242,14 @@ local function togglePetFarmMode()
     end
 end
 
--- AUTO START FUNCTION - Finds a dog/cat and starts PetFarm automatically
+-- AUTO START FUNCTION
 local function autoStartPetFarm()
     debugPrint("========================================")
     debugPrint("AUTO-START INITIATED")
     debugPrint("========================================")
     
-    -- Wait for player data to load
     task.wait(3)
     
-    -- Find a dog or cat pet
     local petID, petName = findFirstDogOrCatPet()
     
     if petID then
@@ -1265,7 +1257,6 @@ local function autoStartPetFarm()
         petFarmPetID = petID
         lastValidPetID = petID
         
-        -- Start PetFarm
         if not PetFarmMode then
             debugPrint("Auto-starting PetFarm with " .. petName)
             togglePetFarmMode()
@@ -1276,7 +1267,7 @@ local function autoStartPetFarm()
         debugPrint("No pets found in inventory! Cannot auto-start PetFarm")
         debugPrint("Waiting 10 seconds and retrying...")
         task.wait(10)
-        autoStartPetFarm() -- Retry
+        autoStartPetFarm()
     end
 end
 
@@ -1361,7 +1352,6 @@ local function addPriorityPets(snapshot)
     local added = 0
     local addedSet = {}
 
-    -- Priority 1: NEON
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData.properties.neon and added < slotsOpen then
             if not addedSet[uniqueId] then
@@ -1374,7 +1364,6 @@ local function addPriorityPets(snapshot)
         end
     end
 
-    -- Priority 2: Exact egg match
     for _, eggName in ipairs(priorityEggs) do
         for uniqueId, petData in pairs(playerData.inventory.pets) do
             if petData.id == eggName and added < slotsOpen and not addedSet[uniqueId] then
@@ -1387,7 +1376,6 @@ local function addPriorityPets(snapshot)
         end
     end
 
-    -- Auto-buy cracked eggs if still room
     while added < slotsOpen and AutoPetPenMode do
         debugPrint("Buying cracked_egg to fill slot...")
         local bought = safeRemoteCall({"ShopAPI/BuyItem"}, "InvokeServer", "pets", "cracked_egg", {buy_count = 1})
@@ -1418,13 +1406,10 @@ local function startAutoPetPen()
     while AutoPetPenMode do
         debugPrint("=== AUTO PETPEN CYCLE START ===")
 
-        -- Purge non-priority garbage
         purgeNonPriorityGarbage()
 
-        -- Get PetPen snapshot
         local snapshot = getPetPenSnapshot()
 
-        -- Remove aged pets
         for _, pet in ipairs(snapshot) do
             if pet.age >= 6 then
                 debugPrint("Removing aged pet: " .. pet.name .. " (Age: " .. pet.age .. ")")
@@ -1433,14 +1418,10 @@ local function startAutoPetPen()
             end
         end
 
-        -- Refresh snapshot after removals
         task.wait(2)
         snapshot = getPetPenSnapshot()
-
-        -- Add best pets
         addPriorityPets(snapshot)
 
-        -- Commit rewards
         if os.time() - lastPetPenCommitTime >= 300 then
             safeRemoteCall({"IdleProgressionAPI/CommitAllProgression"}, "FireServer")
             debugPrint("Committed PetPen rewards")
@@ -1533,14 +1514,12 @@ end
 
 -- Update pets dropdown
 local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFrame)
-    -- Clear existing dropdown options
     for _, child in ipairs(dropdownListFrame:GetChildren()) do
         if child:IsA("TextButton") then
             child:Destroy()
         end
     end
 
-    -- Get pets data
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
         debugPrint("No pets found in inventory!")
@@ -1553,7 +1532,6 @@ local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFra
     local wasSelected = false
     PetsShow = {}
 
-    -- Build pets list
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id and petData.properties then
             local petName = tostring(petData.id)
@@ -1572,17 +1550,14 @@ local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFra
         end
     end
 
-    -- Sort list
     table.sort(List)
 
-    -- Update dropdown button text
     if #List > 0 then
         dropdownButton.Text = wasSelected and currentSelection or ("Select a Pet (" .. #List .. ")")
     else
         dropdownButton.Text = "No Pets Found"
     end
 
-    -- Create dropdown options
     for i, petKey in ipairs(List) do
         local optionButton = Instance.new("TextButton")
         optionButton.Size = UDim2.new(1, 0, 0, 20)
@@ -1614,7 +1589,6 @@ local function updatePetsDropdown(dropdownFrame, dropdownButton, dropdownListFra
         end)
     end
 
-    -- Update canvas size
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 20)
 end
 
@@ -1636,7 +1610,6 @@ local function createMainUI()
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = frame
 
-    -- Session stats label
     local sessionLabel = Instance.new("TextLabel")
     sessionLabel.Size = UDim2.new(1, 0, 0, 20)
     sessionLabel.Position = UDim2.new(0, 5, 0, 0)
@@ -1648,7 +1621,6 @@ local function createMainUI()
     sessionLabel.TextXAlignment = Enum.TextXAlignment.Left
     sessionLabel.Parent = frame
 
-    -- Title
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 20)
     title.Position = UDim2.new(0, 0, 0, 20)
@@ -1659,7 +1631,6 @@ local function createMainUI()
     title.TextSize = 14
     title.Parent = frame
 
-    -- Player name input for trading
     local playerNameBox = Instance.new("TextBox")
     playerNameBox.Size = UDim2.new(0, 160, 0, 20)
     playerNameBox.Position = UDim2.new(0, 10, 0, 45)
@@ -1675,7 +1646,6 @@ local function createMainUI()
     boxCorner.CornerRadius = UDim.new(0, 4)
     boxCorner.Parent = playerNameBox
 
-    -- Trade buttons
     local tradeButton = Instance.new("TextButton")
     tradeButton.Size = UDim2.new(0, 78, 0, 20)
     tradeButton.Position = UDim2.new(0, 10, 0, 70)
@@ -1704,7 +1674,6 @@ local function createMainUI()
     addPetsCorner.CornerRadius = UDim.new(0, 4)
     addPetsCorner.Parent = addPetsButton
 
-    -- Auto Trade button
     local autoTradeButton = Instance.new("TextButton")
     autoTradeButton.Size = UDim2.new(0, 78, 0, 20)
     autoTradeButton.Position = UDim2.new(0, 10, 0, 95)
@@ -1719,7 +1688,6 @@ local function createMainUI()
     autoTradeCorner.CornerRadius = UDim.new(0, 4)
     autoTradeCorner.Parent = autoTradeButton
 
-    -- Auto Potion button
     local autoPotionButton = Instance.new("TextButton")
     autoPotionButton.Size = UDim2.new(0, 78, 0, 20)
     autoPotionButton.Position = UDim2.new(0, 92, 0, 95)
@@ -1734,7 +1702,6 @@ local function createMainUI()
     autoPotionCorner.CornerRadius = UDim.new(0, 4)
     autoPotionCorner.Parent = autoPotionButton
 
-    -- Auto Accept button
     local autoAcceptButton = Instance.new("TextButton")
     autoAcceptButton.Size = UDim2.new(0, 78, 0, 20)
     autoAcceptButton.Position = UDim2.new(0, 10, 0, 120)
@@ -1749,7 +1716,6 @@ local function createMainUI()
     autoAcceptCorner.CornerRadius = UDim.new(0, 4)
     autoAcceptCorner.Parent = autoAcceptButton
 
-    -- Auto PetPen button
     local autoPetPenButton = Instance.new("TextButton")
     autoPetPenButton.Size = UDim2.new(0, 78, 0, 20)
     autoPetPenButton.Position = UDim2.new(0, 92, 0, 120)
@@ -1764,7 +1730,6 @@ local function createMainUI()
     autoPetPenCorner.CornerRadius = UDim.new(0, 4)
     autoPetPenCorner.Parent = autoPetPenButton
 
-    -- PetFarm button
     local petFarmButton = Instance.new("TextButton")
     petFarmButton.Size = UDim2.new(0, 160, 0, 20)
     petFarmButton.Position = UDim2.new(0, 10, 0, 145)
@@ -1779,7 +1744,6 @@ local function createMainUI()
     petFarmCorner.CornerRadius = UDim.new(0, 4)
     petFarmCorner.Parent = petFarmButton
 
-    -- Create pets dropdown
     local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsDropdown(frame, UDim2.new(0, 10, 0, 170))
 
     return {
@@ -1850,7 +1814,7 @@ ui.autoPetPenButton.MouseButton1Click:Connect(toggleAutoPetPenMode)
 ui.petFarmButton.MouseButton1Click:Connect(togglePetFarmMode)
 
 -- ============================================
--- AUTO-START: Find dog/cat and start PetFarm
+-- AUTO-START: Find dog and start PetFarm
 -- ============================================
 debugPrint("PetFarm script loaded! Auto-starting in 3 seconds...")
 task.wait(3)
