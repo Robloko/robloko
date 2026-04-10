@@ -1,43 +1,36 @@
-local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
-	Terrain.WaterWaveSize = 0
-	Terrain.WaterWaveSpeed = 0
-	Terrain.WaterReflectance = 0
-	Terrain.WaterTransparency = 1
-	Lighting.GlobalShadows = false
-	Lighting.FogEnd = 9e9
-	Lighting.FogStart = 9e9
-	settings().Rendering.QualityLevel = 1
-	for _, v in pairs(game:GetDescendants()) do
-		if v:IsA("BasePart") then
-			v.CastShadow = false
-			v.Material = "Plastic"
-			v.Reflectance = 0
-			v.BackSurface = "SmoothNoOutlines"
-			v.BottomSurface = "SmoothNoOutlines"
-			v.FrontSurface = "SmoothNoOutlines"
-			v.LeftSurface = "SmoothNoOutlines"
-			v.RightSurface = "SmoothNoOutlines"
-			v.TopSurface = "SmoothNoOutlines"
-		elseif v:IsA("Decal") then
-			v.Transparency = 1
-			v.Texture = ""
-		elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
-			v.Lifetime = NumberRange.new(0)
-		end
-	end
-	for _, v in pairs(Lighting:GetDescendants()) do
-		if v:IsA("PostEffect") then
-			v.Enabled = false
-		end
-	end
-	workspace.DescendantAdded:Connect(function(child)
-		task.spawn(function()
-			if child:IsA("ForceField") or child:IsA("Sparkles") or child:IsA("Smoke") or child:IsA("Fire") or child:IsA("Beam") then
-				RunService.Heartbeat:Wait()
-				child:Destroy()
-			elseif child:IsA("BasePart") then
-				child.CastShadow = false
-			end
-		end)
-	end)
-end)
+local function safeRemoteCall(remotePath, method, ...)
+    local args = {...}
+    local remote = ReplicatedStorage:FindFirstChild("ToolAPI")  -- Updated to look directly under ReplicatedStorage
+    if not remote then
+        debugPrint("ToolAPI not found in ReplicatedStorage!")
+        return false, "ToolAPI not found"
+    end
+
+    for _, path in ipairs(remotePath) do
+        remote = remote:FindFirstChild(path)
+        if not remote then
+            debugPrint("Remote path not found: " .. tostring(path))
+            return false, "Remote path not found"
+        end
+    end
+
+    if method == "FireServer" then
+        local success, result = pcall(function()
+            remote:FireServer(unpack(args))
+        end)
+        if not success then
+            debugPrint("FireServer error: " .. tostring(result))
+        end
+        return success, result
+    elseif method == "InvokeServer" then
+        local success, result = pcall(function()
+            return remote:InvokeServer(unpack(args))
+        end)
+        if not success then
+            debugPrint("InvokeServer error: " .. tostring(result))
+        end
+        return success, result
+    else
+        return false, "Invalid method"
+    end
+end
