@@ -1,26 +1,85 @@
-local function equipPet(petUniqueID)
-    if not petUniqueID then
-        debugPrint("Cannot equip pet: petUniqueID is nil!")
-        return false
+-- Simple script to find where pets spawn in workspace
+local player = game.Players.LocalPlayer
+
+-- Function to search entire workspace for pet models
+local function findPetInWorkspace()
+    print("========================================")
+    print("SEARCHING FOR PET IN WORKSPACE")
+    print("========================================")
+    
+    local foundPets = {}
+    
+    -- Search all descendants in workspace
+    local descendants = workspace:GetDescendants()
+    print("Total objects in workspace: " .. #descendants)
+    
+    for _, obj in ipairs(descendants) do
+        if obj:IsA("Model") then
+            -- Check for Owner attribute
+            local owner = obj:FindFirstChild("Owner")
+            if owner and owner.Value == player then
+                table.insert(foundPets, obj)
+                print("FOUND PET: " .. obj.Name)
+                print("  Path: " .. obj:GetFullName())
+                print("  Has Owner: " .. tostring(owner ~= nil))
+                if owner then
+                    print("  Owner Value: " .. tostring(owner.Value))
+                end
+            end
+            
+            -- Also check for Humanoid (pets usually have this)
+            if obj:FindFirstChild("Humanoid") then
+                local possibleOwner = obj:FindFirstChild("Owner")
+                if possibleOwner and possibleOwner.Value == player then
+                    print("  This is a pet with Humanoid!")
+                end
+            end
+        end
     end
-
-    debugPrint("Attempting to equip pet with ID: " .. tostring(petUniqueID))
-
-    local args = {
-        petUniqueID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-
-    local success, result = safeRemoteCall("ToolAPI", {"Equip"}, "InvokeServer", unpack(args))
-
-    if not success then
-        debugPrint("Failed to equip pet: " .. tostring(result))
-        return false
+    
+    -- Also check specific folders
+    local petsFolder = workspace:FindFirstChild("Pets")
+    if petsFolder then
+        print("\nPets folder found in workspace!")
+        for _, pet in ipairs(petsFolder:GetChildren()) do
+            print("  Pet in Pets folder: " .. pet.Name)
+        end
+    else
+        print("\nNo 'Pets' folder found in workspace")
     end
+    
+    -- Check for Characters folder
+    local charactersFolder = workspace:FindFirstChild("Characters")
+    if charactersFolder then
+        print("\nCharacters folder found!")
+        for _, char in ipairs(charactersFolder:GetChildren()) do
+            print("  Character: " .. char.Name)
+        end
+    end
+    
+    if #foundPets == 0 then
+        print("\n⚠️ NO PETS FOUND IN WORKSPACE!")
+        print("Possible reasons:")
+        print("  1. Pet hasn't spawned yet (wait a few seconds)")
+        print("  2. Pet spawns in a different location (check ReplicatedStorage)")
+        print("  3. Pet is streamed in only when needed")
+        print("  4. Game uses different pet system")
+    else
+        print("\n✅ Found " .. #foundPets .. " pet(s) in workspace!")
+        for i, pet in ipairs(foundPets) do
+            print("  Pet " .. i .. ": " .. pet:GetFullName())
+        end
+    end
+    
+    return foundPets
+end
 
-    debugPrint("Successfully equipped pet: " .. tostring(petUniqueID))
-    return true
+-- Run search immediately
+task.wait(3) -- Wait for game to load
+findPetInWorkspace()
+
+-- Keep searching every 5 seconds
+while true do
+    task.wait(5)
+    findPetInWorkspace()
 end
