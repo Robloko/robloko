@@ -78,34 +78,34 @@ end
 -- Safe Remote Call
 local function safeRemoteCall(remotePath, method, ...)
     local args = {...}
-    local remote = ReplicatedStorage:FindFirstChild("API"):FindFirstChild("ToolAPI")
+    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("API")
     if not remote then
-        debugPrint("ToolAPI not found in ReplicatedStorage.API!")
-        return false, "ToolAPI not found"
+        debugPrint("API not found in ReplicatedStorage!")
+        return false, "API not found"
     end
 
     for _, path in ipairs(remotePath) do
         remote = remote:FindFirstChild(path)
         if not remote then
-            debugPrint("Remote path not found: " .. tostring(path))
+            debugPrint("Remote path not found: " .. path)
             return false, "Remote path not found"
         end
     end
 
-    if method == "FireServer" then
-        local success, result = pcall(function()
-            remote:FireServer(unpack(args))
-        end)
-        if not success then
-            debugPrint("FireServer error: " .. tostring(result))
-        end
-        return success, result
-    elseif method == "InvokeServer" then
+    if method == "InvokeServer" then
         local success, result = pcall(function()
             return remote:InvokeServer(unpack(args))
         end)
         if not success then
             debugPrint("InvokeServer error: " .. tostring(result))
+        end
+        return success, result
+    elseif method == "FireServer" then
+        local success, result = pcall(function()
+            remote:FireServer(unpack(args))
+        end)
+        if not success then
+            debugPrint("FireServer error: " .. tostring(result))
         end
         return success, result
     else
@@ -192,7 +192,7 @@ local function equipPet(petUniqueID)
         }
     }
 
-    local success, result = safeRemoteCall({"Equip"}, "InvokeServer", unpack(args))
+    local success, result = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", unpack(args))
 
     if not success then
         debugPrint("Failed to equip pet: " .. tostring(result))
@@ -239,20 +239,47 @@ end
 
 -- Get all pet IDs from inventory
 local function getAllPetIDsFromInventory()
+    local neonAged6 = {}
+    local neonUnder6 = {}
+    local others = {}
+
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
         debugPrint("No pets found in inventory!")
         return {}
     end
 
-    local petIDs = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id and petData.properties then
-            table.insert(petIDs, uniqueId)
+        if not petData or not petData.id or not petData.properties then
+            continue
+        end
+
+        local petName = string.lower(petData.id)
+        if string.find(petName, "practice_dog") or string.find(petName, "dog") or string.find(petName, "cat") then
+            continue
+        end
+
+        if petData.properties.neon and (petData.properties.age or 0) == 6 then
+            table.insert(neonAged6, uniqueId)
+        elseif petData.properties.neon and (petData.properties.age or 0) < 6 then
+            table.insert(neonUnder6, uniqueId)
+        else
+            table.insert(others, uniqueId)
         end
     end
 
-    return petIDs
+    local allPets = {}
+    for _, petID in ipairs(neonAged6) do
+        table.insert(allPets, petID)
+    end
+    for _, petID in ipairs(neonUnder6) do
+        table.insert(allPets, petID)
+    end
+    for _, petID in ipairs(others) do
+        table.insert(allPets, petID)
+    end
+
+    return allPets
 end
 
 -- Add all pets to trade
@@ -268,7 +295,7 @@ local function addAllPetsToTrade()
 
     for i = 1, maxPets do
         local petID = petIDs[i]
-        safeRemoteCall({"TradeAPI", "AddItemToOffer"}, "FireServer", petID)
+        safeRemoteCall({"TradeAPI/AddItemToOffer"}, "FireServer", petID)
         task.wait(0.2)
     end
 end
@@ -287,17 +314,17 @@ local function sendTradeRequest(targetPlayerName)
     end
 
     debugPrint("Sending trade request to: " .. targetPlayerName)
-    safeRemoteCall({"TradeAPI", "SendTradeRequest"}, "FireServer", targetPlayer)
+    safeRemoteCall({"TradeAPI/SendTradeRequest"}, "FireServer", targetPlayer)
 end
 
 -- Accept and confirm trade
 local function acceptAndConfirmTrade(targetPlayer)
-    local success1, result1 = safeRemoteCall({"TradeAPI", "AcceptOrDeclineTradeRequest"}, "InvokeServer", targetPlayer, true)
+    local success1, result1 = safeRemoteCall({"TradeAPI/AcceptOrDeclineTradeRequest"}, "InvokeServer", targetPlayer, true)
     if success1 then
         task.wait(5)
-        safeRemoteCall({"TradeAPI", "AcceptNegotiation"}, "FireServer")
+        safeRemoteCall({"TradeAPI/AcceptNegotiation"}, "FireServer")
         task.wait(9)
-        local success3, result3 = safeRemoteCall({"TradeAPI", "ConfirmTrade"}, "FireServer")
+        local success3, result3 = safeRemoteCall({"TradeAPI/ConfirmTrade"}, "FireServer")
         if success3 then
             debugPrint("Trade with " .. targetPlayer.Name .. " completed successfully!")
             return true
@@ -333,9 +360,7 @@ local function toggleAutoAcceptMode()
         autoAcceptCoroutine = coroutine.wrap(startAutoAcceptTrades)()
     else
         debugPrint("Auto Accept: DISABLED")
-        if autoAcceptCoroutine then
-            autoAcceptCoroutine = nil
-        end
+        autoAcceptCoroutine = nil
     end
 end
 
@@ -392,15 +417,10 @@ local function usePetAgePotion()
 
     debugPrint("Using pet_age_potion on selected pet...")
 
-    local args = {
-        potionID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-
-    local equipSuccess, equipResult = safeRemoteCall({"Equip"}, "InvokeServer", unpack(args))
+    local equipSuccess, equipResult = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", potionID, {
+        use_sound_delay = true,
+        equip_as_last = false
+    })
     if not equipSuccess then
         debugPrint("Failed to equip potion: " .. tostring(equipResult))
         return false
@@ -408,7 +428,7 @@ local function usePetAgePotion()
 
     task.wait(1)
 
-    local startSuccess, startResult = safeRemoteCall({"ServerUseTool"}, "FireServer", potionID, "START")
+    local startSuccess, startResult = safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", potionID, "START")
     if not startSuccess then
         debugPrint("Failed to start using potion: " .. tostring(startResult))
         return false
@@ -416,16 +436,11 @@ local function usePetAgePotion()
 
     task.wait(1)
 
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petFarmPetID,
-            unique_id = potionID
-        }
-    }
-
-    local petObjectSuccess, petObjectResult = safeRemoteCall({"PetObjectAPI", "CreatePetObject"}, "InvokeServer", unpack(petObjectArgs))
+    local petObjectSuccess, petObjectResult = safeRemoteCall({"PetObjectAPI/CreatePetObject"}, "InvokeServer", "__Enum_PetObjectCreatorType_2", {
+        additional_consume_uniques = {},
+        pet_unique = petFarmPetID,
+        unique_id = potionID
+    })
     if not petObjectSuccess then
         debugPrint("Failed to create pet object for potion: " .. tostring(petObjectResult))
         return false
@@ -485,9 +500,7 @@ local function toggleAutoPotionMode()
         autoPotionCoroutine = coroutine.wrap(startAutoPotionFeeding)()
     else
         debugPrint("Auto Potion: DISABLED")
-        if autoPotionCoroutine then
-            autoPotionCoroutine = nil
-        end
+        autoPotionCoroutine = nil
     end
 end
 
@@ -521,49 +534,39 @@ local function performThrowToy()
     debugPrint("Using squeaky_bone_default → " .. toyID)
     currentToyID = toyID
 
-    local equipArgs = {
-        toyID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-
-    local success1, err1 = safeRemoteCall({"Equip"}, "InvokeServer", unpack(equipArgs))
-    if not success1 then
-        debugPrint("Failed to equip toy: " .. tostring(err1))
+    local equipSuccess, equipResult = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", toyID, {
+        use_sound_delay = true,
+        equip_as_last = false
+    })
+    if not equipSuccess then
+        debugPrint("Failed to equip toy: " .. tostring(equipResult))
         return false
     end
 
     task.wait(1.2)
 
-    local success2, err2 = safeRemoteCall({"ServerUseTool"}, "FireServer", toyID, "START")
-    if not success2 then
-        debugPrint("Failed to start using toy: " .. tostring(err2))
+    local startSuccess, startResult = safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", toyID, "START")
+    if not startSuccess then
+        debugPrint("Failed to start using toy: " .. tostring(startResult))
         return false
     end
 
     task.wait(1)
 
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_1",
-        {
-            reaction_name = "ThrowToyReaction",
-            unique_id = toyID
-        }
-    }
-
-    local success3, err3 = safeRemoteCall({"PetObjectAPI", "CreatePetObject"}, "InvokeServer", unpack(petObjectArgs))
-    if not success3 then
-        debugPrint("Failed to trigger pet reaction: " .. tostring(err3))
+    local petObjectSuccess, petObjectResult = safeRemoteCall({"PetObjectAPI/CreatePetObject"}, "InvokeServer", "__Enum_PetObjectCreatorType_1", {
+        reaction_name = "ThrowToyReaction",
+        unique_id = toyID
+    })
+    if not petObjectSuccess then
+        debugPrint("Failed to trigger pet reaction: " .. tostring(petObjectResult))
         return false
     end
 
     task.wait(1.1)
 
-    local success4, err4 = safeRemoteCall({"ServerUseTool"}, "FireServer", toyID, "END")
-    if not success4 then
-        debugPrint("Failed to end using toy: " .. tostring(err4))
+    local endSuccess, endResult = safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", toyID, "END")
+    if not endSuccess then
+        debugPrint("Failed to end using toy: " .. tostring(endResult))
         return false
     end
 
@@ -636,7 +639,7 @@ end
 local function handleWalkAilment()
     debugPrint("WALK AILMENT DETECTED! Starting walk sequence...")
 
-    local success, result = safeRemoteCall({"HousingAPI", "UnsubscribeFromHouse"}, "InvokeServer", player, true)
+    local success, result = safeRemoteCall({"HousingAPI/UnsubscribeFromHouse"}, "InvokeServer", player, true)
     if not success then
         debugPrint("Failed to unsubscribe from house: " .. tostring(result))
         return false
@@ -663,7 +666,7 @@ local function handleWalkAilment()
     end
 
     debugPrint("Walk sequence completed, respawning to return home...")
-    local respawnSuccess, respawnResult = safeRemoteCall({"TeamAPI", "Spawn"}, "InvokeServer")
+    local respawnSuccess, respawnResult = safeRemoteCall({"TeamAPI/Spawn"}, "InvokeServer")
     if not respawnSuccess then
         debugPrint("Failed to respawn: " .. tostring(respawnResult))
         return false
@@ -688,7 +691,7 @@ end
 local function handleRideAilment()
     debugPrint("RIDE AILMENT DETECTED! Starting ride sequence with stroller...")
 
-    local success, result = safeRemoteCall({"HousingAPI", "UnsubscribeFromHouse"}, "InvokeServer", player, true)
+    local success, result = safeRemoteCall({"HousingAPI/UnsubscribeFromHouse"}, "InvokeServer", player, true)
     if not success then
         debugPrint("Failed to unsubscribe from house: " .. tostring(result))
         return false
@@ -717,15 +720,10 @@ local function handleRideAilment()
     debugPrint("Equipping stroller: " .. strollerID)
     currentStrollerID = strollerID
 
-    local equipArgs = {
-        strollerID,
-        {
-            use_sound_delay = true,
-            equip_as_last = true
-        }
-    }
-
-    local equipSuccess, equipResult = safeRemoteCall({"Equip"}, "InvokeServer", unpack(equipArgs))
+    local equipSuccess, equipResult = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", strollerID, {
+        use_sound_delay = true,
+        equip_as_last = true
+    })
     if not equipSuccess then
         debugPrint("Failed to equip stroller: " .. tostring(equipResult))
         currentStrollerID = nil
@@ -753,13 +751,13 @@ local function handleRideAilment()
     end
 
     debugPrint("Ride sequence completed, unequipping stroller and respawning to return home...")
-    local unequipSuccess, unequipResult = safeRemoteCall({"Unequip"}, "InvokeServer", strollerID)
+    local unequipSuccess, unequipResult = safeRemoteCall({"ToolAPI/Unequip"}, "InvokeServer", strollerID)
     if not unequipSuccess then
         debugPrint("Failed to unequip stroller: " .. tostring(unequipResult))
     end
     currentStrollerID = nil
 
-    local respawnSuccess, respawnResult = safeRemoteCall({"TeamAPI", "Spawn"}, "InvokeServer")
+    local respawnSuccess, respawnResult = safeRemoteCall({"TeamAPI/Spawn"}, "InvokeServer")
     if not respawnSuccess then
         debugPrint("Failed to respawn: " .. tostring(respawnResult))
         return false
@@ -783,7 +781,7 @@ end
 -- Buy healing apple
 local function buyHealingApple()
     debugPrint("Buying healing apple from shop...")
-    local success, result = safeRemoteCall({"ShopAPI", "BuyItem"}, "InvokeServer", "food", "healing_apple", {buy_count = 1})
+    local success, result = safeRemoteCall({"ShopAPI/BuyItem"}, "InvokeServer", "food", "healing_apple", {buy_count = 1})
     if success then
         debugPrint("Successfully purchased healing apple")
         return true
@@ -821,15 +819,10 @@ local function useHealingApple(foodID, petUniqueID)
 
     debugPrint("Using healing apple " .. foodID .. " on pet " .. petUniqueID)
 
-    local equipArgs = {
-        foodID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-
-    local equipSuccess, equipResult = safeRemoteCall({"Equip"}, "InvokeServer", unpack(equipArgs))
+    local equipSuccess, equipResult = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", foodID, {
+        use_sound_delay = true,
+        equip_as_last = false
+    })
     if not equipSuccess then
         debugPrint("Failed to equip healing apple: " .. tostring(equipResult))
         return false
@@ -838,7 +831,7 @@ local function useHealingApple(foodID, petUniqueID)
     currentFoodID = foodID
     task.wait(2)
 
-    local startSuccess, startResult = safeRemoteCall({"ServerUseTool"}, "FireServer", foodID, "START")
+    local startSuccess, startResult = safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", foodID, "START")
     if not startSuccess then
         debugPrint("Failed to start using healing apple: " .. tostring(startResult))
         return false
@@ -846,16 +839,11 @@ local function useHealingApple(foodID, petUniqueID)
 
     task.wait(1)
 
-    local petObjectArgs = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            additional_consume_uniques = {},
-            pet_unique = petUniqueID,
-            unique_id = foodID
-        }
-    }
-
-    local petObjectSuccess, petObjectResult = safeRemoteCall({"PetObjectAPI", "CreatePetObject"}, "InvokeServer", unpack(petObjectArgs))
+    local petObjectSuccess, petObjectResult = safeRemoteCall({"PetObjectAPI/CreatePetObject"}, "InvokeServer", "__Enum_PetObjectCreatorType_2", {
+        additional_consume_uniques = {},
+        pet_unique = petUniqueID,
+        unique_id = foodID
+    })
     if not petObjectSuccess then
         debugPrint("Failed to create pet object for healing: " .. tostring(petObjectResult))
         return false
@@ -863,7 +851,7 @@ local function useHealingApple(foodID, petUniqueID)
 
     task.wait(9)
 
-    local unequipSuccess, unequipResult = safeRemoteCall({"Unequip"}, "InvokeServer", foodID)
+    local unequipSuccess, unequipResult = safeRemoteCall({"ToolAPI/Unequip"}, "InvokeServer", foodID)
     if not unequipSuccess then
         debugPrint("Failed to unequip healing apple: " .. tostring(unequipResult))
     end
@@ -949,7 +937,7 @@ local function activateFurniture(furnitureName, pet)
     }
 
     debugPrint("Activating " .. furnitureName .. " in " .. furnitureModel.Parent.Name)
-    local success, result = safeRemoteCall({"HousingAPI", "ActivateFurniture"}, "InvokeServer", unpack(args))
+    local success, result = safeRemoteCall({"HousingAPI/ActivateFurniture"}, "InvokeServer", unpack(args))
     if success then
         debugPrint("Successfully activated: " .. furnitureName)
         return true
@@ -1027,14 +1015,7 @@ local function resolveMysteryAilment(ailmentId)
         local allLevelsSuccess = true
 
         for level = 1, 3 do
-            local success, result = safeRemoteCall(
-                {"AilmentsAPI", "ChooseMysteryAilment"},
-                "FireServer",
-                ailmentId,
-                "mystery",
-                level,
-                chosenAilment
-            )
+            local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, chosenAilment)
             if success then
                 debugPrint("Successfully resolved mystery ailment level " .. level .. " as " .. chosenAilment)
             else
@@ -1138,14 +1119,14 @@ local function startPetFarm()
     debugPrint("Starting PetFarm system...")
 
     if not petFarmPetID then
-        debugPrint("No pet selected for PetFarm")
+        debugPrint("No pet selected for PetFarm!")
         PetFarmMode = false
         return
     end
 
     local char = player.Character or player.CharacterAdded:Wait()
     if not char then
-        debugPrint("Cannot start PetFarm: No valid character")
+        debugPrint("Cannot start PetFarm: No valid character!")
         PetFarmMode = false
         return
     end
@@ -1153,7 +1134,7 @@ local function startPetFarm()
     debugPrint("Ensuring pet is equipped and present...")
     local ensured = ensurePetEquipped(petFarmPetID, 18)
     if not ensured then
-        debugPrint("Failed to ensure pet is equipped/present")
+        debugPrint("Failed to ensure pet is equipped/present!")
         PetFarmMode = false
         return
     end
@@ -1161,7 +1142,7 @@ local function startPetFarm()
     debugPrint("Starting ailment monitoring...")
     monitorAndHandleAilments()
 
-    debugPrint("PetFarm stopped")
+    debugPrint("PetFarm stopped.")
 end
 
 -- Toggle PetFarm mode
@@ -1185,15 +1166,11 @@ local function togglePetFarmMode()
 
         debugPrint("PetFarm started successfully!")
         petFarmCoroutine = coroutine.wrap(startPetFarm)()
-        ui.petFarmButton.Text = "🛑 STOP PETFARM"
-        ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
     else
         debugPrint("PetFarm stopped.")
         if petFarmCoroutine then
             petFarmCoroutine = nil
         end
-        ui.petFarmButton.Text = "🚀 START PETFARM"
-        ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     end
 end
 
@@ -1246,7 +1223,7 @@ local function purgeNonPriorityGarbage()
             local age = pet.properties.age or 0
             if not isNeon and not prioritySet[cleanName] then
                 debugPrint("REMOVING TRASH: " .. pet.id .. " (Age: " .. age .. ")")
-                local success, result = safeRemoteCall({"IdleProgressionAPI", "RemovePet"}, "FireServer", uniqueId)
+                local success, result = safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", uniqueId)
                 if success then
                     removed = removed + 1
                     task.wait(0.7)
@@ -1282,7 +1259,7 @@ local function addPriorityPets(snapshot)
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData.properties.neon and added < slotsOpen then
             if not addedSet[uniqueId] then
-                safeRemoteCall({"IdleProgressionAPI", "AddPet"}, "FireServer", uniqueId)
+                safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
                 debugPrint("Added NEON: " .. petData.id)
                 added = added + 1
                 addedSet[uniqueId] = true
@@ -1295,7 +1272,7 @@ local function addPriorityPets(snapshot)
     for _, eggName in ipairs(priorityEggs) do
         for uniqueId, petData in pairs(playerData.inventory.pets) do
             if petData.id == eggName and added < slotsOpen and not addedSet[uniqueId] then
-                safeRemoteCall({"IdleProgressionAPI", "AddPet"}, "FireServer", uniqueId)
+                safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
                 debugPrint("Added PRIORITY: " .. petData.id)
                 added = added + 1
                 addedSet[uniqueId] = true
@@ -1307,13 +1284,13 @@ local function addPriorityPets(snapshot)
     -- Auto-buy cracked eggs if still room
     while added < slotsOpen and AutoPetPenMode do
         debugPrint("Buying cracked_egg to fill slot...")
-        local bought = safeRemoteCall({"ShopAPI", "BuyItem"}, "InvokeServer", "pets", "cracked_egg", {buy_count = 1})
+        local bought = safeRemoteCall({"ShopAPI/BuyItem"}, "InvokeServer", "pets", "cracked_egg", {buy_count = 1})
         if bought then
             task.wait(3)
             local newSnapshot = getPetPenSnapshot()
             for uniqueId, petData in pairs(playerData.inventory.pets) do
                 if petData.id == "cracked_egg" and not addedSet[uniqueId] then
-                    safeRemoteCall({"IdleProgressionAPI", "AddPet"}, "FireServer", uniqueId)
+                    safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
                     debugPrint("Added PURCHASED cracked_egg")
                     added = added + 1
                     addedSet[uniqueId] = true
@@ -1345,7 +1322,7 @@ local function startAutoPetPen()
         for _, pet in ipairs(snapshot) do
             if pet.age >= 6 then
                 debugPrint("Removing aged pet: " .. pet.name .. " (Age: " .. pet.age .. ")")
-                safeRemoteCall({"IdleProgressionAPI", "RemovePet"}, "FireServer", pet.unique_id)
+                safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", pet.unique_id)
                 task.wait(0.7)
             end
         end
@@ -1359,7 +1336,7 @@ local function startAutoPetPen()
 
         -- Commit rewards
         if os.time() - lastPetPenCommitTime >= 300 then
-            safeRemoteCall({"IdleProgressionAPI", "CommitAllProgression"}, "FireServer")
+            safeRemoteCall({"IdleProgressionAPI/CommitAllProgression"}, "FireServer")
             debugPrint("Committed PetPen rewards")
             lastPetPenCommitTime = os.time()
         end
@@ -1377,15 +1354,9 @@ local function toggleAutoPetPenMode()
         lastPetPenCommitTime = os.time()
         autoPetPenCoroutine = coroutine.wrap(startAutoPetPen)()
         task.spawn(purgeNonPriorityGarbage)
-        ui.autoPetPenButton.Text = "Auto PetPen [ON]"
-        ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     else
         debugPrint("Auto PetPen: DISABLED")
-        if autoPetPenCoroutine then
-            autoPetPenCoroutine = nil
-        end
-        ui.autoPetPenButton.Text = "Auto PetPen [OFF]"
-        ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0)
+        autoPetPenCoroutine = nil
     end
 end
 
