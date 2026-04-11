@@ -1,3 +1,31 @@
+local function safeFireRemote(remotePath, ...)
+    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("API")
+    if not remote then
+        warn("API not found in ReplicatedStorage!")
+        return false
+    end
+
+    for _, path in ipairs(remotePath) do
+        remote = remote:FindFirstChild(path)
+        if not remote then
+            warn("Remote not found:", path)
+            return false
+        end
+    end
+
+    local args = {...}
+    local success, err = pcall(function()
+        remote:FireServer(unpack(args))
+    end)
+
+    if not success then
+        warn("Error firing remote:", err)
+        return false
+    end
+
+    return true
+end
+
 local tasks = {"bored", "sick", "hungry", "thirsty", "dirty", "toilet", "play", "walk", "ride", "pet_me"}
 
 -- Получаем модель питомца
@@ -17,8 +45,13 @@ local animName = petModel.Name == "Cat" and "CatIdle" or "DogIdle"
 -- Обрабатываем все слоты (1, 2, 3)
 for slot = 1, 3 do
     for _, task in ipairs(tasks) do
-        -- Фокусировка и анимация питомца
+        -- 1. Фокусировка на питомце
+        safeFireRemote({"AdoptAPI", "FocusPet"}, petModel)
+
+        -- 2. Активация состояния FocusPet
         safeFireRemote({"PetAPI", "ReplicateActivePerformances"}, petModel, { FocusPet = true })
+
+        -- 3. Установка анимации
         safeFireRemote({"PetAPI", "ReplicatePerformanceModifiers"}, petModel, {
             local_anim_name = animName,
             local_anim_speed = 1,
@@ -27,10 +60,10 @@ for slot = 1, 3 do
             anim_fade_time = 0.2
         })
 
-        -- Разгадка mystery ailment
+        -- 4. Разгадка mystery ailment
         safeFireRemote({"AilmentsAPI", "ChooseMysteryAilment"}, "2_865e4c0726244ceb899048213fd44f3a", "mystery", slot, task)
 
-        -- Дополнительный вызов ReplicateActivePerformances
+        -- 5. Дополнительный вызов ReplicateActivePerformances
         safeFireRemote({"PetAPI", "ReplicateActivePerformances"}, Instance.new("Model"), {})
 
         -- Задержка между задачами
