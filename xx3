@@ -1,70 +1,45 @@
-local function safeFireRemote(remotePath, ...)
-    local remote = game:GetService("ReplicatedStorage"):FindFirstChild("API")
-    if not remote then
-        warn("API not found in ReplicatedStorage!")
-        return false
-    end
-
-    for _, path in ipairs(remotePath) do
-        remote = remote:FindFirstChild(path)
-        if not remote then
-            warn("Remote not found:", path)
-            return false
-        end
-    end
-
-    local args = {...}
-    local success, err = pcall(function()
-        remote:FireServer(unpack(args))
-    end)
-
-    if not success then
-        warn("Error firing remote:", err)
-        return false
-    end
-
-    return true
-end
-
+-- Список всех задач
 local tasks = {"bored", "sick", "hungry", "thirsty", "dirty", "toilet", "play", "walk", "ride", "pet_me"}
 
 -- Получаем модель питомца
-local petModel = workspace:FindFirstChild("Pets") and workspace.Pets:FindFirstChild("Cat")
-if not petModel then
-    petModel = workspace:FindFirstChild("Pets") and workspace.Pets:FindFirstChild("Dog")
-end
-
-if not petModel then
-    warn("No pet found!")
-    return
-end
+local petModel = workspace:WaitForChild("Pets"):WaitForChild("Cat")
 
 -- Определяем анимацию в зависимости от типа питомца
-local animName = petModel.Name == "Cat" and "CatIdle" or "DogIdle"
+local animName = "CatIdle"  -- или "DogIdle", если используется собака
 
 -- Обрабатываем все слоты (1, 2, 3)
 for slot = 1, 3 do
     for _, task in ipairs(tasks) do
-        -- 1. Фокусировка на питомце
-        safeFireRemote({"AdoptAPI", "FocusPet"}, petModel)
+        -- 1. Активация состояния FocusPet
+        local args = {
+            petModel,
+            {
+                FocusPet = true
+            }
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
 
-        -- 2. Активация состояния FocusPet
-        safeFireRemote({"PetAPI", "ReplicateActivePerformances"}, petModel, { FocusPet = true })
+        -- 2. Установка анимации
+        local args = {
+            petModel,
+            {
+                local_anim_name = animName,
+                local_anim_speed = 1,
+                dont_allow_sit_states = true,
+                dont_allow_remote_interaction = true,
+                anim_fade_time = 0.2
+            }
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
 
-        -- 3. Установка анимации
-        safeFireRemote({"PetAPI", "ReplicatePerformanceModifiers"}, petModel, {
-            local_anim_name = animName,
-            local_anim_speed = 1,
-            dont_allow_sit_states = true,
-            dont_allow_remote_interaction = true,
-            anim_fade_time = 0.2
-        })
-
-        -- 4. Разгадка mystery ailment
-        safeFireRemote({"AilmentsAPI", "ChooseMysteryAilment"}, "2_865e4c0726244ceb899048213fd44f3a", "mystery", slot, task)
-
-        -- 5. Дополнительный вызов ReplicateActivePerformances
-        safeFireRemote({"PetAPI", "ReplicateActivePerformances"}, Instance.new("Model"), {})
+        -- 3. Разгадка mystery ailment
+        local args = {
+            "2_865e4c0726244ceb899048213fd44f3a",  -- Уникальный ID питомца
+            "mystery",
+            slot,  -- Текущий слот (1, 2 или 3)
+            task   -- Текущая задача
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AilmentsAPI/ChooseMysteryAilment"):FireServer(unpack(args))
 
         -- Задержка между задачами
         task.wait(1)
