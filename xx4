@@ -1,0 +1,110 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- LocalPlayer
+local player = Players.LocalPlayer
+
+-- Function to get player data
+local function getPlayerData()
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success or not clientData then return nil end
+    local success2, allData = pcall(clientData.get_data, clientData)
+    return success2 and allData and allData[player.Name] or nil
+end
+
+-- Function to get equipped pet ID
+local function getEquippedPetID()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.equip_manager or not playerData.equip_manager.pets then
+        return nil
+    end
+    -- Return the first equipped pet's unique ID
+    for _, equippedPet in pairs(playerData.equip_manager.pets) do
+        if equippedPet and equippedPet.unique then
+            return equippedPet.unique
+        end
+    end
+    return nil
+end
+
+-- Get the equipped pet ID
+local equippedPetID = getEquippedPetID()
+if not equippedPetID then
+    warn("No pet equipped! Cannot execute pet actions.")
+    return
+end
+
+print("Equipped Pet ID:", equippedPetID)
+
+-- Get the pet object from workspace (works for any pet type)
+local petObject = workspace:WaitForChild("Pets"):WaitForChild(equippedPetID)
+
+-- Get the pet's name/type for animation names (optional, for dynamic animations)
+local petName = petObject.Name
+-- You could map pet names to their animation names if needed
+-- Example: petName = "Cat" -> "CatIdle", "Dog" -> "DogIdle", etc.
+
+-- Execute all pet actions with the dynamic pet ID
+local args = {
+    petObject
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args))
+
+local args = {
+    petObject,
+    {
+        FocusPet = true,
+        LookAtObject = true,
+        Petting = true
+    }
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
+
+-- Use dynamic animation name based on pet type (optional)
+local animName = petName .. "Idle"  -- e.g., "CatIdle", "DogIdle", etc.
+
+local args = {
+    petObject,
+    {
+        anim_fade_time = 0.2,
+        local_anim_speed = 1,
+        dont_allow_sit_states = true,
+        pause_ailment_chat_bubbles = true,
+        local_anim_name = animName,  -- Now dynamic based on pet type
+        dont_allow_remote_interaction = true
+    }
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
+
+local args = {
+    petObject,
+    {}
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActiveReactions"):FireServer(unpack(args))
+
+local args = {
+    petObject,
+    {
+        FocusPet = true,
+        Petting = true
+    }
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
+
+local args = {
+    petObject,
+    {
+        local_anim_name = animName,  -- Dynamic animation name
+        local_anim_speed = 0.25,
+        dont_allow_sit_states = true,
+        pause_ailment_chat_bubbles = true,
+        eyes_id = "squinting_eyes",
+        anim_fade_time = 0.2,
+        dont_allow_remote_interaction = true,
+        effects = {
+            "love"
+        }
+    }
+}
+game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
