@@ -52,7 +52,7 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
--- Ailment to Furniture Mapping (pet_me is handled specially)
+-- Ailment to Furniture Mapping (pet_me is included but handled separately)
 local AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "PetFoodBowl",
@@ -65,7 +65,7 @@ local AILMENT_TASKS = {
     ride = "STROLLER_HANDLER",
     sick = "HEALING_APPLE",
     mystery = "MYSTERY_HANDLER",
-    pet_me = "PET_ME_HANDLER" -- Special handler
+    pet_me = "PET_ME_HANDLER"
 }
 
 -- Task cooldowns
@@ -77,7 +77,8 @@ local priorityEggs = {
     "sugarfest_2026_jiggly_jerboa",
     "sugarfest_2026_cocoadile",
     "egg_teaser_2026_dire_wolf",
-    "cracked_egg"
+    "cracked_egg",
+    "starter_egg"
 }
 local prioritySet = {}
 for _, v in ipairs(priorityEggs) do prioritySet[v] = true end
@@ -363,171 +364,199 @@ local function useFurnitureWithPet(furnitureName)
 end
 
 -- ==================================================================
--- PET ME AILMENT HANDLER (EXACT SEQUENCE)
+-- PET ME AILMENT HANDLER (SPECIAL - NOT FURNITURE)
 -- ==================================================================
 
--- Progress the "Pet Me" ailment using the exact sequence
+-- Find the pet model in workspace
+local function findPetModel(petUniqueID)
+    debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
+    local data = getPlayerData()
+    if not data or not data.inventory or not data.inventory.pets then
+        debugPrint("Failed to get player data or pet inventory")
+        return nil
+    end
+
+    for petID, petData in pairs(data.inventory.pets) do
+        if petData.unique == petUniqueID then
+            debugPrint("Found matching pet in inventory: " .. tostring(petData.id))
+            local petsFolder = workspace:FindFirstChild("Pets")
+            if not petsFolder then
+                debugPrint("Pets folder not found")
+                return nil
+            end
+            -- Try exact match first
+            local petModel = petsFolder:FindFirstChild(petData.id)
+            if petModel then
+                debugPrint("Found pet model: " .. petModel.Name)
+                return petModel
+            end
+            -- Try case-insensitive search
+            for _, child in pairs(petsFolder:GetChildren()) do
+                if string.lower(child.Name) == string.lower(petData.id) then
+                    debugPrint("Found pet model (case-insensitive): " .. child.Name)
+                    return child
+                end
+            end
+            debugPrint("Pet model not found.")
+            return nil
+        end
+    end
+    debugPrint("No pet found with unique ID: " .. tostring(petUniqueID))
+    return nil
+end
+
+-- Focus on the pet
+local function focusPet(petModel)
+    if not petModel then
+        debugPrint("No pet model provided")
+        return false
+    end
+    debugPrint("Focusing pet: " .. petModel.Name)
+    local args = { petModel }
+    local success, err = safeRemoteCall({"AdoptAPI/FocusPet"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully focused pet")
+        task.wait(0.5)
+        return true
+    else
+        debugPrint("Failed to focus pet: " .. tostring(err))
+        return false
+    end
+end
+
+-- Unfocus the pet
+local function unfocusPet(petModel)
+    if not petModel then
+        debugPrint("No pet model provided for unfocus")
+        return false
+    end
+    debugPrint("Unfocusing pet: " .. petModel.Name)
+    local args = { petModel }
+    local success, err = safeRemoteCall({"AdoptAPI/UnfocusPet"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully unfocused pet")
+        return true
+    else
+        debugPrint("Failed to unfocus pet: " .. tostring(err))
+        return false
+    end
+end
+
+-- Set pet in sitting state
+local function setPetSitting(petModel)
+    if not petModel then
+        debugPrint("No pet model provided")
+        return false
+    end
+    debugPrint("Setting pet to sit state: " .. petModel.Name)
+    local sitAnimation = "DogSit"
+    if string.find(petModel.Name:lower(), "cat") then
+        sitAnimation = "CatSit"
+    end
+    local args = {
+        petModel,
+        {
+            local_anim_name = sitAnimation,
+            local_anim_speed = 1,
+            dont_allow_sit_states = true,
+            dont_allow_remote_interaction = true,
+            anim_fade_time = 0.2
+        }
+    }
+    local success, err = safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully set pet to sit state")
+        return true
+    else
+        debugPrint("Failed to set sit state: " .. tostring(err))
+        return false
+    end
+end
+
+-- Progress the "Pet Me" ailment
 local function progressPetMeAilment(petUniqueID, petModel)
     if not petUniqueID or not petModel then
         debugPrint("Missing pet ID or model")
         return false
     end
-    
-    debugPrint("========================================")
-    debugPrint("✋ EXACT PET ME SEQUENCE STARTING")
-    debugPrint("Pet: " .. petModel.Name)
-    debugPrint("========================================")
-    
-    -- Get the pet's actual name (Cat or Dog)
-    local petName = petModel.Name
-    
-    -- 1. Focus Pet
-    debugPrint("Step 1: Focusing pet...")
-    local args1 = { workspace:WaitForChild("Pets"):WaitForChild(petName) }
-    local success, err = safeRemoteCall({"AdoptAPI/FocusPet"}, "FireServer", unpack(args1))
-    if not success then
-        debugPrint("Failed to focus pet: " .. tostring(err))
+    debugPrint("Attempting to progress 'Pet Me' ailment...")
+
+    if not focusPet(petModel) then
+        debugPrint("Failed to focus pet for ailment progression")
+        return false
     end
     task.wait(0.5)
-    
-    -- 2. FocusPet with LookAtObject and Petting
-    debugPrint("Step 2: Focusing with look and petting...")
-    local args2 = {
-        workspace:WaitForChild("Pets"):WaitForChild(petName),
-        {
-            FocusPet = true,
-            LookAtObject = true,
-            Petting = true
-        }
-    }
-    success, err = safeRemoteCall({"PetAPI/ReplicateActivePerformances"}, "FireServer", unpack(args2))
-    if not success then
-        debugPrint("Failed: " .. tostring(err))
+
+    if not setPetSitting(petModel) then
+        debugPrint("Failed to set pet to sitting state")
+        return false
     end
-    task.wait(0.3)
-    
-    -- 3. Set idle animation with specific modifiers
-    debugPrint("Step 3: Setting idle animation...")
-    local animName = (string.find(petName:lower(), "cat") and "CatIdle") or "DogIdle"
-    local args3 = {
-        workspace:WaitForChild("Pets"):WaitForChild(petName),
-        {
-            anim_fade_time = 0.2,
-            local_anim_speed = 1,
-            dont_allow_sit_states = true,
-            pause_ailment_chat_bubbles = true,
-            local_anim_name = animName,
-            dont_allow_remote_interaction = true
-        }
-    }
-    success, err = safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", unpack(args3))
-    if not success then
-        debugPrint("Failed: " .. tostring(err))
-    end
-    task.wait(0.3)
-    
-    -- 4. Replicate active reactions (empty)
-    debugPrint("Step 4: Replicating active reactions...")
-    local args4 = {
-        workspace:WaitForChild("Pets"):WaitForChild(petName),
-        {}
-    }
-    success, err = safeRemoteCall({"PetAPI/ReplicateActiveReactions"}, "FireServer", unpack(args4))
-    if not success then
-        debugPrint("Failed: " .. tostring(err))
-    end
-    task.wait(0.3)
-    
-    -- 5. FocusPet with Petting only
-    debugPrint("Step 5: Focusing with petting...")
-    local args5 = {
-        workspace:WaitForChild("Pets"):WaitForChild(petName),
-        {
-            FocusPet = true,
-            Petting = true
-        }
-    }
-    success, err = safeRemoteCall({"PetAPI/ReplicateActivePerformances"}, "FireServer", unpack(args5))
-    if not success then
-        debugPrint("Failed: " .. tostring(err))
-    end
-    task.wait(0.3)
-    
-    -- 6. Final animation with love effects
-    debugPrint("Step 6: Applying love effects and squinting eyes...")
-    local args6 = {
-        workspace:WaitForChild("Pets"):WaitForChild(petName),
-        {
-            local_anim_name = animName,
-            local_anim_speed = 0.25,
-            dont_allow_sit_states = true,
-            pause_ailment_chat_bubbles = true,
-            eyes_id = "squinting_eyes",
-            anim_fade_time = 0.2,
-            dont_allow_remote_interaction = true,
-            effects = {
-                "love"
-            }
-        }
-    }
-    success, err = safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", unpack(args6))
-    if not success then
-        debugPrint("Failed: " .. tostring(err))
-    end
-    
-    debugPrint("Waiting 1 second for animation...")
     task.wait(1)
-    
-    debugPrint("========================================")
-    debugPrint("✅ PET ME SEQUENCE COMPLETED!")
-    debugPrint("========================================")
-    
-    return true
+
+    -- Try different endpoints to progress the ailment
+    local possibleEndpoints = {
+        "AilmentsAPI/ProgressPetMeAilment",
+        "PetAPI/ProgressPetMeAilment",
+        "AdoptAPI/ProgressPetMeAilment",
+        "PetAPI/ReplicateActivePerformances",
+        "PetAPI/ReplicatePerformanceModifiers"
+    }
+
+    for _, endpoint in pairs(possibleEndpoints) do
+        debugPrint("Trying endpoint: " .. endpoint)
+        local args = { petUniqueID }
+        local success, err = safeRemoteCall({endpoint}, "FireServer", unpack(args))
+        if success then
+            debugPrint("Successfully called: " .. endpoint)
+            return true
+        else
+            debugPrint("Failed to call " .. endpoint .. ": " .. tostring(err))
+        end
+    end
+
+    -- Try with pet model instead of ID
+    for _, endpoint in pairs(possibleEndpoints) do
+        debugPrint("Trying endpoint with model: " .. endpoint)
+        local args = { petModel }
+        local success, err = safeRemoteCall({endpoint}, "FireServer", unpack(args))
+        if success then
+            debugPrint("Successfully called: " .. endpoint)
+            return true
+        else
+            debugPrint("Failed to call " .. endpoint .. ": " .. tostring(err))
+        end
+    end
+
+    debugPrint("Could not find working endpoint for ailment progression")
+    return false
 end
 
 -- Main function to handle 'Pet Me' ailment
 local function handlePetMeAilment(petUniqueID)
     debugPrint("========================================")
-    debugPrint("✋ PET ME AILMENT DETECTED!")
+    debugPrint("✋ PET ME AILMENT HANDLING")
     debugPrint("========================================")
-    
-    -- Find the pet model in workspace
-    local petModel = nil
-    local petsFolder = workspace:FindFirstChild("Pets")
-    if petsFolder then
-        -- Search for the pet by checking if it's equipped
-        for _, model in ipairs(petsFolder:GetChildren()) do
-            if model:IsA("Model") then
-                -- Check if this pet is the one we have equipped
-                local owner = model:FindFirstChild("Owner")
-                if owner and owner.Value == player then
-                    petModel = model
-                    break
-                end
-            end
-        end
-    end
-    
+
+    local petModel = findPetModel(petUniqueID)
     if not petModel then
-        debugPrint("Could not find pet model in workspace")
+        debugPrint("FAILED: Could not find pet model in workspace")
         return false
     end
-    
-    debugPrint("Found pet: " .. petModel.Name)
-    
-    -- Execute the exact pet me sequence
+
+    debugPrint("Using pet: " .. petModel.Name)
+
     local success = progressPetMeAilment(petUniqueID, petModel)
-    
+
     if success then
-        debugPrint("✅ Pet Me ailment handled successfully!")
+        debugPrint("✅ SUCCESS: Pet Me ailment progression attempted")
+        task.wait(2)
     else
-        debugPrint("❌ Failed to handle Pet Me ailment")
+        debugPrint("❌ FAILED: Could not progress Pet Me ailment")
     end
-    
-    -- Unfocus the pet
-    local args = { workspace:WaitForChild("Pets"):WaitForChild(petModel.Name) }
-    safeRemoteCall({"AdoptAPI/UnfocusPet"}, "FireServer", unpack(args))
-    
+
+    debugPrint("Unfocusing pet...")
+    unfocusPet(petModel)
+
     debugPrint("=== PET ME AILMENT HANDLING COMPLETED ===")
     return success
 end
@@ -907,7 +936,7 @@ local function toggleAutoPotionMode()
 end
 
 -- ==================================================================
--- AILMENT MONITORING (pet_me uses special handler)
+-- AILMENT MONITORING (pet_me is now handled inside the loop)
 -- ==================================================================
 
 local function ensurePetEquipped(petUniqueID, timeout)
@@ -1172,7 +1201,7 @@ local function toggleAutoPetPenMode()
 end
 
 -- ==================================================================
--- PET SELECTION (Excludes practice_dog)
+-- PET SELECTION (Excludes practice_dog, includes starter_egg)
 -- ==================================================================
 
 local function getAllValidPets()
@@ -1198,17 +1227,21 @@ local function getAllValidPets()
         end
     end
 
-    -- Sort by priority: Dog > Cat > Others, then by age
+    -- Sort by priority: Dog > Cat > Starter_Egg > Others, then by age
     table.sort(validPets, function(a, b)
         local aIsDog = string.find(string.lower(a.id), "dog") and true or false
         local bIsDog = string.find(string.lower(b.id), "dog") and true or false
         local aIsCat = string.find(string.lower(a.id), "cat") and true or false
         local bIsCat = string.find(string.lower(b.id), "cat") and true or false
+        local aIsStarterEgg = string.find(string.lower(a.id), "starter_egg") and true or false
+        local bIsStarterEgg = string.find(string.lower(b.id), "starter_egg") and true or false
 
         if aIsDog and not bIsDog then return true end
         if not aIsDog and bIsDog then return false end
         if aIsCat and not bIsCat and not bIsDog then return true end
         if not aIsCat and bIsCat and not aIsDog then return false end
+        if aIsStarterEgg and not bIsStarterEgg and not bIsDog and not bIsCat then return true end
+        if not aIsStarterEgg and bIsStarterEgg and not bIsDog and not bIsCat then return false end
 
         return a.age > b.age
     end)
@@ -1218,17 +1251,17 @@ end
 
 local function findBestDogOrCat()
     debugPrint("========================================")
-    debugPrint("SEARCHING FOR DOG OR CAT (EXCLUDING practice_dog)")
+    debugPrint("SEARCHING FOR DOG, CAT, OR STARTER_EGG (EXCLUDING practice_dog)")
     debugPrint("========================================")
 
     local validPets = getAllValidPets()
 
     local dogPet = nil
     local catPet = nil
+    local starterEggPet = nil
 
     for _, pet in ipairs(validPets) do
         local petName = string.lower(pet.id)
-
         if string.find(petName, "dog") and not string.find(petName, "practice") then
             if not dogPet or pet.age > dogPet.age then
                 dogPet = pet
@@ -1239,10 +1272,15 @@ local function findBestDogOrCat()
                 catPet = pet
             end
             debugPrint("🐈 Found CAT: " .. pet.id .. " (Age: " .. pet.age .. ")")
+        elseif string.find(petName, "starter_egg") then
+            if not starterEggPet or pet.age > starterEggPet.age then
+                starterEggPet = pet
+            end
+            debugPrint("🥚 Found STARTER_EGG: " .. pet.id .. " (Age: " .. pet.age .. ")")
         end
     end
 
-    local selectedPet = dogPet or catPet or validPets[1]
+    local selectedPet = dogPet or catPet or starterEggPet or validPets[1]
 
     if selectedPet then
         debugPrint("========================================")
@@ -1551,7 +1589,7 @@ local function createMainUI()
     title.Position = UDim2.new(0, 0, 0, 20)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "🐾 PetFarm - Auto Dog/Cat"
+    title.Text = "🐾 PetFarm - Auto Dog/Cat/Starter_Egg"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = frame
@@ -1659,13 +1697,10 @@ local function createMainUI()
     autoPetPenCorner.CornerRadius = UDim.new(0, 4)
     autoPetPenCorner.Parent = autoPetPenButton
 
-    -- Pet dropdown
-    local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsDropdown(frame, UDim2.new(0, 10, 0, 148))
-
     -- PetFarm button
     local petFarmButton = Instance.new("TextButton")
     petFarmButton.Size = UDim2.new(0, 200, 0, 25)
-    petFarmButton.Position = UDim2.new(0, 10, 0, 190)
+    petFarmButton.Position = UDim2.new(0, 10, 0, 145)
     petFarmButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
     petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     petFarmButton.Text = "🚀 START PETFARM"
@@ -1680,7 +1715,7 @@ local function createMainUI()
     -- Status label
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 0, 0, 220)
+    statusLabel.Position = UDim2.new(0, 0, 0, 175)
     statusLabel.BackgroundTransparency = 1
     statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
     statusLabel.Text = "Status: Initializing..."
@@ -1689,15 +1724,8 @@ local function createMainUI()
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = frame
 
-    -- Auto-update dropdown
-    coroutine.wrap(function()
-        while true do
-            if petsDropdownListFrame and not petsDropdownListFrame.Visible then
-                updatePetsDropdown(petsDropdownButton, petsDropdownListFrame)
-            end
-            task.wait(10)
-        end
-    end)()
+    -- Pet dropdown (moved to bottom)
+    local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsDropdown(frame, UDim2.new(0, 10, 0, 200))
 
     return {
         frame = frame,
@@ -1722,12 +1750,12 @@ end
 
 local function autoStart()
     debugPrint("========================================")
-    debugPrint("🐕 AUTO-START: LOOKING FOR DOG OR CAT")
+    debugPrint("🐕 AUTO-START: LOOKING FOR DOG, CAT, OR STARTER_EGG")
     debugPrint("(Excluding practice_dog)")
     debugPrint("========================================")
 
     if ui then
-        ui.statusLabel.Text = "Status: Searching for Dog/Cat..."
+        ui.statusLabel.Text = "Status: Searching for Dog/Cat/Starter_Egg..."
         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
     end
 
@@ -1784,10 +1812,10 @@ local function autoStart()
         end
     else
         if ui then
-            ui.statusLabel.Text = "Status: ❌ No Dog or Cat found (practice_dog excluded)"
+            ui.statusLabel.Text = "Status: ❌ No Dog, Cat, or Starter_Egg found (practice_dog excluded)"
             ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
         end
-        debugPrint("❌ No valid Dog or Cat found!")
+        debugPrint("❌ No valid Dog, Cat, or Starter_Egg found!")
     end
 end
 
@@ -1861,19 +1889,16 @@ end
 -- Auto-start
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
-debugPrint("Pet Me ailment uses EXACT SEQUENCE with love effects and squinting eyes")
+debugPrint("Pet Me ailment uses SPECIAL HANDLER (not furniture)")
 task.wait(3)
 autoStart()
 
 debugPrint("========================================")
 debugPrint("🐾 PetFarm Script Fully Loaded!")
 debugPrint("   - practice_dog is EXCLUDED")
-debugPrint("   - Auto-selects Dog or Cat")
+debugPrint("   - Auto-selects Dog, Cat, or Starter_Egg")
 debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
-debugPrint("   - Pet Me uses EXACT SEQUENCE:")
-debugPrint("     • FocusPet + LookAtObject + Petting")
-debugPrint("     • Idle animations with squinting_eyes")
-debugPrint("     • Love effects")
+debugPrint("   - Pet Me uses SPECIAL HANDLER (not furniture)")
 debugPrint("========================================")
