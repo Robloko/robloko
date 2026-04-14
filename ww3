@@ -796,33 +796,77 @@ local function handleSickAilment()
 end
 
 -- ==================================================================
--- MYSTERY AILMENT
+-- MYSTERY AILMENT (FIXED - TRIES ALL AILMENTS AND HANDLES THEM)
 -- ==================================================================
 
 local function resolveMysteryAilment(ailmentId)
     debugPrint("❓ MYSTERY AILMENT DETECTED! Resolving...")
-    local tasks = {"bored", "sick", "pet me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
+    
+    -- List of all possible ailments to try, in order of preference
+    local possibleAilments = {"bored", "sick", "pet me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
 
-    for _, chosenAilment in ipairs(tasks) do
-        debugPrint("Attempting to resolve as: " .. chosenAilment)
-        local allLevelsSuccess = true
-
+    for _, chosenAilment in ipairs(possibleAilments) do
+        debugPrint("========================================")
+        debugPrint("Attempting to identify mystery as: " .. chosenAilment)
+        debugPrint("========================================")
+        
+        local identified = true
+        
+        -- Try to identify all 3 levels as this ailment
         for level = 1, 3 do
             local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, chosenAilment)
             if success then
-                debugPrint("Resolved level " .. level .. " as " .. chosenAilment)
+                debugPrint("✅ Level " .. level .. " identified as: " .. chosenAilment)
             else
-                debugPrint("Failed level " .. level .. ": " .. tostring(result))
-                allLevelsSuccess = false
+                debugPrint("❌ Level " .. level .. " failed: " .. tostring(result))
+                identified = false
+                break
             end
             task.wait(1)
         end
-
-        if allLevelsSuccess then
-            debugPrint("✅ Successfully resolved mystery as " .. chosenAilment)
-            return true
+        
+        if identified then
+            debugPrint("🎉 SUCCESS! Mystery identified as: " .. chosenAilment)
+            debugPrint("Now handling the identified ailment...")
+            
+            -- Handle the identified ailment properly
+            local handled = false
+            
+            if chosenAilment == "bored" then
+                handled = useFurnitureWithPet("Piano")
+            elseif chosenAilment == "sick" then
+                handled = handleSickAilment()
+            elseif chosenAilment == "pet me" then
+                handled = handlePetMeAilment(PetID)
+            elseif chosenAilment == "sleepy" then
+                handled = useFurnitureWithPet("BasicBed")
+            elseif chosenAilment == "dirty" then
+                handled = useFurnitureWithPet("CheapPetBathtub")
+            elseif chosenAilment == "toilet" then
+                handled = useFurnitureWithPet("AilmentsRefresh2024LitterBox")
+            elseif chosenAilment == "hungry" then
+                handled = useFurnitureWithPet("PetFoodBowl")
+            elseif chosenAilment == "thirsty" then
+                handled = useFurnitureWithPet("PetWaterBowl")
+            elseif chosenAilment == "walk" then
+                handled = handleWalkAilment()
+            elseif chosenAilment == "ride" then
+                handled = handleRideAilment()
+            end
+            
+            if handled then
+                debugPrint("✅ SUCCESSFULLY COMPLETED mystery ailment as: " .. chosenAilment)
+                return true
+            else
+                debugPrint("⚠️ Identified as " .. chosenAilment .. " but failed to handle it, trying next ailment...")
+                -- Continue to try next ailment type
+            end
+        else
+            debugPrint("❌ Could not identify as: " .. chosenAilment .. ", trying next...")
         end
     end
+    
+    debugPrint("❌ FAILED: Could not resolve mystery ailment after trying all possibilities")
     return false
 end
 
@@ -939,7 +983,7 @@ local function toggleAutoPotionMode()
 end
 
 -- ==================================================================
--- AILMENT MONITORING (pet_me is now handled inside the loop)
+-- AILMENT MONITORING
 -- ==================================================================
 
 local function ensurePetEquipped(petUniqueID, timeout)
@@ -1000,6 +1044,13 @@ local function monitorAndHandleAilments()
                                     if success then
                                         lastTaskTime[ailmentType] = currentTime
                                     end
+                                -- Special handling for "mystery" (UPDATED)
+                                elseif ailmentType == "mystery" then
+                                    debugPrint("❓ MYSTERY AILMENT DETECTED! Using full resolver...")
+                                    local success = resolveMysteryAilment(ailmentId)
+                                    if success then
+                                        lastTaskTime[ailmentType] = currentTime
+                                    end
                                 -- Other ailments
                                 elseif ailmentType == "play" then
                                     local success = handlePlayAilment()
@@ -1012,9 +1063,6 @@ local function monitorAndHandleAilments()
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 elseif ailmentType == "sick" then
                                     local success = handleSickAilment()
-                                    if success then lastTaskTime[ailmentType] = currentTime end
-                                elseif ailmentType == "mystery" then
-                                    local success = resolveMysteryAilment(ailmentId)
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 else
                                     -- Regular furniture ailments
@@ -1750,7 +1798,7 @@ local function createMainUI()
 end
 
 -- ==================================================================
--- AUTO START (UPDATED)
+-- AUTO START
 -- ==================================================================
 
 local function autoStart()
@@ -1901,6 +1949,7 @@ end
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
 debugPrint("Pet Me ailment uses SPECIAL HANDLER (not furniture)")
+debugPrint("Mystery ailment now tries ALL ailments and handles them properly!")
 task.wait(3)
 autoStart()
 
@@ -1912,4 +1961,5 @@ debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
 debugPrint("   - Pet Me uses SPECIAL HANDLER (not furniture)")
+debugPrint("   - MYSTERY now tries ALL 10 ailments!")
 debugPrint("========================================")
