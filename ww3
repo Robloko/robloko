@@ -94,7 +94,7 @@ end
 -- CORE FUNCTIONS
 -- ==================================================================
 
--- Safe Remote Call
+-- Safe Remote Call (for non-pet-me remotes)
 local function safeRemoteCall(remotePath, method, ...)
     local args = {...}
     local remote = ReplicatedStorage:FindFirstChild("API")
@@ -364,104 +364,139 @@ local function useFurnitureWithPet(furnitureName)
 end
 
 -- ==================================================================
--- PET ME AILMENT HANDLER (CORRECTED VERSION)
+-- PET ME AILMENT HANDLER (EXACT WORKING VERSION)
 -- ==================================================================
 
--- Find the pet model in workspace for Pet Me ailment
-local function findPetModelForPetMe(petUniqueID)
-    debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
-    local data = getPlayerData()
-    if not data or not data.inventory or not data.inventory.pets then
-        debugPrint("Failed to get player data or pet inventory")
-        return nil
-    end
-
+-- Get the pet model from workspace
+local function getPetModelForPetMe()
+    debugPrint("Getting pet model from workspace...")
     local petsFolder = workspace:FindFirstChild("Pets")
     if not petsFolder then
-        debugPrint("Pets folder not found")
+        debugPrint("Pets folder not found!")
         return nil
     end
-
-    for petID, petData in pairs(data.inventory.pets) do
-        if petData.unique == petUniqueID then
-            local petIdName = petData.id
-            debugPrint("Found matching pet in inventory: " .. tostring(petIdName))
-            
-            -- Try exact match first
-            local petModel = petsFolder:FindFirstChild(petIdName)
-            if petModel then
-                debugPrint("Found pet model (exact): " .. petModel.Name)
-                return petModel
+    
+    -- First try to find the exact pet by ID if we have it
+    if PetID then
+        local data = getPlayerData()
+        if data and data.inventory and data.inventory.pets then
+            for _, petData in pairs(data.inventory.pets) do
+                if petData.unique == PetID then
+                    local petIdName = petData.id
+                    debugPrint("Looking for pet model: " .. petIdName)
+                    
+                    -- Try exact match
+                    local petModel = petsFolder:FindFirstChild(petIdName)
+                    if petModel then
+                        debugPrint("Found exact pet model: " .. petModel.Name)
+                        return petModel
+                    end
+                    
+                    -- Try Dog/Cat detection
+                    local petNameLower = string.lower(petIdName)
+                    if string.find(petNameLower, "dog") then
+                        petModel = petsFolder:FindFirstChild("Dog")
+                        if petModel then
+                            debugPrint("Found Dog model")
+                            return petModel
+                        end
+                    elseif string.find(petNameLower, "cat") then
+                        petModel = petsFolder:FindFirstChild("Cat")
+                        if petModel then
+                            debugPrint("Found Cat model")
+                            return petModel
+                        end
+                    elseif string.find(petNameLower, "starter_egg") or string.find(petNameLower, "egg") then
+                        petModel = petsFolder:FindFirstChild("Starter Egg")
+                        if not petModel then
+                            petModel = petsFolder:FindFirstChild("StarterEgg")
+                        end
+                        if petModel then
+                            debugPrint("Found Starter Egg model")
+                            return petModel
+                        end
+                    end
+                    break
+                end
             end
-            
-            -- Try "Dog" or "Cat" for common pets
-            local petNameLower = string.lower(petIdName)
-            if string.find(petNameLower, "dog") then
-                petModel = petsFolder:FindFirstChild("Dog")
-                if petModel then
-                    debugPrint("Found pet model: Dog")
-                    return petModel
-                end
-            elseif string.find(petNameLower, "cat") then
-                petModel = petsFolder:FindFirstChild("Cat")
-                if petModel then
-                    debugPrint("Found pet model: Cat")
-                    return petModel
-                end
-            elseif string.find(petNameLower, "starter_egg") or string.find(petNameLower, "egg") then
-                petModel = petsFolder:FindFirstChild("Starter Egg")
-                if not petModel then
-                    petModel = petsFolder:FindFirstChild("StarterEgg")
-                end
-                if petModel then
-                    debugPrint("Found pet model: Starter Egg")
-                    return petModel
-                end
-            end
-            
-            -- Case-insensitive fallback
-            for _, child in pairs(petsFolder:GetChildren()) do
-                if string.lower(child.Name) == string.lower(petIdName) then
-                    debugPrint("Found pet model (case-insensitive): " .. child.Name)
-                    return child
-                end
-            end
-            break
         end
     end
     
-    debugPrint("Pet model not found in workspace")
+    -- Fallback: try Dog, Cat, or Starter Egg in that order
+    local dogModel = petsFolder:FindFirstChild("Dog")
+    if dogModel then
+        debugPrint("Found Dog model (fallback)")
+        return dogModel
+    end
+    
+    local catModel = petsFolder:FindFirstChild("Cat")
+    if catModel then
+        debugPrint("Found Cat model (fallback)")
+        return catModel
+    end
+    
+    local starterEgg = petsFolder:FindFirstChild("Starter Egg")
+    if not starterEgg then
+        starterEgg = petsFolder:FindFirstChild("StarterEgg")
+    end
+    if starterEgg then
+        debugPrint("Found Starter Egg model (fallback)")
+        return starterEgg
+    end
+    
+    debugPrint("No pet model found in workspace!")
     return nil
 end
 
--- Focus pet (AdoptAPI)
-local function focusPetForPetMe(petModel)
+-- Main Pet Me handler - EXACT copy of working example
+local function handlePetMeAilment(petUniqueID)
+    debugPrint("========================================")
+    debugPrint("✋ PET ME AILMENT - USING EXACT WORKING CODE")
+    debugPrint("========================================")
+    
+    -- Get the pet model
+    local petModel = getPetModelForPetMe()
     if not petModel then
-        debugPrint("No pet model provided for focus")
+        debugPrint("❌ No pet model found in workspace!")
         return false
     end
-    debugPrint("Focusing pet: " .. petModel.Name)
     
-    local args = { petModel }
-    local success, err = safeRemoteCall({"AdoptAPI/FocusPet"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully focused pet")
-        task.wait(0.5)
-        return true
+    debugPrint("Using pet model: " .. petModel.Name)
+    
+    -- Give time for everything to settle
+    task.wait(0.5)
+    
+    -- STEP 1: FocusPet (AdoptAPI)
+    debugPrint("Step 1: FocusPet")
+    local args1 = { petModel }
+    local api = ReplicatedStorage:FindFirstChild("API")
+    if api then
+        local adoptAPI = api:FindFirstChild("AdoptAPI")
+        if adoptAPI then
+            local focusPet = adoptAPI:FindFirstChild("FocusPet")
+            if focusPet then
+                local success, err = pcall(function()
+                    focusPet:FireServer(unpack(args1))
+                end)
+                if success then
+                    debugPrint("✅ FocusPet successful")
+                else
+                    debugPrint("❌ FocusPet failed: " .. tostring(err))
+                end
+            else
+                debugPrint("❌ FocusPet remote not found")
+            end
+        else
+            debugPrint("❌ AdoptAPI not found")
+        end
     else
-        debugPrint("Failed to focus pet: " .. tostring(err))
-        return false
+        debugPrint("❌ API not found")
     end
-end
-
--- Replicate Active Performances (with petting)
-local function replicateActivePerformancesWithPetting(petModel)
-    if not petModel then
-        return false
-    end
-    debugPrint("Replicating active performances with petting...")
+    task.wait(0.5)
     
-    local args = {
+    -- STEP 2: ReplicateActivePerformances (first)
+    debugPrint("Step 2: ReplicateActivePerformances (with FocusPet, LookAtObject, Petting)")
+    local args2 = {
         petModel,
         {
             FocusPet = true,
@@ -469,27 +504,35 @@ local function replicateActivePerformancesWithPetting(petModel)
             Petting = true
         }
     }
-    local success, err = safeRemoteCall({"PetAPI/ReplicateActivePerformances"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully replicated active performances (with petting)")
-        task.wait(0.3)
-        return true
-    else
-        debugPrint("Failed to replicate active performances: " .. tostring(err))
-        return false
+    if api then
+        local petAPI = api:FindFirstChild("PetAPI")
+        if petAPI then
+            local replicatePerf = petAPI:FindFirstChild("ReplicateActivePerformances")
+            if replicatePerf then
+                local success, err = pcall(function()
+                    replicatePerf:FireServer(unpack(args2))
+                end)
+                if success then
+                    debugPrint("✅ First ReplicateActivePerformances successful")
+                else
+                    debugPrint("❌ First ReplicateActivePerformances failed: " .. tostring(err))
+                end
+            else
+                debugPrint("❌ ReplicateActivePerformances not found")
+            end
+        else
+            debugPrint("❌ PetAPI not found")
+        end
     end
-end
-
--- Replicate Performance Modifiers (idle animation)
-local function replicatePerformanceModifiersIdle(petModel, isDog)
-    if not petModel then
-        return false
-    end
+    task.wait(0.3)
     
+    -- STEP 3: ReplicatePerformanceModifiers
+    debugPrint("Step 3: ReplicatePerformanceModifiers (with idle animation)")
+    local isDog = string.find(string.lower(petModel.Name), "dog") and true or false
     local animName = isDog and "DogIdle" or "CatIdle"
-    debugPrint("Replicating performance modifiers with animation: " .. animName)
+    debugPrint("Using animation: " .. animName)
     
-    local args = {
+    local args3 = {
         petModel,
         {
             anim_fade_time = 0.2,
@@ -500,138 +543,88 @@ local function replicatePerformanceModifiersIdle(petModel, isDog)
             dont_allow_remote_interaction = true
         }
     }
-    local success, err = safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully replicated performance modifiers")
-        task.wait(0.3)
-        return true
-    else
-        debugPrint("Failed to replicate performance modifiers: " .. tostring(err))
-        return false
+    if api then
+        local petAPI = api:FindFirstChild("PetAPI")
+        if petAPI then
+            local replicateMod = petAPI:FindFirstChild("ReplicatePerformanceModifiers")
+            if replicateMod then
+                local success, err = pcall(function()
+                    replicateMod:FireServer(unpack(args3))
+                end)
+                if success then
+                    debugPrint("✅ ReplicatePerformanceModifiers successful")
+                else
+                    debugPrint("❌ ReplicatePerformanceModifiers failed: " .. tostring(err))
+                end
+            else
+                debugPrint("❌ ReplicatePerformanceModifiers not found")
+            end
+        else
+            debugPrint("❌ PetAPI not found")
+        end
     end
-end
-
--- Replicate Active Reactions (empty)
-local function replicateActiveReactionsEmpty(petModel)
-    if not petModel then
-        return false
-    end
-    debugPrint("Replicating active reactions (empty)...")
+    task.wait(0.3)
     
-    local args = { petModel, {} }
-    local success, err = safeRemoteCall({"PetAPI/ReplicateActiveReactions"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully replicated active reactions")
-        task.wait(0.3)
-        return true
-    else
-        debugPrint("Failed to replicate active reactions: " .. tostring(err))
-        return false
+    -- STEP 4: ReplicateActiveReactions
+    debugPrint("Step 4: ReplicateActiveReactions (empty)")
+    local args4 = { petModel, {} }
+    if api then
+        local petAPI = api:FindFirstChild("PetAPI")
+        if petAPI then
+            local replicateReactions = petAPI:FindFirstChild("ReplicateActiveReactions")
+            if replicateReactions then
+                local success, err = pcall(function()
+                    replicateReactions:FireServer(unpack(args4))
+                end)
+                if success then
+                    debugPrint("✅ ReplicateActiveReactions successful")
+                else
+                    debugPrint("❌ ReplicateActiveReactions failed: " .. tostring(err))
+                end
+            else
+                debugPrint("❌ ReplicateActiveReactions not found")
+            end
+        else
+            debugPrint("❌ PetAPI not found")
+        end
     end
-end
-
--- Replicate Active Performances (final petting)
-local function replicateActivePerformancesFinal(petModel)
-    if not petModel then
-        return false
-    end
-    debugPrint("Replicating final active performances...")
+    task.wait(0.3)
     
-    local args = {
+    -- STEP 5: ReplicateActivePerformances (final)
+    debugPrint("Step 5: ReplicateActivePerformances (final with FocusPet, Petting)")
+    local args5 = {
         petModel,
         {
             FocusPet = true,
             Petting = true
         }
     }
-    local success, err = safeRemoteCall({"PetAPI/ReplicateActivePerformances"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully replicated final active performances")
-        task.wait(0.3)
-        return true
-    else
-        debugPrint("Failed to replicate final active performances: " .. tostring(err))
-        return false
+    if api then
+        local petAPI = api:FindFirstChild("PetAPI")
+        if petAPI then
+            local replicatePerf = petAPI:FindFirstChild("ReplicateActivePerformances")
+            if replicatePerf then
+                local success, err = pcall(function()
+                    replicatePerf:FireServer(unpack(args5))
+                end)
+                if success then
+                    debugPrint("✅ Final ReplicateActivePerformances successful")
+                else
+                    debugPrint("❌ Final ReplicateActivePerformances failed: " .. tostring(err))
+                end
+            else
+                debugPrint("❌ ReplicateActivePerformances not found")
+            end
+        else
+            debugPrint("❌ PetAPI not found")
+        end
     end
-end
-
--- Unfocus pet
-local function unfocusPetForPetMe(petModel)
-    if not petModel then
-        return false
-    end
-    debugPrint("Unfocusing pet: " .. petModel.Name)
     
-    local args = { petModel }
-    local success, err = safeRemoteCall({"AdoptAPI/UnfocusPet"}, "FireServer", unpack(args))
-    if success then
-        debugPrint("Successfully unfocused pet")
-        return true
-    else
-        debugPrint("Failed to unfocus pet: " .. tostring(err))
-        return false
-    end
-end
-
--- Main function to handle 'Pet Me' ailment (CORRECTED)
-local function handlePetMeAilment(petUniqueID)
     debugPrint("========================================")
-    debugPrint("✋ PET ME AILMENT HANDLING (CORRECTED)")
+    debugPrint("✅ PET ME AILMENT HANDLING COMPLETED!")
     debugPrint("========================================")
-
-    -- Find pet model
-    local petModel = findPetModelForPetMe(petUniqueID)
-    if not petModel then
-        debugPrint("FAILED: Could not find pet model in workspace")
-        return false
-    end
-
-    debugPrint("Using pet model: " .. petModel.Name)
     
-    -- Determine if it's a dog or cat for animation
-    local isDog = string.find(string.lower(petModel.Name), "dog") and true or false
-    debugPrint("Pet type: " .. (isDog and "Dog" or "Cat"))
-    
-    -- Step 1: Focus Pet (AdoptAPI)
-    if not focusPetForPetMe(petModel) then
-        debugPrint("❌ Failed to focus pet")
-        return false
-    end
-    task.wait(0.5)
-    
-    -- Step 2: Replicate Active Performances with FocusPet, LookAtObject, Petting
-    if not replicateActivePerformancesWithPetting(petModel) then
-        debugPrint("⚠️ Failed first performance replication, continuing...")
-    end
-    task.wait(0.3)
-    
-    -- Step 3: Replicate Performance Modifiers with idle animation
-    if not replicatePerformanceModifiersIdle(petModel, isDog) then
-        debugPrint("⚠️ Failed performance modifiers, continuing...")
-    end
-    task.wait(0.3)
-    
-    -- Step 4: Replicate Active Reactions (empty)
-    if not replicateActiveReactionsEmpty(petModel) then
-        debugPrint("⚠️ Failed active reactions, continuing...")
-    end
-    task.wait(0.3)
-    
-    -- Step 5: Final Replicate Active Performances with FocusPet and Petting
-    if not replicateActivePerformancesFinal(petModel) then
-        debugPrint("⚠️ Failed final performance replication, continuing...")
-    end
-    task.wait(0.5)
-    
-    -- Step 6: Unfocus pet
-    unfocusPetForPetMe(petModel)
-    
-    debugPrint("✅ SUCCESS: Pet Me ailment handling completed!")
-    debugPrint("=== PET ME AILMENT HANDLING COMPLETED ===")
-    
-    -- Wait for the game to register the interaction
     task.wait(2)
-    
     return true
 end
 
@@ -1971,7 +1964,7 @@ end
 -- Auto-start
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
-debugPrint("Pet Me ailment uses CORRECTED SPECIAL HANDLER (focus → idle → pet)")
+debugPrint("Pet Me ailment uses EXACT WORKING CODE (direct remote calls)")
 task.wait(3)
 autoStart()
 
@@ -1982,8 +1975,6 @@ debugPrint("   - Auto-selects Dog, Cat, or Starter_Egg")
 debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
-debugPrint("   - Pet Me uses CORRECTED HANDLER!")
-debugPrint("     (FocusPet → ReplicateActivePerformances →")
-debugPrint("      ReplicatePerformanceModifiers (Idle) →")
-debugPrint("      ReplicateActiveReactions → Final Petting)")
+debugPrint("   - Pet Me uses EXACT WORKING CODE!")
+debugPrint("     (Direct remote calls matching your example)")
 debugPrint("========================================")
