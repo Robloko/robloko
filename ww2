@@ -192,7 +192,7 @@ local function findPlayerPetInWorkspace()
                 return pet
             end
             local petName = pet.Name
-            if petName == "Dog" or petName == "Cat" then
+            if petName == "Dog" or petName == "Cat" or string.find(petName:lower(), "starter_egg") then
                 return pet
             end
         end
@@ -450,7 +450,7 @@ local function setPetSitting(petModel)
     end
     debugPrint("Setting pet to sit state: " .. petModel.Name)
     local sitAnimation = "DogSit"
-    if string.find(petModel.Name:lower(), "cat") then
+    if string.find(petModel.Name:lower(), "cat") or string.find(petModel.Name:lower(), "starter_egg") then
         sitAnimation = "CatSit"
     end
     local args = {
@@ -1063,7 +1063,7 @@ local function togglePetFarmMode()
             PetFarmMode = false
             return
         end
-        debugPrint("PetFarm: ENABLED")
+        debugPrint("PetFarm: ENABLED for " .. tostring(selectedPetName))
         petFarmCoroutine = coroutine.wrap(startPetFarm)()
     else
         debugPrint("PetFarm: DISABLED")
@@ -1297,6 +1297,7 @@ end
 
 local function equipSelectedPet(petUniqueID)
     if not petUniqueID then
+        debugPrint("No pet ID provided!")
         return false
     end
 
@@ -1305,8 +1306,8 @@ local function equipSelectedPet(petUniqueID)
         return true
     end
 
-    debugPrint("Equipping pet: " .. petUniqueID)
-    local success = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", petUniqueID, {
+    debugPrint("Attempting to equip pet: " .. tostring(petUniqueID))
+    local success, err = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", petUniqueID, {
         use_sound_delay = true,
         equip_as_last = false
     })
@@ -1316,7 +1317,7 @@ local function equipSelectedPet(petUniqueID)
         task.wait(3)
         return true
     else
-        debugPrint("❌ Failed to equip pet!")
+        debugPrint("❌ Failed to equip pet: " .. tostring(err))
         return false
     end
 end
@@ -1771,7 +1772,13 @@ local function autoStart()
         PetID = selectedPet.unique
         selectedPetName = selectedPet.id
 
+        -- Force equip, even if it fails once
         local equipSuccess = equipSelectedPet(selectedPet.unique)
+        if not equipSuccess then
+            debugPrint("First equip attempt failed, retrying...")
+            task.wait(2)
+            equipSuccess = equipSelectedPet(selectedPet.unique)
+        end
 
         if equipSuccess then
             if ui then
