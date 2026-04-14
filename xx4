@@ -1,102 +1,94 @@
--- Services
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
--- LocalPlayer
-local player = Players.LocalPlayer
-
--- Function to get player data
-local function getPlayerData()
-    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
-    if not success or not clientData then return nil end
-    local success2, allData = pcall(clientData.get_data, clientData)
-    return success2 and allData and allData[player.Name] or nil
-end
-
--- Function to get equipped pet ID
-local function getEquippedPetID()
-    local playerData = getPlayerData()
-    if not playerData or not playerData.equip_manager or not playerData.equip_manager.pets then
-        return nil
+-- Complete Mystery Ailment Handler with Auto-Detection
+local function findAndHandleMysteryAilment()
+    local petID = getEquippedPetID()
+    if not petID then
+        print("No pet equipped!")
+        return false
     end
-    -- Return the first equipped pet's unique ID
-    for _, equippedPet in pairs(playerData.equip_manager.pets) do
-        if equippedPet and equippedPet.unique then
-            return equippedPet.unique
+    
+    -- Get player data to find mystery ailments
+    local playerData = getPlayerData()
+    if not playerData or not playerData.ailments_manager or not playerData.ailments_manager.ailments then
+        print("No ailments found!")
+        return false
+    end
+    
+    -- Find mystery ailment for this pet
+    local mysteryAilmentId = nil
+    for ailmentId, ailmentData in pairs(playerData.ailments_manager.ailments) do
+        if ailmentId == petID and ailmentData.mystery and type(ailmentData.mystery) == "table" then
+            mysteryAilmentId = ailmentId
+            print("Found mystery ailment for pet!")
+            break
         end
     end
-    return nil
-end
-
--- Get the equipped pet ID
-local equippedPetID = getEquippedPetID()
-if not equippedPetID then
-    warn("No pet equipped! Cannot execute pet actions.")
-    return
-end
-
-print("Equipped Pet ID:", equippedPetID)
-
--- Get the pet object from workspace
-local petObject = workspace:WaitForChild("Pets"):WaitForChild(equippedPetID)
-
--- Execute all pet actions with the dynamic pet ID
-local args = {
-    petObject
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI/FocusPet"):FireServer(unpack(args))
-
-local args = {
-    petObject,
-    {
-        FocusPet = true,
-        LookAtObject = true,
-        Petting = true
-    }
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
-
-local args = {
-    petObject,
-    {
-        anim_fade_time = 0.2,
-        local_anim_speed = 1,
-        dont_allow_sit_states = true,
-        pause_ailment_chat_bubbles = true,
-        local_anim_name = "CatIdle",
-        dont_allow_remote_interaction = true
-    }
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
-
-local args = {
-    petObject,
-    {}
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActiveReactions"):FireServer(unpack(args))
-
-local args = {
-    petObject,
-    {
-        FocusPet = true,
-        Petting = true
-    }
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(unpack(args))
-
-local args = {
-    petObject,
-    {
-        local_anim_name = "CatIdle",
-        local_anim_speed = 0.25,
-        dont_allow_sit_states = true,
-        pause_ailment_chat_bubbles = true,
-        eyes_id = "squinting_eyes",
-        anim_fade_time = 0.2,
-        dont_allow_remote_interaction = true,
-        effects = {
-            "love"
+    
+    if not mysteryAilmentId then
+        print("No mystery ailment found for equipped pet")
+        return false
+    end
+    
+    local petModel = getPetModel()
+    if not petModel then
+        print("Pet model not found!")
+        return false
+    end
+    
+    print("Handling mystery ailment:", mysteryAilmentId)
+    
+    -- Set pet animation
+    local animName = string.find(petModel.Name:lower(), "cat") and "CatIdle" or "DogIdle"
+    local argsAnim = {
+        petModel,
+        {
+            local_anim_name = animName,
+            local_anim_speed = 1,
+            dont_allow_sit_states = true,
+            dont_allow_remote_interaction = true,
+            anim_fade_time = 0.2
         }
     }
-}
-game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(args))
+    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(argsAnim))
+    task.wait(0.5)
+    
+    -- Try each resolution type
+    local resolutions = {"walk", "ride", "play", "sleepy", "hungry", "thirsty", "dirty", "toilet", "bored", "sick", "pet_me"}
+    
+    for _, resolution in ipairs(resolutions) do
+        print("Trying resolution:", resolution)
+        local success = true
+        
+        for level = 1, 3 do
+            local argsMystery = {
+                petID,
+                "mystery",
+                level,
+                resolution
+            }
+            
+            local successCall, err = pcall(function()
+                game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AilmentsAPI/ChooseMysteryAilment"):FireServer(unpack(argsMystery))
+            end)
+            
+            if not successCall then
+                success = false
+                print("Failed level " .. level .. ": " .. tostring(err))
+                break
+            end
+            
+            print("✓ Level " .. level .. " resolved as: " .. resolution)
+            task.wait(1) -- 1 second delay
+        end
+        
+        if success then
+            print("✅ Mystery fully resolved as: " .. resolution)
+            return true
+        end
+    end
+    
+    print("❌ Could not resolve mystery ailment")
+    return false
+end
+
+-- Run it
+findAndHandleMysteryAilment()
