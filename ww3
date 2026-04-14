@@ -178,7 +178,7 @@ local function isPetEquipped(petUniqueID)
     return false
 end
 
--- Find player's pet in workspace (UPDATED)
+-- Find player's pet in workspace
 local function findPlayerPetInWorkspace()
     local petsFolder = workspace:FindFirstChild("Pets")
     if not petsFolder then
@@ -191,7 +191,6 @@ local function findPlayerPetInWorkspace()
             if owner and owner.Value == player then
                 return pet
             end
-            -- Recognize Starter Egg, Dog, Cat, or any pet model
             local petName = pet.Name
             if petName == "Dog" or petName == "Cat" or petName == "Starter Egg" or string.find(petName:lower(), "egg") then
                 return pet
@@ -368,7 +367,7 @@ end
 -- PET ME AILMENT HANDLER (SPECIAL - NOT FURNITURE)
 -- ==================================================================
 
--- Find the pet model in workspace (UPDATED)
+-- Find the pet model in workspace
 local function findPetModel(petUniqueID)
     debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
     local data = getPlayerData()
@@ -385,13 +384,11 @@ local function findPetModel(petUniqueID)
                 debugPrint("Pets folder not found")
                 return nil
             end
-            -- Try exact match first
             local petModel = petsFolder:FindFirstChild(petData.id)
             if petModel then
                 debugPrint("Found pet model: " .. petModel.Name)
                 return petModel
             end
-            -- Try case-insensitive search for Starter Egg, Dog, Cat, etc.
             for _, child in pairs(petsFolder:GetChildren()) do
                 if string.lower(child.Name) == string.lower(petData.id) or
                    (string.lower(petData.id) == "starter_egg" and string.lower(child.Name) == "starter egg") then
@@ -444,7 +441,7 @@ local function unfocusPet(petModel)
     end
 end
 
--- Set pet in sitting state (UPDATED)
+-- Set pet in sitting state
 local function setPetSitting(petModel)
     if not petModel then
         debugPrint("No pet model provided")
@@ -452,7 +449,6 @@ local function setPetSitting(petModel)
     end
     debugPrint("Setting pet to sit state: " .. petModel.Name)
     local sitAnimation = "DogSit"
-    -- Use CatSit for Starter Egg, Cat, or any non-Dog pet
     if string.find(petModel.Name:lower(), "cat") or string.find(petModel.Name:lower(), "egg") then
         sitAnimation = "CatSit"
     end
@@ -496,7 +492,6 @@ local function progressPetMeAilment(petUniqueID, petModel)
     end
     task.wait(1)
 
-    -- Try different endpoints to progress the ailment
     local possibleEndpoints = {
         "AilmentsAPI/ProgressPetMeAilment",
         "PetAPI/ProgressPetMeAilment",
@@ -517,7 +512,6 @@ local function progressPetMeAilment(petUniqueID, petModel)
         end
     end
 
-    -- Try with pet model instead of ID
     for _, endpoint in pairs(possibleEndpoints) do
         debugPrint("Trying endpoint with model: " .. endpoint)
         local args = { petModel }
@@ -796,78 +790,107 @@ local function handleSickAilment()
 end
 
 -- ==================================================================
--- MYSTERY AILMENT (FIXED - TRIES ALL AILMENTS AND HANDLES THEM)
+-- MYSTERY AILMENT (FIXED - TRIES ALL 10 AILMENTS)
 -- ==================================================================
 
 local function resolveMysteryAilment(ailmentId)
-    debugPrint("❓ MYSTERY AILMENT DETECTED! Resolving...")
+    debugPrint("========================================")
+    debugPrint("❓ MYSTERY AILMENT DETECTED!")
+    debugPrint("Trying to identify which ailment it is...")
+    debugPrint("========================================")
     
-    -- List of all possible ailments to try, in order of preference
+    -- List of all possible ailments to try (in order of most common)
     local possibleAilments = {"bored", "sick", "pet me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
-
-    for _, chosenAilment in ipairs(possibleAilments) do
-        debugPrint("========================================")
-        debugPrint("Attempting to identify mystery as: " .. chosenAilment)
-        debugPrint("========================================")
+    
+    local identifiedAilment = nil
+    
+    -- Step 1: Find which ailment type works by testing level 1 only
+    for _, testAilment in ipairs(possibleAilments) do
+        debugPrint("🔍 Testing if mystery is: " .. testAilment)
         
-        local identified = true
+        local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", 1, testAilment)
         
-        -- Try to identify all 3 levels as this ailment
-        for level = 1, 3 do
-            local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, chosenAilment)
-            if success then
-                debugPrint("✅ Level " .. level .. " identified as: " .. chosenAilment)
-            else
-                debugPrint("❌ Level " .. level .. " failed: " .. tostring(result))
-                identified = false
-                break
-            end
-            task.wait(1)
-        end
-        
-        if identified then
-            debugPrint("🎉 SUCCESS! Mystery identified as: " .. chosenAilment)
-            debugPrint("Now handling the identified ailment...")
-            
-            -- Handle the identified ailment properly
-            local handled = false
-            
-            if chosenAilment == "bored" then
-                handled = useFurnitureWithPet("Piano")
-            elseif chosenAilment == "sick" then
-                handled = handleSickAilment()
-            elseif chosenAilment == "pet me" then
-                handled = handlePetMeAilment(PetID)
-            elseif chosenAilment == "sleepy" then
-                handled = useFurnitureWithPet("BasicBed")
-            elseif chosenAilment == "dirty" then
-                handled = useFurnitureWithPet("CheapPetBathtub")
-            elseif chosenAilment == "toilet" then
-                handled = useFurnitureWithPet("AilmentsRefresh2024LitterBox")
-            elseif chosenAilment == "hungry" then
-                handled = useFurnitureWithPet("PetFoodBowl")
-            elseif chosenAilment == "thirsty" then
-                handled = useFurnitureWithPet("PetWaterBowl")
-            elseif chosenAilment == "walk" then
-                handled = handleWalkAilment()
-            elseif chosenAilment == "ride" then
-                handled = handleRideAilment()
-            end
-            
-            if handled then
-                debugPrint("✅ SUCCESSFULLY COMPLETED mystery ailment as: " .. chosenAilment)
-                return true
-            else
-                debugPrint("⚠️ Identified as " .. chosenAilment .. " but failed to handle it, trying next ailment...")
-                -- Continue to try next ailment type
-            end
+        if success then
+            debugPrint("✅ MATCH FOUND! Mystery is: " .. testAilment)
+            identifiedAilment = testAilment
+            break
         else
-            debugPrint("❌ Could not identify as: " .. chosenAilment .. ", trying next...")
+            debugPrint("❌ Not " .. testAilment)
         end
+        task.wait(0.3)
     end
     
-    debugPrint("❌ FAILED: Could not resolve mystery ailment after trying all possibilities")
-    return false
+    if not identifiedAilment then
+        debugPrint("❌ FAILED: Could not identify mystery ailment after trying all 10 types!")
+        return false
+    end
+    
+    -- Step 2: Now that we know what it is, identify levels 2 and 3
+    debugPrint("========================================")
+    debugPrint("Identifying levels 2 and 3 as: " .. identifiedAilment)
+    debugPrint("========================================")
+    
+    for level = 2, 3 do
+        local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, identifiedAilment)
+        if not success then
+            debugPrint("❌ Failed to identify level " .. level .. ": " .. tostring(result))
+            return false
+        end
+        debugPrint("✅ Level " .. level .. " identified successfully")
+        task.wait(1)
+    end
+    
+    debugPrint("🎉 Successfully identified all 3 levels of mystery as: " .. identifiedAilment)
+    debugPrint("========================================")
+    debugPrint("Now handling the identified ailment...")
+    debugPrint("========================================")
+    
+    -- Step 3: Handle the identified ailment properly
+    local handled = false
+    
+    if identifiedAilment == "bored" then
+        debugPrint("🖐️ Handling as BORED - using Piano")
+        handled = useFurnitureWithPet("Piano")
+    elseif identifiedAilment == "sick" then
+        debugPrint("💊 Handling as SICK - using Healing Apple")
+        handled = handleSickAilment()
+    elseif identifiedAilment == "pet me" then
+        debugPrint("✋ Handling as PET ME - using special handler")
+        handled = handlePetMeAilment(PetID)
+    elseif identifiedAilment == "sleepy" then
+        debugPrint("😴 Handling as SLEEPY - using BasicBed")
+        handled = useFurnitureWithPet("BasicBed")
+    elseif identifiedAilment == "dirty" then
+        debugPrint("🛁 Handling as DIRTY - using CheapPetBathtub")
+        handled = useFurnitureWithPet("CheapPetBathtub")
+    elseif identifiedAilment == "toilet" then
+        debugPrint("🚽 Handling as TOILET - using LitterBox")
+        handled = useFurnitureWithPet("AilmentsRefresh2024LitterBox")
+    elseif identifiedAilment == "hungry" then
+        debugPrint("🍽️ Handling as HUNGRY - using PetFoodBowl")
+        handled = useFurnitureWithPet("PetFoodBowl")
+    elseif identifiedAilment == "thirsty" then
+        debugPrint("💧 Handling as THIRSTY - using PetWaterBowl")
+        handled = useFurnitureWithPet("PetWaterBowl")
+    elseif identifiedAilment == "walk" then
+        debugPrint("🚶 Handling as WALK - walking outside")
+        handled = handleWalkAilment()
+    elseif identifiedAilment == "ride" then
+        debugPrint("🛺 Handling as RIDE - using stroller")
+        handled = handleRideAilment()
+    end
+    
+    if handled then
+        debugPrint("========================================")
+        debugPrint("✅ SUCCESSFULLY COMPLETED mystery ailment as: " .. identifiedAilment)
+        debugPrint("========================================")
+        return true
+    else
+        debugPrint("========================================")
+        debugPrint("⚠️ Identified as " .. identifiedAilment .. " but FAILED to handle it")
+        debugPrint("========================================")
+        return false
+    end
 end
 
 -- ==================================================================
@@ -1046,7 +1069,7 @@ local function monitorAndHandleAilments()
                                     end
                                 -- Special handling for "mystery" (UPDATED)
                                 elseif ailmentType == "mystery" then
-                                    debugPrint("❓ MYSTERY AILMENT DETECTED! Using full resolver...")
+                                    debugPrint("❓ MYSTERY AILMENT DETECTED! Using full 10-ailment resolver...")
                                     local success = resolveMysteryAilment(ailmentId)
                                     if success then
                                         lastTaskTime[ailmentType] = currentTime
@@ -1265,7 +1288,6 @@ local function getAllValidPets()
     for uniqueId, petData in pairs(playerData.inventory.pets) do
         if petData and petData.id and petData.properties then
             local petName = string.lower(petData.id)
-            -- EXCLUDE practice_dog
             if not string.find(petName, "practice_dog") then
                 table.insert(validPets, {
                     unique = uniqueId,
@@ -1278,7 +1300,6 @@ local function getAllValidPets()
         end
     end
 
-    -- Sort by priority: Dog > Cat > Starter_Egg > Others, then by age
     table.sort(validPets, function(a, b)
         local aIsDog = string.find(string.lower(a.id), "dog") and true or false
         local bIsDog = string.find(string.lower(b.id), "dog") and true or false
@@ -1331,7 +1352,6 @@ local function findBestDogOrCat()
         end
     end
 
-    -- Prioritize Dog > Cat > Starter_Egg
     local selectedPet = dogPet or catPet or starterEggPet or validPets[1]
 
     if selectedPet then
@@ -1824,7 +1844,6 @@ local function autoStart()
         PetID = selectedPet.unique
         selectedPetName = selectedPet.id
 
-        -- Retry equipping if the first attempt fails
         local equipSuccess = equipSelectedPet(selectedPet.unique)
         if not equipSuccess then
             debugPrint("First equip attempt failed, retrying...")
@@ -1949,7 +1968,7 @@ end
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
 debugPrint("Pet Me ailment uses SPECIAL HANDLER (not furniture)")
-debugPrint("Mystery ailment now tries ALL ailments and handles them properly!")
+debugPrint("MYSTERY AILMENT: Now tries ALL 10 types to find the correct one!")
 task.wait(3)
 autoStart()
 
@@ -1960,6 +1979,6 @@ debugPrint("   - Auto-selects Dog, Cat, or Starter_Egg")
 debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
-debugPrint("   - Pet Me uses SPECIAL HANDLER (not furniture)")
+debugPrint("   - Pet Me uses SPECIAL HANDLER")
 debugPrint("   - MYSTERY now tries ALL 10 ailments!")
 debugPrint("========================================")
