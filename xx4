@@ -43,89 +43,11 @@ local function getPetModel()
     return nil
 end
 
--- Function to find mystery ailment for equipped pet
-local function findMysteryAilment()
-    local playerData = getPlayerData()
-    if not playerData or not playerData.ailments_manager then
-        return nil
-    end
-    
-    local petID = getEquippedPetID()
-    if not petID then
-        return nil
-    end
-    
-    -- Debug: Print the ailment structure to understand it
-    print("=== Ailments Manager Structure ===")
-    for key, value in pairs(playerData.ailments_manager) do
-        print("Key:", key, "Type:", type(value))
-        if type(value) == "table" then
-            for k, v in pairs(value) do
-                print("  ", k, ":", type(v))
-                if type(v) == "table" then
-                    for k2, v2 in pairs(v) do
-                        print("    ", k2, ":", type(v2))
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Try different possible structures
-    local ailments = playerData.ailments_manager.ailments
-    if not ailments then
-        ailments = playerData.ailments_manager
-    end
-    
-    if not ailments then
-        print("No ailments table found")
-        return nil
-    end
-    
-    -- Search for mystery ailment
-    for ailmentId, ailmentData in pairs(ailments) do
-        -- Check if this ailment belongs to our pet
-        if ailmentId == petID then
-            -- Look for mystery in various possible locations
-            if ailmentData.mystery then
-                print("Found mystery ailment in ailments[petID].mystery")
-                return petID
-            end
-        end
-        
-        -- Also check if ailmentData itself has a mystery field
-        if type(ailmentData) == "table" and ailmentData.mystery then
-            print("Found mystery ailment in ailmentData.mystery")
-            return ailmentId
-        end
-        
-        -- Check for mystery in any nested structure
-        for fieldName, fieldValue in pairs(ailmentData) do
-            if type(fieldValue) == "table" and fieldValue.mystery then
-                print("Found mystery in nested field:", fieldName)
-                return ailmentId
-            end
-        end
-    end
-    
-    print("No mystery ailment found")
-    return nil
-end
-
--- Complete Mystery Ailment Handler
-local function findAndHandleMysteryAilment()
+-- Mystery Ailment Handler (SIMPLE VERSION)
+local function handleMysteryAilment()
     local petID = getEquippedPetID()
     if not petID then
         print("No pet equipped!")
-        return false
-    end
-    
-    print("Pet ID:", petID)
-    
-    -- Find mystery ailment
-    local mysteryAilmentId = findMysteryAilment()
-    if not mysteryAilmentId then
-        print("No mystery ailment found")
         return false
     end
     
@@ -135,11 +57,14 @@ local function findAndHandleMysteryAilment()
         return false
     end
     
-    print("Handling mystery ailment for pet ID:", petID)
-    print("Mystery ailment ID:", mysteryAilmentId)
+    print("Handling mystery for pet:", petID)
     
     -- Set pet animation
-    local animName = string.find(petModel.Name:lower(), "cat") and "CatIdle" or "DogIdle"
+    local animName = "DogIdle"
+    if string.find(petModel.Name:lower(), "cat") then
+        animName = "CatIdle"
+    end
+    
     local argsAnim = {
         petModel,
         {
@@ -151,48 +76,36 @@ local function findAndHandleMysteryAilment()
         }
     }
     
-    local api = game:GetService("ReplicatedStorage"):WaitForChild("API")
+    local api = ReplicatedStorage:WaitForChild("API")
     api:WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(unpack(argsAnim))
-    wait(0.5)
     
-    -- Try each resolution type for levels 1, 2, 3
+    -- Try different resolutions
     local resolutions = {"walk", "ride", "play", "sleepy", "hungry", "thirsty", "dirty", "toilet", "bored", "sick", "pet_me"}
     
     for _, resolution in ipairs(resolutions) do
-        print("Trying resolution:", resolution)
-        local levelSuccess = true
+        print("Trying:", resolution)
+        local ok = true
         
         for level = 1, 3 do
-            local argsMystery = {
-                petID,           -- Pet unique ID
-                "mystery",       -- Ailment type
-                level,           -- Level (1, 2, or 3)
-                resolution       -- Resolution type
-            }
-            
-            local successCall, err = pcall(function()
-                api:WaitForChild("AilmentsAPI/ChooseMysteryAilment"):FireServer(unpack(argsMystery))
+            local success, err = pcall(function()
+                api:WaitForChild("AilmentsAPI/ChooseMysteryAilment"):FireServer(petID, "mystery", level, resolution)
             end)
             
-            if not successCall then
-                levelSuccess = false
-                print("Failed level " .. level .. " with resolution " .. resolution .. ": " .. tostring(err))
+            if not success then
+                ok = false
                 break
             end
-            
-            print("✓ Level " .. level .. " resolved as: " .. resolution)
-            wait(1) -- 1 second delay
+            wait(1)
         end
         
-        if levelSuccess then
-            print("✅ Mystery fully resolved as: " .. resolution)
+        if ok then
+            print("Resolved mystery as:", resolution)
             return true
         end
     end
     
-    print("❌ Could not resolve mystery ailment")
     return false
 end
 
 -- Run it
-findAndHandleMysteryAilment()
+handleMysteryAilment()
