@@ -1,0 +1,955 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- LocalScript (place this in StarterPlayerScripts)
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+
+-- Debug settings
+local DEBUG_MODE = true
+
+-- PetFarm variables
+local PetFarmMode = false
+local petFarmCoroutine = nil
+local PetID = nil
+local selectedPetName = nil
+local PetsShow = {}
+
+-- Auto PetPen variables
+local AutoPetPenMode = true
+local autoPetPenCoroutine = nil
+local lastPetPenCommitTime = 0
+
+-- Session tracking
+local sessionBucksEarned = 0
+local sessionPotionsEarned = 0
+local lastMoneyAmount = 0
+local lastPotionAmount = 0
+
+-- Task cooldowns
+local lastTaskTime = {}
+local TASK_COOLDOWN = 30
+
+-- Priority eggs for Auto PetPen
+local priorityEggs = {
+    "sugarfest_2026_jiggly_jerboa",
+    "sugarfest_2026_cocoadile",
+    "egg_teaser_2026_dire_wolf",
+    "cracked_egg",
+    "starter_egg"
+}
+local prioritySet = {}
+for _, v in ipairs(priorityEggs) do prioritySet[v] = true end
+
+-- Required furniture with item IDs for auto-buy
+local REQUIRED_FURNITURE = {
+    BasicBed = {id = "basic_bed", name = "BasicBed"},
+    PetFoodBowl = {id = "pet_food_bowl", name = "PetFoodBowl"},
+    PetWaterBowl = {id = "pet_water_bowl", name = "PetWaterBowl"},
+    CheapPetBathtub = {id = "cheap_pet_bathtub", name = "CheapPetBathtub"},
+    Piano = {id = "piano", name = "Piano"},
+    AilmentsRefresh2024LitterBox = {id = "litter_box", name = "AilmentsRefresh2024LitterBox"},
+}
+
+-- Ailment to Furniture Mapping
+local AILMENT_TASKS = {
+    sleepy = "BasicBed",
+    hungry = "PetFoodBowl",
+    thirsty = "PetWaterBowl",
+    dirty = "CheapPetBathtub",
+    bored = "Piano",
+    toilet = "AilmentsRefresh2024LitterBox",
+    play = "THROW_TOY",
+    walk = "WALK_HANDLER",
+    ride = "STROLLER_HANDLER",
+    sick = "HEALING_APPLE",
+    mystery = "MYSTERY_HANDLER",
+    pet_me = "PET_ME_HANDLER"
+}
+
+-- Debug function
+local function debugPrint(message)
+    if not DEBUG_MODE then return end
+    local timestamp = os.date("[%H:%M:%S]")
+    print(timestamp .. " [PetFarm] " .. message)
+end
+
+-- ==================================================================
+-- CORE FUNCTIONS
+-- ==================================================================
+
+local function safeRemoteCall(remotePath, method, ...)
+    local args = {...}
+    local remote = ReplicatedStorage:FindFirstChild("API")
+    if not remote then return false, "API not found" end
+
+    for _, path in ipairs(remotePath) do
+        remote = remote:FindFirstChild(path)
+        if not remote then return false, "Remote not found: " .. path end
+    end
+
+    if method == "InvokeServer" then
+        local success, result = pcall(function() return remote:InvokeServer(unpack(args)) end)
+        return success, result
+    elseif method == "FireServer" then
+        local success, result = pcall(function() remote:FireServer(unpack(args)) end)
+        return success, result
+    end
+    return false, "Invalid method"
+end
+
+local function getPlayerData()
+    local success, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not success or not clientData then return nil end
+    local success2, allData = pcall(clientData.get_data, clientData)
+    if not success2 or not allData or not allData[player.Name] then return nil end
+    return allData[player.Name]
+end
+
+local function getCurrentMoneyAndPotions()
+    local playerData = getPlayerData()
+    if not playerData then return 0, 0 end
+    local money = playerData.money or 0
+    local potions = 0
+    if playerData.inventory and playerData.inventory.food then
+        for _, foodData in pairs(playerData.inventory.food) do
+            if foodData.id and string.find(string.lower(foodData.id), "potion") then
+                potions = potions + (foodData.amount or 1)
+            end
+        end
+    end
+    return money, potions
+end
+
+local function updateSessionEarnings()
+    local currentMoney, currentPotions = getCurrentMoneyAndPotions()
+    if lastMoneyAmount == 0 then lastMoneyAmount = currentMoney end
+    if lastPotionAmount == 0 then lastPotionAmount = currentPotions end
+    sessionBucksEarned = currentMoney - lastMoneyAmount
+    sessionPotionsEarned = currentPotions - lastPotionAmount
+    return currentMoney, currentPotions
+end
+
+local function isPetEquipped(petUniqueID)
+    local data = getPlayerData()
+    if not data or not data.equip_manager or not data.equip_manager.pets then return false end
+    for _, equippedPet in pairs(data.equip_manager.pets) do
+        if equippedPet and equippedPet.unique == petUniqueID then return true end
+    end
+    return false
+end
+
+local function findPlayerPetInWorkspace()
+    local petsFolder = workspace:FindFirstChild("Pets")
+    if not petsFolder then return nil end
+    for _, pet in ipairs(petsFolder:GetChildren()) do
+        if pet:IsA("Model") then
+            local owner = pet:FindFirstChild("Owner")
+            if owner and owner.Value == player then return pet end
+        end
+    end
+    return nil
+end
+
+local function ensureCharacterSpawned()
+    local char = player.Character
+    if char and char.Parent and char:FindFirstChild("HumanoidRootPart") then return char end
+    debugPrint("Respawning character...")
+    safeRemoteCall({"TeamAPI/Spawn"}, "InvokeServer")
+    task.wait(5)
+    return player.Character
+end
+
+-- ==================================================================
+-- AUTO BUY FURNITURE
+-- ==================================================================
+
+local function findFurnitureByName(name)
+    local hi = workspace:FindFirstChild("HouseInteriors")
+    if hi then
+        for _, folder in ipairs(hi:GetChildren()) do
+            if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
+                local model = folder:FindFirstChild(name)
+                if model and model:IsA("Model") then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function buyFurniture(furnitureName, itemId)
+    debugPrint("🛒 Buying: " .. furnitureName)
+    local success, result = safeRemoteCall({"ShopAPI/BuyItem"}, "InvokeServer", "furniture", itemId, {buy_count = 1})
+    if success then
+        debugPrint("✅ Bought: " .. furnitureName)
+        task.wait(2)
+        return true
+    end
+    debugPrint("❌ Failed to buy: " .. furnitureName)
+    return false
+end
+
+local function ensureAllFurniture()
+    for furnitureName, furnitureData in pairs(REQUIRED_FURNITURE) do
+        if not findFurnitureByName(furnitureName) then
+            buyFurniture(furnitureName, furnitureData.id)
+        end
+    end
+end
+
+-- ==================================================================
+-- FURNITURE ACTIVATION
+-- ==================================================================
+
+local function getFurnitureData(furnitureName)
+    local hi = workspace:FindFirstChild("HouseInteriors")
+    if not hi then return nil end
+    
+    for _, folder in ipairs(hi:GetChildren()) do
+        if string.find(folder.Name, player.Name) or string.find(folder.Name, "f%-%d+") then
+            local model = folder:FindFirstChild(furnitureName)
+            if model and model:IsA("Model") then
+                local useBlock = model:FindFirstChild("UseBlocks")
+                local part = nil
+                if useBlock then part = useBlock:FindFirstChild("UseBlock") end
+                if not part then part = model:FindFirstChild("UseBlock") end
+                if not part then part = model:FindFirstChildWhichIsA("BasePart") end
+                if part then
+                    return {
+                        folderId = string.match(folder.Name, "f%-%d+") or folder.Name,
+                        partName = part.Name,
+                        cframe = part.CFrame
+                    }
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function useFurniture(furnitureName)
+    -- Check and buy if missing
+    if not findFurnitureByName(furnitureName) then
+        for name, data in pairs(REQUIRED_FURNITURE) do
+            if name == furnitureName then
+                buyFurniture(furnitureName, data.id)
+                task.wait(2)
+                break
+            end
+        end
+    end
+    
+    local furnitureData = getFurnitureData(furnitureName)
+    if not furnitureData then
+        debugPrint("⚠️ Still missing: " .. furnitureName)
+        return false
+    end
+    
+    local pet = findPlayerPetInWorkspace()
+    if not pet then return false end
+    
+    local char = ensureCharacterSpawned()
+    if not char then return false end
+    
+    local args = {player, furnitureData.folderId, furnitureData.partName, {cframe = furnitureData.cframe}, pet}
+    local success = safeRemoteCall({"HousingAPI/ActivateFurniture"}, "InvokeServer", unpack(args))
+    
+    if success then
+        debugPrint("✅ Used: " .. furnitureName)
+        task.wait(20)
+        return true
+    end
+    return false
+end
+
+-- ==================================================================
+-- SPECIAL AILMENT HANDLERS (FULLY RESTORED)
+-- ==================================================================
+
+local function handlePetMeAilment()
+    debugPrint("✋ Petting pet...")
+    local pet = findPlayerPetInWorkspace()
+    if not pet then return false end
+    
+    -- Focus pet
+    safeRemoteCall({"AdoptAPI/FocusPet"}, "FireServer", pet)
+    task.wait(0.5)
+    
+    -- Set pet sitting
+    local sitAnim = string.find(pet.Name:lower(), "dog") and "DogSit" or "CatSit"
+    safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", pet, {
+        local_anim_name = sitAnim,
+        local_anim_speed = 1,
+        dont_allow_sit_states = true,
+        dont_allow_remote_interaction = true,
+        anim_fade_time = 0.2
+    })
+    task.wait(1)
+    
+    -- Try multiple endpoints to progress ailment
+    local endpoints = {"AilmentsAPI/ProgressPetMeAilment", "PetAPI/ProgressPetMeAilment", "AdoptAPI/ProgressPetMeAilment"}
+    for _, endpoint in ipairs(endpoints) do
+        local success = safeRemoteCall({endpoint}, "FireServer", PetID)
+        if success then break end
+    end
+    task.wait(2)
+    
+    -- Unfocus
+    safeRemoteCall({"AdoptAPI/UnfocusPet"}, "FireServer", pet)
+    return true
+end
+
+local function handlePlayAilment()
+    debugPrint("🎾 Playing with squeaky bone...")
+    -- Find squeaky bone
+    local playerData = getPlayerData()
+    local toyID = nil
+    if playerData and playerData.inventory.toys then
+        for id, data in pairs(playerData.inventory.toys) do
+            if data.id == "squeaky_bone_default" then
+                toyID = id
+                break
+            end
+        end
+    end
+    if not toyID then 
+        debugPrint("No squeaky bone found")
+        return false 
+    end
+    
+    -- Throw toy 3 times
+    for i = 1, 3 do
+        safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", toyID, {use_sound_delay = true, equip_as_last = false})
+        task.wait(1)
+        safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", toyID, "START")
+        task.wait(1)
+        safeRemoteCall({"PetObjectAPI/CreatePetObject"}, "InvokeServer", "__Enum_PetObjectCreatorType_1", {reaction_name = "ThrowToyReaction", unique_id = toyID})
+        task.wait(1)
+        safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", toyID, "END")
+        if i < 3 then task.wait(9) end
+    end
+    return true
+end
+
+local function handleWalkAilment()
+    debugPrint("🚶 Walking pet...")
+    -- Unsubscribe from house to go outside
+    safeRemoteCall({"HousingAPI/UnsubscribeFromHouse"}, "InvokeServer", player, true)
+    task.wait(5)
+    
+    -- Walk around for 20 seconds
+    for i = 1, 20 do
+        if not PetFarmMode then return false end
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, nil)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, nil)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, nil)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, nil)
+    end
+    
+    -- Respawn back to house
+    safeRemoteCall({"TeamAPI/Spawn"}, "InvokeServer")
+    task.wait(5)
+    return true
+end
+
+local function handleRideAilment()
+    debugPrint("🛺 Riding pet...")
+    -- Find stroller
+    local playerData = getPlayerData()
+    local strollerID = nil
+    if playerData and playerData.inventory.strollers then
+        for id, _ in pairs(playerData.inventory.strollers) do
+            strollerID = id
+            break
+        end
+    end
+    if not strollerID then
+        debugPrint("No stroller found")
+        return false
+    end
+    
+    -- Unsubscribe from house
+    safeRemoteCall({"HousingAPI/UnsubscribeFromHouse"}, "InvokeServer", player, true)
+    task.wait(5)
+    
+    -- Equip and ride stroller
+    safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", strollerID, {use_sound_delay = true, equip_as_last = true})
+    task.wait(3)
+    
+    -- Move around
+    for i = 1, 20 do
+        if not PetFarmMode then return false end
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, nil)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, nil)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, nil)
+        task.wait(1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, nil)
+    end
+    
+    -- Unequip and respawn
+    safeRemoteCall({"ToolAPI/Unequip"}, "InvokeServer", strollerID)
+    safeRemoteCall({"TeamAPI/Spawn"}, "InvokeServer")
+    task.wait(5)
+    return true
+end
+
+local function handleSickAilment()
+    debugPrint("💊 Using healing apple...")
+    local playerData = getPlayerData()
+    local appleID = nil
+    if playerData and playerData.inventory.food then
+        for id, data in pairs(playerData.inventory.food) do
+            if data.id == "healing_apple" then
+                appleID = id
+                break
+            end
+        end
+    end
+    
+    if not appleID then
+        safeRemoteCall({"ShopAPI/BuyItem"}, "InvokeServer", "food", "healing_apple", {buy_count = 1})
+        task.wait(2)
+        -- Find again
+        playerData = getPlayerData()
+        if playerData and playerData.inventory.food then
+            for id, data in pairs(playerData.inventory.food) do
+                if data.id == "healing_apple" then appleID = id; break end
+            end
+        end
+    end
+    
+    if not appleID or not PetID then return false end
+    
+    safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", appleID, {use_sound_delay = true, equip_as_last = false})
+    task.wait(1)
+    safeRemoteCall({"ToolAPI/ServerUseTool"}, "FireServer", appleID, "START")
+    task.wait(1)
+    safeRemoteCall({"PetObjectAPI/CreatePetObject"}, "InvokeServer", "__Enum_PetObjectCreatorType_2", {additional_consume_uniques = {}, pet_unique = PetID, unique_id = appleID})
+    task.wait(2)
+    safeRemoteCall({"ToolAPI/Unequip"}, "InvokeServer", appleID)
+    return true
+end
+
+local function handleMysteryAilment(ailmentId)
+    debugPrint("❓ Resolving mystery ailment...")
+    local tasks = {"bored", "sick", "pet_me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
+    
+    for _, chosenAilment in ipairs(tasks) do
+        local allLevelsSuccess = true
+        for level = 1, 3 do
+            local success = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, chosenAilment)
+            if not success then
+                allLevelsSuccess = false
+                break
+            end
+            task.wait(1)
+        end
+        if allLevelsSuccess then
+            debugPrint("✅ Mystery resolved as: " .. chosenAilment)
+            return true
+        end
+    end
+    return false
+end
+
+-- ==================================================================
+-- AILMENT MONITORING
+-- ==================================================================
+
+local function ensurePetEquipped()
+    if not PetID then return false end
+    if isPetEquipped(PetID) then return true end
+    debugPrint("Re-equipping pet...")
+    safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", PetID, {use_sound_delay = true, equip_as_last = false})
+    task.wait(3)
+    return isPetEquipped(PetID)
+end
+
+local function monitorAilments()
+    debugPrint("Starting ailment monitor...")
+    
+    while PetFarmMode do
+        ensurePetEquipped()
+        
+        local playerData = getPlayerData()
+        if playerData and playerData.ailments_manager and playerData.ailments_manager.ailments and PetID then
+            local ailments = playerData.ailments_manager.ailments[PetID]
+            if ailments then
+                local currentTime = os.time()
+                
+                for ailmentType, handlerName in pairs(AILMENT_TASKS) do
+                    if ailments[ailmentType] and type(ailments[ailmentType]) == "table" then
+                        if not lastTaskTime[ailmentType] or (currentTime - lastTaskTime[ailmentType]) >= TASK_COOLDOWN then
+                            local success = false
+                            
+                            -- Route to correct handler
+                            if ailmentType == "pet_me" then
+                                success = handlePetMeAilment()
+                            elseif ailmentType == "play" then
+                                success = handlePlayAilment()
+                            elseif ailmentType == "walk" then
+                                success = handleWalkAilment()
+                            elseif ailmentType == "ride" then
+                                success = handleRideAilment()
+                            elseif ailmentType == "sick" then
+                                success = handleSickAilment()
+                            elseif ailmentType == "mystery" then
+                                success = handleMysteryAilment(ailments[ailmentType].id or PetID)
+                            else
+                                -- Regular furniture ailments
+                                success = useFurniture(handlerName)
+                            end
+                            
+                            if success then
+                                lastTaskTime[ailmentType] = currentTime
+                                debugPrint("✅ Handled: " .. ailmentType)
+                            else
+                                debugPrint("❌ Failed: " .. ailmentType)
+                            end
+                            break -- Handle one ailment per cycle
+                        end
+                    end
+                end
+            end
+        end
+        
+        task.wait(10)
+    end
+end
+
+local function startPetFarm()
+    debugPrint("Starting PetFarm...")
+    if not PetID then PetFarmMode = false; return end
+    
+    ensureCharacterSpawned()
+    ensurePetEquipped()
+    ensureAllFurniture() -- Auto-buy missing furniture on start
+    
+    monitorAilments()
+end
+
+local function togglePetFarmMode()
+    PetFarmMode = not PetFarmMode
+    if PetFarmMode then
+        if not PetID then debugPrint("No pet selected!"); PetFarmMode = false; return end
+        debugPrint("PetFarm: ENABLED")
+        petFarmCoroutine = coroutine.wrap(startPetFarm)()
+    else
+        debugPrint("PetFarm: DISABLED")
+        petFarmCoroutine = nil
+    end
+end
+
+-- ==================================================================
+-- AUTO PETPEN
+-- ==================================================================
+
+local function getPetPenSnapshot()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.idle_progression_manager or not playerData.idle_progression_manager.active_pets then
+        return {}
+    end
+    local snapshot = {}
+    for uniqueId, _ in pairs(playerData.idle_progression_manager.active_pets) do
+        local pet = playerData.inventory.pets[uniqueId]
+        if pet then
+            table.insert(snapshot, {name = pet.id, age = pet.properties.age or 0, neon = pet.properties.neon or false, unique_id = uniqueId})
+        end
+    end
+    return snapshot
+end
+
+local function purgeNonPriorityGarbage()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.idle_progression_manager or not playerData.idle_progression_manager.active_pets then
+        return 0
+    end
+    
+    local removed = 0
+    for uniqueId, _ in pairs(playerData.idle_progression_manager.active_pets) do
+        local pet = playerData.inventory.pets[uniqueId]
+        if pet and pet.id and pet.properties then
+            local cleanName = string.lower(pet.id)
+            local isNeon = pet.properties.neon
+            if not isNeon and not prioritySet[cleanName] then
+                safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", uniqueId)
+                removed = removed + 1
+                task.wait(0.7)
+            end
+        end
+    end
+    return removed
+end
+
+local function addPriorityPets()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        return 0
+    end
+    
+    local snapshot = getPetPenSnapshot()
+    local slotsOpen = 4 - #snapshot
+    if slotsOpen <= 0 then return 0 end
+    
+    local added = 0
+    local addedSet = {}
+    
+    -- Add neon pets first
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        if petData.properties.neon and added < slotsOpen and not addedSet[uniqueId] then
+            safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
+            added = added + 1
+            addedSet[uniqueId] = true
+            task.wait(0.6)
+        end
+    end
+    
+    -- Add priority eggs
+    for _, eggName in ipairs(priorityEggs) do
+        for uniqueId, petData in pairs(playerData.inventory.pets) do
+            if petData.id == eggName and added < slotsOpen and not addedSet[uniqueId] then
+                safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
+                added = added + 1
+                addedSet[uniqueId] = true
+                task.wait(0.6)
+            end
+        end
+    end
+    
+    return added
+end
+
+local function startAutoPetPen()
+    while AutoPetPenMode do
+        debugPrint("=== Auto PetPen Cycle ===")
+        
+        purgeNonPriorityGarbage()
+        task.wait(2)
+        
+        local snapshot = getPetPenSnapshot()
+        for _, pet in ipairs(snapshot) do
+            if pet.age >= 6 then
+                safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", pet.unique_id)
+                task.wait(0.7)
+            end
+        end
+        
+        task.wait(2)
+        addPriorityPets()
+        
+        if os.time() - lastPetPenCommitTime >= 300 then
+            safeRemoteCall({"IdleProgressionAPI/CommitAllProgression"}, "FireServer")
+            debugPrint("Committed rewards")
+            lastPetPenCommitTime = os.time()
+        end
+        
+        task.wait(60)
+    end
+end
+
+local function toggleAutoPetPenMode()
+    AutoPetPenMode = not AutoPetPenMode
+    if AutoPetPenMode then
+        debugPrint("Auto PetPen: ENABLED")
+        lastPetPenCommitTime = os.time()
+        autoPetPenCoroutine = coroutine.wrap(startAutoPetPen)()
+    else
+        debugPrint("Auto PetPen: DISABLED")
+        autoPetPenCoroutine = nil
+    end
+end
+
+-- ==================================================================
+-- PET SELECTION
+-- ==================================================================
+
+local function getAllValidPets()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then
+        return {}
+    end
+    
+    local validPets = {}
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        if petData and petData.id and petData.properties then
+            local petName = string.lower(petData.id)
+            if not string.find(petName, "practice_dog") then
+                table.insert(validPets, {
+                    unique = uniqueId,
+                    id = petData.id,
+                    age = petData.properties.age or 0,
+                    neon = petData.properties.neon or false
+                })
+            end
+        end
+    end
+    
+    -- Sort by priority: Dog > Cat > Starter_Egg > Others
+    table.sort(validPets, function(a, b)
+        local aIsDog = string.find(string.lower(a.id), "dog")
+        local bIsDog = string.find(string.lower(b.id), "dog")
+        local aIsCat = string.find(string.lower(a.id), "cat")
+        local bIsCat = string.find(string.lower(b.id), "cat")
+        local aIsEgg = string.find(string.lower(a.id), "starter_egg")
+        local bIsEgg = string.find(string.lower(b.id), "starter_egg")
+        
+        if aIsDog and not bIsDog then return true end
+        if not aIsDog and bIsDog then return false end
+        if aIsCat and not bIsCat and not bIsDog then return true end
+        if not aIsCat and bIsCat and not aIsDog then return false end
+        if aIsEgg and not bIsEgg and not bIsDog and not bIsCat then return true end
+        return a.age > b.age
+    end)
+    
+    return validPets
+end
+
+-- ==================================================================
+-- UI CREATION
+-- ==================================================================
+
+local function createUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PetFarmUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 220, 0, 200)
+    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = frame
+    
+    -- Session stats
+    local sessionLabel = Instance.new("TextLabel")
+    sessionLabel.Size = UDim2.new(1, 0, 0, 20)
+    sessionLabel.Position = UDim2.new(0, 5, 0, 0)
+    sessionLabel.BackgroundTransparency = 1
+    sessionLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sessionLabel.Text = "💵 0 +0 | 🧪 0 +0"
+    sessionLabel.Font = Enum.Font.SourceSans
+    sessionLabel.TextSize = 11
+    sessionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sessionLabel.Parent = frame
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Position = UDim2.new(0, 0, 0, 20)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "🐾 PetFarm - Auto Care"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 12
+    title.Parent = frame
+    
+    -- Auto PetPen button
+    local petPenButton = Instance.new("TextButton")
+    petPenButton.Size = UDim2.new(0, 200, 0, 25)
+    petPenButton.Position = UDim2.new(0, 10, 0, 45)
+    petPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    petPenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    petPenButton.Text = "📦 Auto PetPen [ON]"
+    petPenButton.Font = Enum.Font.SourceSansBold
+    petPenButton.TextSize = 11
+    petPenButton.Parent = frame
+    
+    local penCorner = Instance.new("UICorner")
+    penCorner.CornerRadius = UDim.new(0, 4)
+    penCorner.Parent = petPenButton
+    
+    -- PetFarm button
+    local farmButton = Instance.new("TextButton")
+    farmButton.Size = UDim2.new(0, 200, 0, 25)
+    farmButton.Position = UDim2.new(0, 10, 0, 75)
+    farmButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    farmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    farmButton.Text = "🐕 START PETFARM"
+    farmButton.Font = Enum.Font.SourceSansBold
+    farmButton.TextSize = 11
+    farmButton.Parent = frame
+    
+    local farmCorner = Instance.new("UICorner")
+    farmCorner.CornerRadius = UDim.new(0, 4)
+    farmCorner.Parent = farmButton
+    
+    -- Status label
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, 0, 0, 20)
+    statusLabel.Position = UDim2.new(0, 0, 0, 105)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    statusLabel.Text = "Status: Ready"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 10
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = frame
+    
+    -- Pet dropdown (at bottom)
+    local dropdownFrame = Instance.new("Frame")
+    dropdownFrame.Size = UDim2.new(0, 200, 0, 55)
+    dropdownFrame.Position = UDim2.new(0, 10, 0, 130)
+    dropdownFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    dropdownFrame.BorderSizePixel = 0
+    dropdownFrame.Parent = frame
+    
+    local dropdownCorner = Instance.new("UICorner")
+    dropdownCorner.CornerRadius = UDim.new(0, 4)
+    dropdownCorner.Parent = dropdownFrame
+    
+    local dropdownTitle = Instance.new("TextLabel")
+    dropdownTitle.Size = UDim2.new(1, 0, 0, 15)
+    dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
+    dropdownTitle.BackgroundTransparency = 1
+    dropdownTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dropdownTitle.Text = "📋 Select Pet (No practice_dog)"
+    dropdownTitle.Font = Enum.Font.SourceSansBold
+    dropdownTitle.TextSize = 9
+    dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
+    dropdownTitle.Parent = dropdownFrame
+    
+    local dropdownButton = Instance.new("TextButton")
+    dropdownButton.Size = UDim2.new(1, 0, 0, 25)
+    dropdownButton.Position = UDim2.new(0, 0, 0, 15)
+    dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    dropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dropdownButton.Text = "Loading pets..."
+    dropdownButton.Font = Enum.Font.SourceSans
+    dropdownButton.TextSize = 10
+    dropdownButton.Parent = dropdownFrame
+    
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 4)
+    buttonCorner.Parent = dropdownButton
+    
+    local dropdownList = Instance.new("ScrollingFrame")
+    dropdownList.Size = UDim2.new(1, 0, 0, 120)
+    dropdownList.Position = UDim2.new(0, 0, 1, 0)
+    dropdownList.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    dropdownList.BorderSizePixel = 0
+    dropdownList.Visible = false
+    dropdownList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    dropdownList.ScrollBarThickness = 3
+    dropdownList.Parent = dropdownFrame
+    
+    local listCorner = Instance.new("UICorner")
+    listCorner.CornerRadius = UDim.new(0, 4)
+    listCorner.Parent = dropdownList
+    
+    -- Update pet dropdown
+    local function updatePetList()
+        for _, child in ipairs(dropdownList:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+        
+        local validPets = getAllValidPets()
+        if #validPets == 0 then
+            dropdownButton.Text = "No pets found"
+            return
+        end
+        
+        dropdownButton.Text = "Select a Pet (" .. #validPets .. ")"
+        
+        for i, pet in ipairs(validPets) do
+            local option = Instance.new("TextButton")
+            option.Size = UDim2.new(1, 0, 0, 20)
+            option.Position = UDim2.new(0, 0, 0, (i - 1) * 20)
+            option.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            option.TextColor3 = Color3.fromRGB(255, 255, 255)
+            local neonText = pet.neon and " 🔥" or ""
+            option.Text = pet.id .. " (Age: " .. pet.age .. ")" .. neonText
+            option.Font = Enum.Font.SourceSans
+            option.TextSize = 9
+            option.Parent = dropdownList
+            
+            option.MouseButton1Click:Connect(function()
+                dropdownButton.Text = option.Text
+                dropdownList.Visible = false
+                PetID = pet.unique
+                selectedPetName = pet.id
+                debugPrint("Selected: " .. pet.id)
+                statusLabel.Text = "Status: Selected - " .. pet.id
+            end)
+        end
+        
+        dropdownList.CanvasSize = UDim2.new(0, 0, 0, #validPets * 20)
+    end
+    
+    local dropdownOpen = false
+    dropdownButton.MouseButton1Click:Connect(function()
+        dropdownOpen = not dropdownOpen
+        dropdownList.Visible = dropdownOpen
+        if dropdownOpen then updatePetList() end
+    end)
+    
+    -- Button connections
+    petPenButton.MouseButton1Click:Connect(function()
+        toggleAutoPetPenMode()
+        petPenButton.Text = AutoPetPenMode and "📦 Auto PetPen [ON]" or "📦 Auto PetPen [OFF]"
+        petPenButton.BackgroundColor3 = AutoPetPenMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+    end)
+    
+    farmButton.MouseButton1Click:Connect(function()
+        if not PetID and not PetFarmMode then
+            statusLabel.Text = "⚠️ Select a pet first!"
+            return
+        end
+        togglePetFarmMode()
+        farmButton.Text = PetFarmMode and "🛑 STOP PETFARM" or "🐕 START PETFARM"
+        farmButton.BackgroundColor3 = PetFarmMode and Color3.fromRGB(170, 0, 0) or Color3.fromRGB(0, 170, 0)
+        statusLabel.Text = PetFarmMode and ("Status: ✅ Running - " .. (selectedPetName or "Pet")) or "Status: Stopped"
+        statusLabel.TextColor3 = PetFarmMode and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 200, 100)
+    end)
+    
+    return {
+        sessionLabel = sessionLabel,
+        statusLabel = statusLabel
+    }
+end
+
+-- ==================================================================
+-- INITIALIZATION
+-- ==================================================================
+
+local ui = createUI()
+
+lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
+
+-- Update session display
+coroutine.wrap(function()
+    while true do
+        local currentMoney, currentPotions = updateSessionEarnings()
+        if ui and ui.sessionLabel then
+            ui.sessionLabel.Text = string.format("💵 %d +%d | 🧪 %d +%d",
+                currentMoney, sessionBucksEarned,
+                currentPotions, sessionPotionsEarned)
+        end
+        task.wait(1)
+    end
+end)()
+
+-- Auto-start PetPen
+toggleAutoPetPenMode()
+
+debugPrint("========================================")
+debugPrint("✅ Full PetFarm Loaded!")
+debugPrint("   - Auto PetPen: ON")
+debugPrint("   - All ailments handled:")
+debugPrint("     • Furniture: sleepy, hungry, thirsty, dirty, bored, toilet")
+debugPrint("     • Special: pet_me, play, walk, ride, sick, mystery")
+debugPrint("   - Auto-buys missing furniture")
+debugPrint("   - Select pet from dropdown")
+debugPrint("========================================")
