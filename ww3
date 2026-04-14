@@ -52,7 +52,7 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
--- Ailment to Furniture Mapping (pet_me is handled separately)
+-- Ailment to Furniture Mapping (pet_me is included but handled separately)
 local AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "PetFoodBowl",
@@ -64,8 +64,8 @@ local AILMENT_TASKS = {
     walk = "WALK_HANDLER",
     ride = "STROLLER_HANDLER",
     sick = "HEALING_APPLE",
-    mystery = "MYSTERY_HANDLER"
-    -- pet_me is NOT here - handled separately
+    mystery = "MYSTERY_HANDLER",
+    pet_me = "PET_ME_HANDLER"
 }
 
 -- Task cooldowns
@@ -178,7 +178,7 @@ local function isPetEquipped(petUniqueID)
     return false
 end
 
--- Find player's pet in workspace
+-- Find player's pet in workspace (UPDATED)
 local function findPlayerPetInWorkspace()
     local petsFolder = workspace:FindFirstChild("Pets")
     if not petsFolder then
@@ -191,6 +191,7 @@ local function findPlayerPetInWorkspace()
             if owner and owner.Value == player then
                 return pet
             end
+            -- Recognize Starter Egg, Dog, Cat, or any pet model
             local petName = pet.Name
             if petName == "Dog" or petName == "Cat" or petName == "Starter Egg" or string.find(petName:lower(), "egg") then
                 return pet
@@ -364,10 +365,10 @@ local function useFurnitureWithPet(furnitureName)
 end
 
 -- ==================================================================
--- PET ME AILMENT HANDLER (FIXED - MATCHES YOUR WORKING EXAMPLE)
+-- PET ME AILMENT HANDLER (SPECIAL - NOT FURNITURE)
 -- ==================================================================
 
--- Find the pet model in workspace
+-- Find the pet model in workspace (UPDATED)
 local function findPetModel(petUniqueID)
     debugPrint("Searching for pet model with ID: " .. tostring(petUniqueID))
     local data = getPlayerData()
@@ -390,9 +391,10 @@ local function findPetModel(petUniqueID)
                 debugPrint("Found pet model: " .. petModel.Name)
                 return petModel
             end
-            -- Try case-insensitive search
+            -- Try case-insensitive search for Starter Egg, Dog, Cat, etc.
             for _, child in pairs(petsFolder:GetChildren()) do
-                if string.lower(child.Name) == string.lower(petData.id) then
+                if string.lower(child.Name) == string.lower(petData.id) or
+                   (string.lower(petData.id) == "starter_egg" and string.lower(child.Name) == "starter egg") then
                     debugPrint("Found pet model (case-insensitive): " .. child.Name)
                     return child
                 end
@@ -405,13 +407,139 @@ local function findPetModel(petUniqueID)
     return nil
 end
 
--- Main function to handle 'Pet Me' ailment (EXACTLY matching your working example)
+-- Focus on the pet
+local function focusPet(petModel)
+    if not petModel then
+        debugPrint("No pet model provided")
+        return false
+    end
+    debugPrint("Focusing pet: " .. petModel.Name)
+    local args = { petModel }
+    local success, err = safeRemoteCall({"AdoptAPI/FocusPet"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully focused pet")
+        task.wait(0.5)
+        return true
+    else
+        debugPrint("Failed to focus pet: " .. tostring(err))
+        return false
+    end
+end
+
+-- Unfocus the pet
+local function unfocusPet(petModel)
+    if not petModel then
+        debugPrint("No pet model provided for unfocus")
+        return false
+    end
+    debugPrint("Unfocusing pet: " .. petModel.Name)
+    local args = { petModel }
+    local success, err = safeRemoteCall({"AdoptAPI/UnfocusPet"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully unfocused pet")
+        return true
+    else
+        debugPrint("Failed to unfocus pet: " .. tostring(err))
+        return false
+    end
+end
+
+-- Set pet in sitting state (UPDATED)
+local function setPetSitting(petModel)
+    if not petModel then
+        debugPrint("No pet model provided")
+        return false
+    end
+    debugPrint("Setting pet to sit state: " .. petModel.Name)
+    local sitAnimation = "DogSit"
+    -- Use CatSit for Starter Egg, Cat, or any non-Dog pet
+    if string.find(petModel.Name:lower(), "cat") or string.find(petModel.Name:lower(), "egg") then
+        sitAnimation = "CatSit"
+    end
+    local args = {
+        petModel,
+        {
+            local_anim_name = sitAnimation,
+            local_anim_speed = 1,
+            dont_allow_sit_states = true,
+            dont_allow_remote_interaction = true,
+            anim_fade_time = 0.2
+        }
+    }
+    local success, err = safeRemoteCall({"PetAPI/ReplicatePerformanceModifiers"}, "FireServer", unpack(args))
+    if success then
+        debugPrint("Successfully set pet to sit state")
+        return true
+    else
+        debugPrint("Failed to set sit state: " .. tostring(err))
+        return false
+    end
+end
+
+-- Progress the "Pet Me" ailment
+local function progressPetMeAilment(petUniqueID, petModel)
+    if not petUniqueID or not petModel then
+        debugPrint("Missing pet ID or model")
+        return false
+    end
+    debugPrint("Attempting to progress 'Pet Me' ailment...")
+
+    if not focusPet(petModel) then
+        debugPrint("Failed to focus pet for ailment progression")
+        return false
+    end
+    task.wait(0.5)
+
+    if not setPetSitting(petModel) then
+        debugPrint("Failed to set pet to sitting state")
+        return false
+    end
+    task.wait(1)
+
+    -- Try different endpoints to progress the ailment
+    local possibleEndpoints = {
+        "AilmentsAPI/ProgressPetMeAilment",
+        "PetAPI/ProgressPetMeAilment",
+        "AdoptAPI/ProgressPetMeAilment",
+        "PetAPI/ReplicateActivePerformances",
+        "PetAPI/ReplicatePerformanceModifiers"
+    }
+
+    for _, endpoint in pairs(possibleEndpoints) do
+        debugPrint("Trying endpoint: " .. endpoint)
+        local args = { petUniqueID }
+        local success, err = safeRemoteCall({endpoint}, "FireServer", unpack(args))
+        if success then
+            debugPrint("Successfully called: " .. endpoint)
+            return true
+        else
+            debugPrint("Failed to call " .. endpoint .. ": " .. tostring(err))
+        end
+    end
+
+    -- Try with pet model instead of ID
+    for _, endpoint in pairs(possibleEndpoints) do
+        debugPrint("Trying endpoint with model: " .. endpoint)
+        local args = { petModel }
+        local success, err = safeRemoteCall({endpoint}, "FireServer", unpack(args))
+        if success then
+            debugPrint("Successfully called: " .. endpoint)
+            return true
+        else
+            debugPrint("Failed to call " .. endpoint .. ": " .. tostring(err))
+        end
+    end
+
+    debugPrint("Could not find working endpoint for ailment progression")
+    return false
+end
+
+-- Main function to handle 'Pet Me' ailment
 local function handlePetMeAilment(petUniqueID)
     debugPrint("========================================")
     debugPrint("✋ PET ME AILMENT HANDLING")
     debugPrint("========================================")
 
-    -- Find the pet model in workspace
     local petModel = findPetModel(petUniqueID)
     if not petModel then
         debugPrint("FAILED: Could not find pet model in workspace")
@@ -419,91 +547,21 @@ local function handlePetMeAilment(petUniqueID)
     end
 
     debugPrint("Using pet: " .. petModel.Name)
-    
-    -- Get API references
-    local replicatedStorage = game:GetService("ReplicatedStorage")
-    local api = replicatedStorage:WaitForChild("API")
-    
-    -- Step 1: FocusPet
-    debugPrint("Step 1: Focusing pet...")
-    local focusSuccess, focusErr = pcall(function()
-        api:WaitForChild("AdoptAPI/FocusPet"):FireServer(petModel)
-    end)
-    if focusSuccess then
-        debugPrint("✅ FocusPet successful")
+
+    local success = progressPetMeAilment(petUniqueID, petModel)
+
+    if success then
+        debugPrint("✅ SUCCESS: Pet Me ailment progression attempted")
+        task.wait(2)
     else
-        debugPrint("❌ FocusPet failed: " .. tostring(focusErr))
+        debugPrint("❌ FAILED: Could not progress Pet Me ailment")
     end
-    task.wait(0.5)
-    
-    -- Step 2: ReplicateActivePerformances with FocusPet=true, LookAtObject=true, Petting=true
-    debugPrint("Step 2: Sending ReplicateActivePerformances (Focus/Look/Petting)...")
-    local perfSuccess1, perfErr1 = pcall(function()
-        api:WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(petModel, {
-            FocusPet = true,
-            LookAtObject = true,
-            Petting = true
-        })
-    end)
-    if perfSuccess1 then
-        debugPrint("✅ ReplicateActivePerformances (Focus/Look/Petting) successful")
-    else
-        debugPrint("❌ ReplicateActivePerformances failed: " .. tostring(perfErr1))
-    end
-    task.wait(0.5)
-    
-    -- Step 3: ReplicatePerformanceModifiers to set sit/idle state
-    debugPrint("Step 3: Setting pet state via ReplicatePerformanceModifiers...")
-    local sitAnimation = "DogIdle"
-    if string.find(petModel.Name:lower(), "cat") or string.find(petModel.Name:lower(), "egg") then
-        sitAnimation = "CatIdle"
-    end
-    local modSuccess, modErr = pcall(function()
-        api:WaitForChild("PetAPI/ReplicatePerformanceModifiers"):FireServer(petModel, {
-            anim_fade_time = 0.2,
-            local_anim_speed = 1,
-            dont_allow_sit_states = true,
-            pause_ailment_chat_bubbles = true,
-            local_anim_name = sitAnimation,
-            dont_allow_remote_interaction = true
-        })
-    end)
-    if modSuccess then
-        debugPrint("✅ ReplicatePerformanceModifiers successful")
-    else
-        debugPrint("❌ ReplicatePerformanceModifiers failed: " .. tostring(modErr))
-    end
-    task.wait(0.5)
-    
-    -- Step 4: ReplicateActiveReactions (empty table)
-    debugPrint("Step 4: Sending ReplicateActiveReactions...")
-    local reactSuccess, reactErr = pcall(function()
-        api:WaitForChild("PetAPI/ReplicateActiveReactions"):FireServer(petModel, {})
-    end)
-    if reactSuccess then
-        debugPrint("✅ ReplicateActiveReactions successful")
-    else
-        debugPrint("❌ ReplicateActiveReactions failed: " .. tostring(reactErr))
-    end
-    task.wait(0.5)
-    
-    -- Step 5: Final ReplicateActivePerformances with FocusPet=true, Petting=true
-    debugPrint("Step 5: Final ReplicateActivePerformances (Focus/Petting)...")
-    local perfSuccess2, perfErr2 = pcall(function()
-        api:WaitForChild("PetAPI/ReplicateActivePerformances"):FireServer(petModel, {
-            FocusPet = true,
-            Petting = true
-        })
-    end)
-    if perfSuccess2 then
-        debugPrint("✅ Final ReplicateActivePerformances successful")
-    else
-        debugPrint("❌ Final ReplicateActivePerformances failed: " .. tostring(perfErr2))
-    end
-    
+
+    debugPrint("Unfocusing pet...")
+    unfocusPet(petModel)
+
     debugPrint("=== PET ME AILMENT HANDLING COMPLETED ===")
-    task.wait(2)
-    return true
+    return success
 end
 
 -- ==================================================================
@@ -881,7 +939,7 @@ local function toggleAutoPotionMode()
 end
 
 -- ==================================================================
--- AILMENT MONITORING (UPDATED - pet_me handled separately)
+-- AILMENT MONITORING (pet_me is now handled inside the loop)
 -- ==================================================================
 
 local function ensurePetEquipped(petUniqueID, timeout)
@@ -932,11 +990,18 @@ local function monitorAndHandleAilments()
         if playerData and playerData.ailments_manager and playerData.ailments_manager.ailments then
             for ailmentId, ailmentData in pairs(playerData.ailments_manager.ailments) do
                 if ailmentId == PetID then
-                    -- Handle regular furniture ailments
                     for ailmentType, furnitureName in pairs(AILMENT_TASKS) do
                         if ailmentData[ailmentType] and type(ailmentData[ailmentType]) == "table" then
                             if not lastTaskTime[ailmentType] or (currentTime - lastTaskTime[ailmentType]) >= TASK_COOLDOWN then
-                                if ailmentType == "play" then
+                                -- Special handling for "pet_me"
+                                if ailmentType == "pet_me" then
+                                    debugPrint("✋ PET ME AILMENT DETECTED! Using special handler...")
+                                    local success = handlePetMeAilment(PetID)
+                                    if success then
+                                        lastTaskTime[ailmentType] = currentTime
+                                    end
+                                -- Other ailments
+                                elseif ailmentType == "play" then
                                     local success = handlePlayAilment()
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 elseif ailmentType == "walk" then
@@ -952,21 +1017,11 @@ local function monitorAndHandleAilments()
                                     local success = resolveMysteryAilment(ailmentId)
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 else
+                                    -- Regular furniture ailments
                                     local success = useFurnitureWithPet(furnitureName)
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 end
                                 break
-                            end
-                        end
-                    end
-                    
-                    -- Handle pet_me separately (NOT in AILMENT_TASKS)
-                    if ailmentData["pet_me"] and type(ailmentData["pet_me"]) == "table" then
-                        if not lastTaskTime["pet_me"] or (currentTime - lastTaskTime["pet_me"]) >= TASK_COOLDOWN then
-                            debugPrint("✋ PET ME AILMENT DETECTED! Using special handler...")
-                            local success = handlePetMeAilment(PetID)
-                            if success then
-                                lastTaskTime["pet_me"] = currentTime
                             end
                         end
                     end
@@ -1845,7 +1900,7 @@ end
 -- Auto-start
 debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
-debugPrint("Pet Me ailment uses SPECIAL HANDLER (matching your working example)")
+debugPrint("Pet Me ailment uses SPECIAL HANDLER (not furniture)")
 task.wait(3)
 autoStart()
 
@@ -1856,5 +1911,5 @@ debugPrint("   - Auto-selects Dog, Cat, or Starter_Egg")
 debugPrint("   - Auto-equips selected pet")
 debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
-debugPrint("   - Pet Me uses YOUR EXACT WORKING EXAMPLE")
+debugPrint("   - Pet Me uses SPECIAL HANDLER (not furniture)")
 debugPrint("========================================")
