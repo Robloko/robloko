@@ -83,8 +83,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to set boolean flag: " .. tostring(err))
+    else
+        print("Successfully set boolean flag.")
     end
-    wait(2)
+    task.wait(2)
 
     -- Step 2: Mark entered door time
     success, err = pcall(function()
@@ -92,8 +94,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to mark entered door time: " .. tostring(err))
+    else
+        print("Successfully marked entered door time.")
     end
-    wait(2)
+    task.wait(2)
 
     -- Step 3: Download TradeLicenseZone
     args = {
@@ -105,8 +109,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to download TradeLicenseZone: " .. tostring(err))
+    else
+        print("Successfully downloaded TradeLicenseZone.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 4: Log player state
     args = {
@@ -118,8 +124,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to log player state: " .. tostring(err))
+    else
+        print("Successfully logged player state.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 5: Begin quiz
     success, err = pcall(function()
@@ -127,8 +135,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to begin quiz: " .. tostring(err))
+    else
+        print("Successfully began quiz.")
     end
-    wait(15)
+    task.wait(15)
 
     -- Step 6: Answer quiz questions
     args = { "safe" }
@@ -137,8 +147,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to answer first quiz question: " .. tostring(err))
+    else
+        print("Successfully answered first quiz question.")
     end
-    wait(15)
+    task.wait(15)
 
     args = { "safe" }
     success, err = pcall(function()
@@ -146,8 +158,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to answer second quiz question: " .. tostring(err))
+    else
+        print("Successfully answered second quiz question.")
     end
-    wait(15)
+    task.wait(15)
 
     args = { "not safe" }
     success, err = pcall(function()
@@ -155,8 +169,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to answer third quiz question: " .. tostring(err))
+    else
+        print("Successfully answered third quiz question.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 7: Commit collection
     success, err = pcall(function()
@@ -164,8 +180,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to commit collection: " .. tostring(err))
+    else
+        print("Successfully committed collection.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 8: Equip tool
     args = { "2_7735857bb1824329b0b2bc49d4497e93" }
@@ -174,8 +192,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to equip tool: " .. tostring(err))
+    else
+        print("Successfully equipped tool.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 9: Send passive door enter
     args = {
@@ -191,8 +211,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to send passive door enter: " .. tostring(err))
+    else
+        print("Successfully sent passive door enter.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 10: End quiz
     success, err = pcall(function()
@@ -200,8 +222,10 @@ local function executeTradeLicenseSequence()
     end)
     if not success then
         warn("Failed to end quiz: " .. tostring(err))
+    else
+        print("Successfully ended quiz.")
     end
-    wait(5)
+    task.wait(5)
 
     -- Step 11: Click dialog button if it exists
     repeat task.wait() until player:FindFirstChild("PlayerGui")
