@@ -1,240 +1,30 @@
--- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local localPlayer = Players.LocalPlayer
 
--- Player
-local player = Players.LocalPlayer
-
--- Function to check if trade_license exists in toys
+-- Function to check if 'trade_license' exists in the inventory/toys
 local function hasTradeLicense()
-    local success, licenseFound = pcall(function()
-        local clientData = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
-        local playerData = clientData.get_data()[player.Name]
-
-        if playerData and playerData.inventory and playerData.inventory.toys then
-            for toyId, toyData in pairs(playerData.inventory.toys) do
-                if toyData.id == "trade_license" then
-                    return true
-                end
-            end
-        end
-        return false
-    end)
-
-    if not success then
-        warn("Error checking for trade_license")
-        return false
+    local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+    -- Checks if the tool is currently equipped
+    if character:FindFirstChild("trade_license") then
+        return true
     end
-
-    return licenseFound
+    -- Checks Backpack (inventory)
+    if localPlayer.Backpack:FindFirstChild("trade_license") then
+        return true
+    end
+    return false
 end
 
--- Function to print all available toys in inventory
-local function printAvailableToys()
-    local toys = {}
-
-    local success, errorMsg = pcall(function()
-        local clientData = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
-        local playerData = clientData.get_data()[player.Name]
-
-        if playerData and playerData.inventory and playerData.inventory.toys then
-            for toyId, toyData in pairs(playerData.inventory.toys) do
-                if toyData.id then
-                    table.insert(toys, {
-                        id = toyId,
-                        name = toyData.id,
-                        amount = toyData.amount or 1
-                    })
-                end
-            end
-        end
-    end)
-
-    if not success then
-        print("Error reading toy inventory: " .. tostring(errorMsg))
-        return
-    end
-
-    if #toys == 0 then
-        print("No toys found in your inventory!")
-        return
-    end
-
-    print("=== AVAILABLE TOYS IN INVENTORY ===")
-    for i, toy in ipairs(toys) do
-        print(string.format("%d. %s (ID: %s) - Amount: %d", i, toy.name, toy.id, toy.amount))
-    end
-    print("Total toy items: " .. #toys)
-    print("===================================")
-end
-
--- Function to execute the trade license sequence
-local function executeTradeLicenseSequence()
-    print("Starting trade license sequence...")
-
-    -- Step 1: Set boolean flag
-    local args = {
-        "has_talked_to_trade_quest_npc",
-        true
-    }
-    local success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("SettingsAPI"):WaitForChild("SetBooleanFlag"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to set boolean flag: " .. tostring(err))
-    else
-        print("Successfully set boolean flag.")
-    end
-    task.wait(2)
-
-    -- Step 2: Mark entered door time
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("MarkEnteredDoorTime"):FireServer()
-    end)
-    if not success then
-        warn("Failed to mark entered door time: " .. tostring(err))
-    else
-        print("Successfully marked entered door time.")
-    end
-    task.wait(2)
-
-    -- Step 3: Download TradeLicenseZone
-    args = {
-        "Interiors",
-        "TradeLicenseZone"
-    }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("DownloadsAPI"):WaitForChild("Download"):InvokeServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to download TradeLicenseZone: " .. tostring(err))
-    else
-        print("Successfully downloaded TradeLicenseZone.")
-    end
-    task.wait(5)
-
-    -- Step 4: Log player state
-    args = {
-        "Interior",
-        "TradeLicenseZone"
-    }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("_package"):WaitForChild("playadopt.me"):WaitForChild("PerformanceLogger"):WaitForChild("logPlayerState"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to log player state: " .. tostring(err))
-    else
-        print("Successfully logged player state.")
-    end
-    task.wait(5)
-
-    -- Step 5: Begin quiz
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("BeginQuiz"):FireServer()
-    end)
-    if not success then
-        warn("Failed to begin quiz: " .. tostring(err))
-    else
-        print("Successfully began quiz.")
-    end
-    task.wait(15)
-
-    -- Step 6: Answer quiz questions
-    args = { "safe" }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to answer first quiz question: " .. tostring(err))
-    else
-        print("Successfully answered first quiz question.")
-    end
-    task.wait(15)
-
-    args = { "safe" }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to answer second quiz question: " .. tostring(err))
-    else
-        print("Successfully answered second quiz question.")
-    end
-    task.wait(15)
-
-    args = { "not safe" }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to answer third quiz question: " .. tostring(err))
-    else
-        print("Successfully answered third quiz question.")
-    end
-    task.wait(5)
-
-    -- Step 7: Commit collection
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("JournalAPI"):WaitForChild("CommitCollection"):FireServer()
-    end)
-    if not success then
-        warn("Failed to commit collection: " .. tostring(err))
-    else
-        print("Successfully committed collection.")
-    end
-    task.wait(5)
-
-    -- Step 8: Equip tool
-    args = { "2_7735857bb1824329b0b2bc49d4497e93" }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI"):WaitForChild("Equip"):InvokeServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to equip tool: " .. tostring(err))
-    else
-        print("Successfully equipped tool.")
-    end
-    task.wait(5)
-
-    -- Step 9: Send passive door enter
-    args = {
-        "SafetyHub",
-        "TradeLicenseZone",
-        {
-            studs_ahead_of_door = 9,
-            start_transparency = 1
-        }
-    }
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("SendPassiveDoorEnter"):FireServer(unpack(args))
-    end)
-    if not success then
-        warn("Failed to send passive door enter: " .. tostring(err))
-    else
-        print("Successfully sent passive door enter.")
-    end
-    task.wait(5)
-
-    -- Step 10: End quiz
-    success, err = pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("EndQuiz"):FireServer()
-    end)
-    if not success then
-        warn("Failed to end quiz: " .. tostring(err))
-    else
-        print("Successfully ended quiz.")
-    end
-    task.wait(5)
-
-    -- Step 11: Click dialog button if it exists
-    repeat task.wait() until player:FindFirstChild("PlayerGui")
-
-    local button = player.PlayerGui:FindFirstChild("DialogApp") and
-                   player.PlayerGui.DialogApp:FindFirstChild("Dialog") and
-                   player.PlayerGui.DialogApp.Dialog:FindFirstChild("NormalDialog") and
-                   player.PlayerGui.DialogApp.Dialog.NormalDialog:FindFirstChild("Buttons") and
-                   player.PlayerGui.DialogApp.Dialog.NormalDialog.Buttons:FindFirstChild("ButtonTemplate")
+-- Function to click the dialog button
+local function clickDialogButton()
+    repeat task.wait() until localPlayer:FindFirstChild("PlayerGui")
+    
+    local button = localPlayer.PlayerGui:FindFirstChild("DialogApp")
+        and localPlayer.PlayerGui.DialogApp:FindFirstChild("Dialog")
+        and localPlayer.PlayerGui.DialogApp.Dialog:FindFirstChild("NormalDialog")
+        and localPlayer.PlayerGui.DialogApp.Dialog.NormalDialog:FindFirstChild("Buttons")
+        and localPlayer.PlayerGui.DialogApp.Dialog.NormalDialog.Buttons:FindFirstChild("ButtonTemplate")
 
     if button then
         if button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
@@ -251,26 +41,74 @@ local function executeTradeLicenseSequence()
     end
 end
 
--- Main function to check for trade_license and execute sequence if needed
-local function checkAndGetTradeLicense()
-    print("Checking for trade_license in inventory...")
-    printAvailableToys()
+-- Function for the main Trade License sequence
+local function runTradeSequence()
+    local args1 = {"Interiors", "TradeLicenseZone"}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("DownloadsAPI/Download"):InvokeServer(unpack(args1))
 
-    if hasTradeLicense() then
-        print("✅ trade_license already found in inventory!")
-    else
-        print("❌ trade_license not found. Starting sequence to obtain it...")
-        executeTradeLicenseSequence()
+    local args2 = {"Interior", "TradeLicenseZone"}
+    ReplicatedStorage:WaitForChild("_package"):WaitForChild("playadopt.me"):WaitForChild("PerformanceLogger"):WaitForChild("logPlayerState"):FireServer(unpack(args2))
 
-        -- Check again after executing the sequence
-        task.wait(10)
-        if hasTradeLicense() then
-            print("✅ Successfully obtained trade_license!")
-        else
-            print("❌ Failed to obtain trade_license. Retry or check for errors.")
-        end
-    end
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/BeginQuiz"):FireServer()
+    task.wait(15)
+
+    local args3 = {"safe"}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer(unpack(args3))
+    task.wait(15)
+
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer(unpack(args3))
+    task.wait(15)
+
+    local args4 = {"not safe"}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer(unpack(args4))
+
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("JournalAPI/CommitCollection"):FireServer()
+
+    local args5 = {"2_7735857bb1824329b0b2bc49d4497e93"}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args5))
+
+    local args6 = {"SafetyHub", "TradeLicenseZone", {studs_ahead_of_door = 9, start_transparency = 1}}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/SendPassiveDoorEnter"):FireServer(unpack(args6))
+
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/EndQuiz"):FireServer()
 end
 
--- Run the main function
-checkAndGetTradeLicense()
+-- ========================
+-- EXECUTION STARTS HERE
+-- ========================
+
+print("🔍 Checking initial inventory for Trade License...")
+if hasTradeLicense() then
+    print("✅ Trade License already found in inventory! No need to run the script.")
+    return
+end
+
+print("🚀 Trade License not found. Running initial sequence...")
+runTradeSequence()
+task.wait(5)
+
+-- Initial Dialog Click attempt
+clickDialogButton()
+task.wait(2)
+
+-- Loop until Trade License is found
+while not hasTradeLicense() do
+    warn("🔄 Trade License still not found. Re-running sequence...")
+    
+    -- Run the extended requirement flags first
+    local flagArgs = {"has_talked_to_trade_quest_npc", true}
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("SettingsAPI/SetBooleanFlag"):FireServer(unpack(flagArgs))
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/MarkEnteredDoorTime"):FireServer()
+
+    -- Run the main sequence again
+    runTradeSequence()
+    
+    -- Wait and click the dialog button again
+    task.wait(5)
+    clickDialogButton()
+    
+    -- Small buffer before checking the inventory again to allow the server to update
+    task.wait(3) 
+end
+
+print("🎉 Success! Trade License has been acquired!")
