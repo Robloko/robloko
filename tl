@@ -8,7 +8,7 @@ local player = Players.LocalPlayer
 
 -- Function to check if trade_license exists in toys
 local function hasTradeLicense()
-    local success, errorMsg = pcall(function()
+    local success, licenseFound = pcall(function()
         local clientData = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
         local playerData = clientData.get_data()[player.Name]
 
@@ -19,13 +19,15 @@ local function hasTradeLicense()
                 end
             end
         end
+        return false
     end)
 
     if not success then
-        warn("Error checking for trade_license: " .. tostring(errorMsg))
+        warn("Error checking for trade_license")
+        return false
     end
 
-    return false
+    return licenseFound
 end
 
 -- Function to print all available toys in inventory
@@ -76,58 +78,107 @@ local function executeTradeLicenseSequence()
         "has_talked_to_trade_quest_npc",
         true
     }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("SettingsAPI"):WaitForChild("SetBooleanFlag"):FireServer(unpack(args))
+    local success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("SettingsAPI"):WaitForChild("SetBooleanFlag"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to set boolean flag: " .. tostring(err))
+    end
+    wait(2)
 
     -- Step 2: Mark entered door time
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("MarkEnteredDoorTime"):FireServer()
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("MarkEnteredDoorTime"):FireServer()
+    end)
+    if not success then
+        warn("Failed to mark entered door time: " .. tostring(err))
+    end
+    wait(2)
 
     -- Step 3: Download TradeLicenseZone
-    local args = {
+    args = {
         "Interiors",
         "TradeLicenseZone"
     }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("DownloadsAPI"):WaitForChild("Download"):InvokeServer(unpack(args))
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("DownloadsAPI"):WaitForChild("Download"):InvokeServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to download TradeLicenseZone: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 4: Log player state
-    local args = {
+    args = {
         "Interior",
         "TradeLicenseZone"
     }
-    game:GetService("ReplicatedStorage"):WaitForChild("_package"):WaitForChild("playadopt.me"):WaitForChild("PerformanceLogger"):WaitForChild("logPlayerState"):FireServer(unpack(args))
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("_package"):WaitForChild("playadopt.me"):WaitForChild("PerformanceLogger"):WaitForChild("logPlayerState"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to log player state: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 5: Begin quiz
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("BeginQuiz"):FireServer()
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("BeginQuiz"):FireServer()
+    end)
+    if not success then
+        warn("Failed to begin quiz: " .. tostring(err))
+    end
     wait(15)
 
     -- Step 6: Answer quiz questions
-    local args = {
-        "safe"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    args = { "safe" }
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to answer first quiz question: " .. tostring(err))
+    end
     wait(15)
 
-    local args = {
-        "safe"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    args = { "safe" }
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to answer second quiz question: " .. tostring(err))
+    end
     wait(15)
 
-    local args = {
-        "not safe"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    args = { "not safe" }
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("AnswerQuizQuestion"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to answer third quiz question: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 7: Commit collection
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("JournalAPI"):WaitForChild("CommitCollection"):FireServer()
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("JournalAPI"):WaitForChild("CommitCollection"):FireServer()
+    end)
+    if not success then
+        warn("Failed to commit collection: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 8: Equip tool
-    local args = {
-        "2_7735857bb1824329b0b2bc49d4497e93"
-    }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI"):WaitForChild("Equip"):InvokeServer(unpack(args))
+    args = { "2_7735857bb1824329b0b2bc49d4497e93" }
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("ToolAPI"):WaitForChild("Equip"):InvokeServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to equip tool: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 9: Send passive door enter
-    local args = {
+    args = {
         "SafetyHub",
         "TradeLicenseZone",
         {
@@ -135,10 +186,21 @@ local function executeTradeLicenseSequence()
             start_transparency = 1
         }
     }
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("SendPassiveDoorEnter"):FireServer(unpack(args))
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("AdoptAPI"):WaitForChild("SendPassiveDoorEnter"):FireServer(unpack(args))
+    end)
+    if not success then
+        warn("Failed to send passive door enter: " .. tostring(err))
+    end
+    wait(5)
 
     -- Step 10: End quiz
-    game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("EndQuiz"):FireServer()
+    success, err = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("API"):WaitForChild("TradeAPI"):WaitForChild("EndQuiz"):FireServer()
+    end)
+    if not success then
+        warn("Failed to end quiz: " .. tostring(err))
+    end
     wait(5)
 
     -- Step 11: Click dialog button if it exists
