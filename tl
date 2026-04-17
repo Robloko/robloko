@@ -4,16 +4,26 @@ local localPlayer = Players.LocalPlayer
 
 -- Function to check if 'trade_license' exists in the inventory/toys
 local function hasTradeLicense()
-    local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-    -- Checks if the tool is currently equipped
-    if character:FindFirstChild("trade_license") then
-        return true
+    -- pcall prevents the script from breaking if Character/Backpack loads slowly
+    local success, result = pcall(function()
+        local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+        -- Checks if the tool is currently equipped
+        if character:FindFirstChild("trade_license") then
+            return true
+        end
+        -- Checks Backpack (inventory)
+        if localPlayer.Backpack:FindFirstChild("trade_license") then
+            return true
+        end
+        return false
+    end)
+    
+    if success then
+        return result
+    else
+        warn("Inventory check failed, retrying...")
+        return false
     end
-    -- Checks Backpack (inventory)
-    if localPlayer.Backpack:FindFirstChild("trade_license") then
-        return true
-    end
-    return false
 end
 
 -- Function to click the dialog button
