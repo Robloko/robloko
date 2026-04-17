@@ -2,28 +2,35 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local localPlayer = Players.LocalPlayer
 
--- Function to check if 'trade_license' exists in the inventory/toys
+-- Function to inspect ClientData for the Trade License
 local function hasTradeLicense()
-    -- pcall prevents the script from breaking if Character/Backpack loads slowly
-    local success, result = pcall(function()
-        local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-        -- Checks if the tool is currently equipped
-        if character:FindFirstChild("trade_license") then
-            return true
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+        local playerData = clientData.get_data()[localPlayer.Name]
+
+        -- Check for toys in inventory
+        if playerData and playerData.inventory and playerData.inventory.toys then
+            print("🔍 Scanning inventory for Trade License...")
+            for toyId, toyData in pairs(playerData.inventory.toys) do
+                -- Print the toy so you can see it in the console
+                if toyData.id then
+                    print(" - Found Toy: " .. tostring(toyData.id))
+                end
+                
+                -- Check if this toy is the trade license
+                if toyData.id and tostring(toyData.id):lower() == "trade_license" then
+                    return true
+                end
+            end
         end
-        -- Checks Backpack (inventory)
-        if localPlayer.Backpack:FindFirstChild("trade_license") then
-            return true
-        end
-        return false
     end)
-    
-    if success then
-        return result
-    else
-        warn("Inventory check failed, retrying...")
+
+    if not success then
+        print("Error reading toy inventory: " .. tostring(errorMsg))
         return false
     end
+    
+    return false
 end
 
 -- Function to click the dialog button
