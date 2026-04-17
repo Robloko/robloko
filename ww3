@@ -52,9 +52,6 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
--- Furniture check flag
-local furnitureCheckedThisSession = false
-
 -- Ailment to Furniture Mapping (pet_me is included but handled separately)
 local AILMENT_TASKS = {
     sleepy = "BasicBed",
@@ -69,6 +66,34 @@ local AILMENT_TASKS = {
     sick = "HEALING_APPLE",
     mystery = "MYSTERY_HANDLER",
     pet_me = "PET_ME_HANDLER"
+}
+
+-- Furniture buy info: maps furniture name to purchase parameters
+local FURNITURE_BUY_INFO = {
+    BasicBed = {
+        kind = "basic_bed",
+        cframe = CFrame.new(-6.5, 0, -16, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+    },
+    PetFoodBowl = {
+        kind = "pet_food_bowl",
+        cframe = CFrame.new(5, 0, -14, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+    },
+    PetWaterBowl = {
+        kind = "pet_water_bowl",
+        cframe = CFrame.new(6.5, 0, -14, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+    },
+    CheapPetBathtub = {
+        kind = "cheap_pet_bathtub",
+        cframe = CFrame.new(11, 0, -14, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+    },
+    Piano = {
+        kind = "piano",
+        cframe = CFrame.new(14, 0, -16.399999618530273, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+    },
+    AilmentsRefresh2024LitterBox = {
+        kind = "ailments_refresh_2024_litter_box",
+        cframe = CFrame.new(9.099609375, 0, -15.100000381469727, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+    }
 }
 
 -- Task cooldowns
@@ -215,25 +240,6 @@ local function ensureCharacterSpawned()
     return player.Character
 end
 
--- Check if the player is currently inside their home
-local function isAtHome()
-    local hi = workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        return false
-    end
-
-    for _, folder in ipairs(hi:GetChildren()) do
-        if string.find(folder.Name, player.Name) then
-            -- Found the player's house folder - verify it has loaded content
-            if #folder:GetChildren() > 0 then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
 -- ==================================================================
 -- FURNITURE FUNCTIONS
 -- ==================================================================
@@ -312,67 +318,109 @@ local function findFurnitureByName(name)
     return nil
 end
 
--- Check and buy missing furniture (ONLY call when at home!)
-local function checkAndBuyMissingFurniture()
-    if not isAtHome() then
-        debugPrint("⚠️ Not at home - skipping furniture check")
+-- Check and buy a specific furniture item if missing
+local function checkAndBuyFurniture(furnitureName)
+    local buyInfo = FURNITURE_BUY_INFO[furnitureName]
+    if not buyInfo then
+        debugPrint("No buy info for furniture: " .. tostring(furnitureName))
         return false
     end
 
-    debugPrint("========================================")
-    debugPrint("🏠 CHECKING FOR MISSING FURNITURE (at home)...")
-    debugPrint("========================================")
-
-    local missingFurniture = {}
-
-    local pianoFound = findFurnitureByName("Piano")
-    if not pianoFound then
-        debugPrint("🎹 Piano not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "piano",
-            properties = {
-                cframe = CFrame.new(14, 0, -16.399999618530273, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
-            }
-        })
-    else
-        debugPrint("🎹 Piano found in house")
+    -- Check if furniture already exists
+    local existingFurniture = findFurnitureByName(furnitureName)
+    if existingFurniture then
+        debugPrint("✅ Furniture already exists: " .. furnitureName)
+        return true
     end
 
-    local litterBoxFound = findFurnitureByName("AilmentsRefresh2024LitterBox")
-    if not litterBoxFound then
-        debugPrint("🚽 AilmentsRefresh2024LitterBox not found, adding to buy list")
-        table.insert(missingFurniture, {
-            kind = "ailments_refresh_2024_litter_box",
-            properties = {
-                cframe = CFrame.new(9.099609375, 0, -15.100000381469727, 1, -3.82137093032941e-15, 8.742277657347586e-08, 3.82137093032941e-15, 1, 0, -8.742277657347586e-08, 0, 1)
+    debugPrint("⚠️ Furniture missing: " .. furnitureName .. " - Purchasing...")
+    local args = {
+        {
+            {
+                kind = buyInfo.kind,
+                properties = {
+                    cframe = buyInfo.cframe
+                }
             }
-        })
-    else
-        debugPrint("🚽 AilmentsRefresh2024LitterBox found in house")
-    end
+        }
+    }
 
-    if #missingFurniture > 0 then
-        debugPrint("🛒 Buying " .. #missingFurniture .. " missing furniture items...")
-        local args = {missingFurniture}
-        local success, result = pcall(function()
-            return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/BuyFurnitures"):InvokeServer(unpack(args))
-        end)
-        if success then
-            debugPrint("✅ Successfully purchased missing furniture")
-            task.wait(3)
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/BuyFurnitures"):InvokeServer(unpack(args))
+    end)
+
+    if success then
+        debugPrint("✅ Successfully purchased: " .. furnitureName)
+        task.wait(3)
+
+        -- Verify purchase
+        local verifyFurniture = findFurnitureByName(furnitureName)
+        if verifyFurniture then
+            debugPrint("✅ Verified furniture placed: " .. furnitureName)
+            return true
         else
-            debugPrint("❌ Failed to buy furniture: " .. tostring(result))
+            debugPrint("⚠️ Furniture purchased but not yet visible, waiting...")
+            for attempt = 1, 5 do
+                task.wait(2)
+                verifyFurniture = findFurnitureByName(furnitureName)
+                if verifyFurniture then
+                    debugPrint("✅ Furniture appeared after wait: " .. furnitureName)
+                    return true
+                end
+            end
+            debugPrint("❌ Furniture still not found after purchase + wait")
+            return false
         end
     else
-        debugPrint("✅ All required furniture found, no purchases needed")
+        debugPrint("❌ Failed to buy furniture: " .. furnitureName .. " - " .. tostring(result))
+        return false
+    end
+end
+
+-- Check and buy ALL missing furniture at once (for startup)
+local function checkAndBuyAllMissingFurniture()
+    debugPrint("Checking for ALL missing furniture at startup...")
+    local missingList = {}
+
+    for furnitureName, buyInfo in pairs(FURNITURE_BUY_INFO) do
+        local existing = findFurnitureByName(furnitureName)
+        if not existing then
+            debugPrint("⚠️ Missing: " .. furnitureName)
+            table.insert(missingList, {
+                kind = buyInfo.kind,
+                properties = {
+                    cframe = buyInfo.cframe
+                }
+            })
+        else
+            debugPrint("✅ Found: " .. furnitureName)
+        end
     end
 
-    furnitureCheckedThisSession = true
-
-    debugPrint("========================================")
-    debugPrint("🏠 FURNITURE CHECK COMPLETE")
-    debugPrint("========================================")
-    return true
+    if #missingList > 0 then
+        debugPrint("Buying " .. #missingList .. " missing furniture items...")
+        local success, result = safeRemoteCall({"HousingAPI/BuyFurnitures"}, "InvokeServer", missingList)
+        if success then
+            debugPrint("✅ Successfully purchased all missing furniture")
+            task.wait(5)
+        else
+            debugPrint("❌ Failed to buy furniture batch: " .. tostring(result))
+            -- Fallback: try buying one by one
+            debugPrint("Trying one by one...")
+            for _, item in ipairs(missingList) do
+                local singleArgs = {item}
+                local s2, r2 = safeRemoteCall({"HousingAPI/BuyFurnitures"}, "InvokeServer", singleArgs)
+                if s2 then
+                    debugPrint("✅ Bought: " .. item.kind)
+                else
+                    debugPrint("❌ Failed: " .. item.kind .. " - " .. tostring(r2))
+                end
+                task.wait(2)
+            end
+        end
+    else
+        debugPrint("✅ All furniture already present")
+    end
 end
 
 -- Activate furniture
@@ -412,14 +460,25 @@ local function activateFurniture(furnitureName, pet)
     end
 end
 
--- Use furniture with pet
+-- Use furniture with pet (auto-buys if missing)
 local function useFurnitureWithPet(furnitureName)
     debugPrint("Using furniture: " .. furnitureName)
 
+    -- First check if furniture exists, buy if missing
     local furnitureData = findFurnitureByName(furnitureName)
     if not furnitureData then
-        debugPrint("⚠️ Furniture not found: " .. furnitureName .. " - SKIPPING")
-        return false
+        debugPrint("⚠️ Furniture not found: " .. furnitureName .. " - Attempting to buy...")
+        local bought = checkAndBuyFurniture(furnitureName)
+        if not bought then
+            debugPrint("❌ Could not buy furniture: " .. furnitureName .. " - SKIPPING")
+            return false
+        end
+        -- Re-find after purchase
+        furnitureData = findFurnitureByName(furnitureName)
+        if not furnitureData then
+            debugPrint("❌ Furniture still not found after buy attempt: " .. furnitureName .. " - SKIPPING")
+            return false
+        end
     end
 
     task.wait(1)
@@ -883,16 +942,18 @@ local function resolveMysteryAilment(ailmentId)
     debugPrint("❓ MYSTERY AILMENT DETECTED!")
     debugPrint("Trying to identify which ailment it is...")
     debugPrint("========================================")
-
+    
+    -- List of all possible ailments to try (in order of most common)
     local possibleAilments = {"bored", "sick", "pet me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
-
+    
     local identifiedAilment = nil
-
+    
+    -- Step 1: Find which ailment type works by testing level 1 only
     for _, testAilment in ipairs(possibleAilments) do
         debugPrint("🔍 Testing if mystery is: " .. testAilment)
-
+        
         local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", 1, testAilment)
-
+        
         if success then
             debugPrint("✅ MATCH FOUND! Mystery is: " .. testAilment)
             identifiedAilment = testAilment
@@ -902,16 +963,17 @@ local function resolveMysteryAilment(ailmentId)
         end
         task.wait(0.3)
     end
-
+    
     if not identifiedAilment then
         debugPrint("❌ FAILED: Could not identify mystery ailment after trying all 10 types!")
         return false
     end
-
+    
+    -- Step 2: Now that we know what it is, identify levels 2 and 3
     debugPrint("========================================")
     debugPrint("Identifying levels 2 and 3 as: " .. identifiedAilment)
     debugPrint("========================================")
-
+    
     for level = 2, 3 do
         local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, identifiedAilment)
         if not success then
@@ -921,14 +983,15 @@ local function resolveMysteryAilment(ailmentId)
         debugPrint("✅ Level " .. level .. " identified successfully")
         task.wait(1)
     end
-
+    
     debugPrint("🎉 Successfully identified all 3 levels of mystery as: " .. identifiedAilment)
     debugPrint("========================================")
     debugPrint("Now handling the identified ailment...")
     debugPrint("========================================")
-
+    
+    -- Step 3: Handle the identified ailment properly
     local handled = false
-
+    
     if identifiedAilment == "bored" then
         debugPrint("🖐️ Handling as BORED - using Piano")
         handled = useFurnitureWithPet("Piano")
@@ -960,7 +1023,7 @@ local function resolveMysteryAilment(ailmentId)
         debugPrint("🛺 Handling as RIDE - using stroller")
         handled = handleRideAilment()
     end
-
+    
     if handled then
         debugPrint("========================================")
         debugPrint("✅ SUCCESSFULLY COMPLETED mystery ailment as: " .. identifiedAilment)
@@ -1122,12 +1185,6 @@ local function monitorAndHandleAilments()
     while PetFarmMode do
         local currentTime = os.time()
 
-        -- Check furniture once when we detect player is at home
-        if not furnitureCheckedThisSession and isAtHome() then
-            debugPrint("🏠 Player is at home! Running furniture check...")
-            checkAndBuyMissingFurniture()
-        end
-
         -- Keep pet equipped
         if currentTime - lastEquipCheckTime >= EQUIP_CHECK_INTERVAL then
             if PetID then
@@ -1147,18 +1204,21 @@ local function monitorAndHandleAilments()
                     for ailmentType, furnitureName in pairs(AILMENT_TASKS) do
                         if ailmentData[ailmentType] and type(ailmentData[ailmentType]) == "table" then
                             if not lastTaskTime[ailmentType] or (currentTime - lastTaskTime[ailmentType]) >= TASK_COOLDOWN then
+                                -- Special handling for "pet_me"
                                 if ailmentType == "pet_me" then
                                     debugPrint("✋ PET ME AILMENT DETECTED! Using special handler...")
                                     local success = handlePetMeAilment(PetID)
                                     if success then
                                         lastTaskTime[ailmentType] = currentTime
                                     end
+                                -- Special handling for "mystery" (UPDATED)
                                 elseif ailmentType == "mystery" then
                                     debugPrint("❓ MYSTERY AILMENT DETECTED! Using full 10-ailment resolver...")
                                     local success = resolveMysteryAilment(ailmentId)
                                     if success then
                                         lastTaskTime[ailmentType] = currentTime
                                     end
+                                -- Other ailments
                                 elseif ailmentType == "play" then
                                     local success = handlePlayAilment()
                                     if success then lastTaskTime[ailmentType] = currentTime end
@@ -1172,6 +1232,13 @@ local function monitorAndHandleAilments()
                                     local success = handleSickAilment()
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 else
+                                    -- Regular furniture ailments - auto-buy if missing
+                                    debugPrint("🏠 Ailment '" .. ailmentType .. "' requires furniture: " .. furnitureName)
+                                    local furnitureExists = findFurnitureByName(furnitureName)
+                                    if not furnitureExists then
+                                        debugPrint("⚠️ Missing furniture for ailment, buying: " .. furnitureName)
+                                        checkAndBuyFurniture(furnitureName)
+                                    end
                                     local success = useFurnitureWithPet(furnitureName)
                                     if success then lastTaskTime[ailmentType] = currentTime end
                                 end
@@ -1208,11 +1275,6 @@ local function startPetFarm()
         PetFarmMode = false
         return
     end
-
-    -- Reset furniture check flag so it will be checked once player is home
-    furnitureCheckedThisSession = false
-
-    debugPrint("PetFarm started! Furniture will be checked once you enter your home.")
 
     monitorAndHandleAilments()
 end
@@ -1916,6 +1978,15 @@ local function autoStart()
     debugPrint("========================================")
 
     if ui then
+        ui.statusLabel.Text = "Status: Checking furniture..."
+        ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    end
+
+    -- Buy missing furniture at startup
+    debugPrint("Pre-checking furniture inventory...")
+    checkAndBuyAllMissingFurniture()
+
+    if ui then
         ui.statusLabel.Text = "Status: Searching for Dog/Cat/Starter_Egg..."
         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
     end
@@ -2057,7 +2128,6 @@ debugPrint("Script loaded! Auto-starting in 3 seconds...")
 debugPrint("practice_dog is EXCLUDED from selection")
 debugPrint("Pet Me ailment uses SPECIAL HANDLER (not furniture)")
 debugPrint("MYSTERY AILMENT: Now tries ALL 10 types to find the correct one!")
-debugPrint("MISSING FURNITURE: Will auto-buy Piano & LitterBox when you enter your home!")
 task.wait(3)
 autoStart()
 
@@ -2070,5 +2140,5 @@ debugPrint("   - Auto-starts PetFarm")
 debugPrint("   - Auto-starts PetPen")
 debugPrint("   - Pet Me uses SPECIAL HANDLER")
 debugPrint("   - MYSTERY now tries ALL 10 ailments!")
-debugPrint("   - MISSING FURNITURE auto-buys Piano & LitterBox WHEN AT HOME!")
+debugPrint("   - Auto-checks and buys missing furniture!")
 debugPrint("========================================")
