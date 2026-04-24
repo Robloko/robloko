@@ -2,51 +2,54 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local function clickAilmentButton()
-    -- Step 1: Safely navigate down to the "Choices" folder
+local function fireClickAction()
+    -- Safely navigate to the folder
     local focusPetApp = PlayerGui:FindFirstChild("FocusPetApp")
-    if not focusPetApp then return end
+    if not focusPetApp then return false end
     
     local chooseAilment = focusPetApp:FindFirstChild("ChooseAilment")
-    if not chooseAilment then return end
+    if not chooseAilment then return false end
     
     local choices = chooseAilment:FindFirstChild("Choices")
-    if not choices then return end
-
-    -- Step 2: Get the children and check if there are at least 3
+    if not choices then return false end
+    
+    -- Get the children table
     local children = choices:GetChildren()
-    if #children >= 3 then
-        local thirdChild = children[3] -- Grabs the 3rd item in the folder
+    
+    -- Safety check: Make sure there are actually at least 3 children before trying to grab [3]
+    if #children < 3 then return false end
+    
+    local targetChild = children[3]
+    
+    -- Continue navigating down from the 3rd child
+    local container = targetChild:FindFirstChild("Container")
+    if not container then return false end
+    
+    local content = container:FindFirstChild("Content")
+    if not content then return false end
+    
+    local clickAction = content:FindFirstChild("ClickAction")
+    
+    -- If found and visible, firesignal it
+    if clickAction and clickAction.Visible then
+        -- Using pcall around each firesignal just in case the specific event doesn't exist on that custom button
+        pcall(function() firesignal(clickAction.MouseButton1Down) end)
+        task.wait(0.05)
+        pcall(function() firesignal(clickAction.MouseButton1Up) end)
+        pcall(function() firesignal(clickAction.MouseButton1Click) end)
         
-        -- Step 3: Safely navigate from the 3rd child down to ClickAction
-        local container = thirdChild:FindFirstChild("Container")
-        if container then
-            local content = container:FindFirstChild("Content")
-            if content then
-                local clickAction = content:FindFirstChild("ClickAction")
-                
-                -- Step 4: Validate and Click
-                if clickAction and clickAction.Visible and clickAction.Active and clickAction:IsA("GuiButton") then
-                    
-                    if firesignal then
-                        firesignal(clickAction.MouseButton1Down)
-                        task.wait(0.05)
-                        firesignal(clickAction.MouseButton1Up)
-                        firesignal(clickAction.MouseButton1Click)
-                        print("✅ Successfully clicked the 3rd Ailment choice!")
-                    else
-                        clickAction.MouseButton1Click:Fire()
-                        print("✅ Successfully clicked the 3rd Ailment choice (Fallback)!")
-                    end
-                    
-                    task.wait(2) -- 2 second cooldown to prevent spam clicking
-                end
-            end
-        end
+        print("✅ Successfully fired signal on ClickAction!")
+        return true
     end
+    
+    return false
 end
 
--- Main loop to constantly check for the button
+-- Loop that constantly checks if the UI has popped up
 while task.wait(0.5) do
-    pcall(clickAilmentButton)
+    local success, clicked = pcall(fireClickAction)
+    
+    if success and clicked then
+        -- break -- Remove the two dashes (--) before 'break' if you only want it to click ONCE and then stop the script.
+    end
 end
