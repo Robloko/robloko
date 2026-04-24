@@ -934,109 +934,109 @@ local function handleSickAilment()
 end
 
 -- ==================================================================
--- MYSTERY AILMENT (FIXED - TRIES ALL 10 AILMENTS)
+-- MYSTERY AILMENT (NEW BRUTE-FORCE LOGIC)
 -- ==================================================================
 
-local function resolveMysteryAilment(ailmentId)
-    debugPrint("========================================")
-    debugPrint("❓ MYSTERY AILMENT DETECTED!")
-    debugPrint("Trying to identify which ailment it is...")
-    debugPrint("========================================")
-    
-    -- List of all possible ailments to try (in order of most common)
-    local possibleAilments = {"bored", "sick", "pet me", "sleepy", "dirty", "toilet", "hungry", "thirsty", "walk", "ride"}
-    
-    local identifiedAilment = nil
-    
-    -- Step 1: Find which ailment type works by testing level 1 only
-    for _, testAilment in ipairs(possibleAilments) do
-        debugPrint("🔍 Testing if mystery is: " .. testAilment)
-        
-        local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", 1, testAilment)
-        
-        if success then
-            debugPrint("✅ MATCH FOUND! Mystery is: " .. testAilment)
-            identifiedAilment = testAilment
-            break
-        else
-            debugPrint("❌ Not " .. testAilment)
+local function getEquippedPetID()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.equip_manager or not playerData.equip_manager.pets then
+        return nil
+    end
+    for _, equippedPet in pairs(playerData.equip_manager.pets) do
+        if equippedPet and equippedPet.unique then
+            return equippedPet.unique
         end
-        task.wait(0.3)
     end
-    
-    if not identifiedAilment then
-        debugPrint("❌ FAILED: Could not identify mystery ailment after trying all 10 types!")
-        return false
-    end
-    
-    -- Step 2: Now that we know what it is, identify levels 2 and 3
-    debugPrint("========================================")
-    debugPrint("Identifying levels 2 and 3 as: " .. identifiedAilment)
-    debugPrint("========================================")
-    
-    for level = 2, 3 do
-        local success, result = safeRemoteCall({"AilmentsAPI/ChooseMysteryAilment"}, "FireServer", ailmentId, "mystery", level, identifiedAilment)
-        if not success then
-            debugPrint("❌ Failed to identify level " .. level .. ": " .. tostring(result))
-            return false
-        end
-        debugPrint("✅ Level " .. level .. " identified successfully")
-        task.wait(1)
-    end
-    
-    debugPrint("🎉 Successfully identified all 3 levels of mystery as: " .. identifiedAilment)
-    debugPrint("========================================")
-    debugPrint("Now handling the identified ailment...")
-    debugPrint("========================================")
-    
-    -- Step 3: Handle the identified ailment properly
-    local handled = false
-    
-    if identifiedAilment == "bored" then
-        debugPrint("🖐️ Handling as BORED - using Piano")
-        handled = useFurnitureWithPet("Piano")
-    elseif identifiedAilment == "sick" then
-        debugPrint("💊 Handling as SICK - using Healing Apple")
-        handled = handleSickAilment()
-    elseif identifiedAilment == "pet me" then
-        debugPrint("✋ Handling as PET ME - using special handler")
-        handled = handlePetMeAilment(PetID)
-    elseif identifiedAilment == "sleepy" then
-        debugPrint("😴 Handling as SLEEPY - using BasicBed")
-        handled = useFurnitureWithPet("BasicBed")
-    elseif identifiedAilment == "dirty" then
-        debugPrint("🛁 Handling as DIRTY - using CheapPetBathtub")
-        handled = useFurnitureWithPet("CheapPetBathtub")
-    elseif identifiedAilment == "toilet" then
-        debugPrint("🚽 Handling as TOILET - using LitterBox")
-        handled = useFurnitureWithPet("AilmentsRefresh2024LitterBox")
-    elseif identifiedAilment == "hungry" then
-        debugPrint("🍽️ Handling as HUNGRY - using PetFoodBowl")
-        handled = useFurnitureWithPet("PetFoodBowl")
-    elseif identifiedAilment == "thirsty" then
-        debugPrint("💧 Handling as THIRSTY - using PetWaterBowl")
-        handled = useFurnitureWithPet("PetWaterBowl")
-    elseif identifiedAilment == "walk" then
-        debugPrint("🚶 Handling as WALK - walking outside")
-        handled = handleWalkAilment()
-    elseif identifiedAilment == "ride" then
-        debugPrint("🛺 Handling as RIDE - using stroller")
-        handled = handleRideAilment()
-    end
-    
-    if handled then
-        debugPrint("========================================")
-        debugPrint("✅ SUCCESSFULLY COMPLETED mystery ailment as: " .. identifiedAilment)
-        debugPrint("========================================")
-        return true
-    else
-        debugPrint("========================================")
-        debugPrint("⚠️ Identified as " .. identifiedAilment .. " but FAILED to handle it")
-        debugPrint("========================================")
-        return false
-    end
+    return nil
 end
 
+local function resolveMysteryAilment()
+    debugPrint("========================================")
+    debugPrint("❓ MYSTERY AILMENT DETECTED!")
+    debugPrint("========================================")
+
+    -- Get equipped pet ID
+    local petUniqueID = getEquippedPetID()
+    if not petUniqueID then
+        debugPrint("❌ No equipped pet found!")
+        return false
+    end
+
+    debugPrint("Equipped Pet ID: " .. petUniqueID)
+
+    -- All possible ailment types to try
+    local allAilmentTypes = {
+        "sleepy",
+        "hungry",
+        "thirsty",
+        "dirty",
+        "bored",
+        "toilet",
+        "play",
+        "walk",
+        "ride",
+        "sick",
+        "pet_me"
+    }
+
+    -- Get the remote once
+    local remote = ReplicatedStorage:FindFirstChild("API")
+    if not remote then
+        debugPrint("❌ API not found!")
+        return false
+    end
+    remote = remote:FindFirstChild("AilmentsAPI/ChooseMysteryAilment")
+    if not remote then
+        debugPrint("❌ ChooseMysteryAilment remote not found!")
+        return false
+    end
+
+    -- Try all 3 levels
+    for level = 1, 3 do
+        debugPrint("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        debugPrint("LEVEL " .. level .. " - Trying all " .. #allAilmentTypes .. " ailments...")
+        debugPrint("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+        for i, ailmentType in ipairs(allAilmentTypes) do
+            if not PetFarmMode then
+                debugPrint("PetFarm stopped, aborting mystery resolution")
+                return false
+            end
+
+            debugPrint("[" .. level .. "/" .. 3 .. "] [" .. i .. "/" .. #allAilmentTypes .. "] Trying: " .. ailmentType)
+
+            local args = {
+                petUniqueID,
+                "mystery",
+                level,
+                ailmentType
+            }
+
+            local success, err = pcall(function()
+                remote:FireServer(unpack(args))
+            end)
+
+            if success then
+                debugPrint("  ✅ Fired: " .. ailmentType)
+            else
+                debugPrint("  ❌ Failed: " .. ailmentType .. " - " .. tostring(err))
+            end
+
+            -- 2 second delay between each attempt
+            task.wait(2)
+        end
+
+        debugPrint("Level " .. level .. " complete!")
+    end
+
+    debugPrint("========================================")
+    debugPrint("✅ MYSTERY BRUTE-FORCE COMPLETE!")
+    debugPrint("   Tried all " .. #allAilmentTypes .. " ailments x 3 levels")
+    debugPrint("   Total attempts: " .. (#allAilmentTypes * 3))
+    debugPrint("========================================")
+    
+    return true
+end
 -- ==================================================================
 -- AUTO POTION FUNCTIONS
 -- ==================================================================
