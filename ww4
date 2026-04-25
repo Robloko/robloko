@@ -590,8 +590,7 @@ local function purgeNonPriorityGarbage()
         if pet and pet.id and pet.properties then
             if not pet.properties.neon and not prioritySet[string.lower(pet.id)] then
                 safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", uniqueId)
-                removed = removed + 1
-                task.wait(0.7)
+                removed = removed + 1; task.wait(0.7)
             end
         end
     end
@@ -648,53 +647,6 @@ local function toggleAutoPetPenMode()
     if AutoPetPenMode then lastPetPenCommitTime = os.time(); autoPetPenCoroutine = coroutine.wrap(startAutoPetPen)() end
 end
 
-local function getAllValidPets()
-    local playerData = getPlayerData()
-    if not playerData or not playerData.inventory or not playerData.inventory.pets then return {} end
-    local validPets = {}
-    for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id and petData.properties then
-            local petName = string.lower(petData.id)
-            if not string.find(petName, "practice_dog") then
-                local petType = "other"
-                if string.find(petName, "starter_egg") then petType = "starter_egg"
-                elseif string.find(petName, "dog") then petType = "dog"
-                elseif string.find(petName, "cat") then petType = "cat" end
-                table.insert(validPets, {
-                    unique = uniqueId, id = petData.id, age = petData.properties.age or 0,
-                    neon = petData.properties.neon or false, name = petData.id, petType = petType
-                })
-            end
-        end
-    end
-    table.sort(validPets, function(a, b)
-        local function p(t) if t == "starter_egg" then return 1 elseif t == "dog" then return 2 elseif t == "cat" then return 3 end return 4 end
-        local ap, bp = p(a.petType), p(b.petType)
-        if ap ~= bp then return ap < bp end
-        return a.age > b.age
-    end)
-    return validPets
-end
-
-local function findBestPet()
-    local validPets = getAllValidPets()
-    local starterEggPet, dogPet, catPet = nil, nil, nil
-    for _, pet in ipairs(validPets) do
-        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then starterEggPet = pet
-        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then dogPet = pet
-        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then catPet = pet end
-    end
-    return starterEggPet or dogPet or catPet or validPets[1]
-end
-
-local function equipSelectedPet(petUniqueID)
-    if not petUniqueID then return false end
-    if isPetEquipped(petUniqueID) then return true end
-    local success = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", petUniqueID, { use_sound_delay = true, equip_as_last = false })
-    if success then task.wait(3) end
-    return success
-end
-
 local function getAllPetIDsFromInventory()
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return {} end
@@ -744,6 +696,10 @@ local function toggleAutoAcceptMode()
     if AutoAcceptMode then autoAcceptCoroutine = coroutine.wrap(startAutoAcceptTrades)() end
 end
 
+-- ==================================================================
+-- PET TYPE HELPERS
+-- ==================================================================
+
 local function getPetTypeIcon(petType)
     if petType == "starter_egg" then return "🥚"
     elseif petType == "dog" then return "🐕"
@@ -751,30 +707,145 @@ local function getPetTypeIcon(petType)
     else return "📦" end
 end
 
--- Helper: update the dropdown button text to show selected pet
-local function updateDropdownButtonText(dropdownButton)
-    if PetID and currentSelectedPetKey then
-        dropdownButton.Text = "✅ " .. currentSelectedPetKey
-        dropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-        dropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    else
-        dropdownButton.Text = "Select a Pet"
-        dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
-    end
+local function detectPetType(petId)
+    local name = string.lower(tostring(petId))
+    if string.find(name, "starter_egg") then return "starter_egg"
+    elseif string.find(name, "dog") then return "dog"
+    elseif string.find(name, "cat") then return "cat"
+    else return "other" end
 end
 
 -- ==================================================================
--- FIXED: updatePetsDropdown - button ALWAYS shows equipped pet
+-- CENTRALIZED PET KEY BUILDER
+-- Ensures the EXACT same format everywhere
 -- ==================================================================
+
+local function buildPetKey(petId, petAge, isNeon)
+    local petType = detectPetType(petId)
+    local icon = getPetTypeIcon(petType)
+    local neon = isNeon and " 🔥NEON" or ""
+    return string.format("%s %s (Age: %d)%s", icon, petId, petAge, neon)
+end
+
+-- ==================================================================
+-- GET ALL VALID PETS (sorted by priority)
+-- ==================================================================
+
+local function getAllValidPets()
+    local playerData = getPlayerData()
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then return {} end
+    local validPets = {}
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        if petData and petData.id and petData.properties then
+            local petName = string.lower(petData.id)
+            if not string.find(petName, "practice_dog") then
+                table.insert(validPets, {
+                    unique = uniqueId,
+                    id = petData.id,
+                    age = petData.properties.age or 0,
+                    neon = petData.properties.neon or false,
+                    petType = detectPetType(petData.id)
+                })
+            end
+        end
+    end
+    table.sort(validPets, function(a, b)
+        local function p(t) if t == "starter_egg" then return 1 elseif t == "dog" then return 2 elseif t == "cat" then return 3 end return 4 end
+        local ap, bp = p(a.petType), p(b.petType)
+        if ap ~= bp then return ap < bp end
+        return a.age > b.age
+    end)
+    return validPets
+end
+
+-- ==================================================================
+-- FIND BEST PET (starter_egg > dog > cat > other)
+-- ==================================================================
+
+local function findBestPet()
+    debugPrint("Searching for best pet (Starter_Egg > Dog > Cat)...")
+    local validPets = getAllValidPets()
+    local starterEggPet, dogPet, catPet = nil, nil, nil
+    for _, pet in ipairs(validPets) do
+        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then starterEggPet = pet
+        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then dogPet = pet
+        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then catPet = pet end
+    end
+    local picked = starterEggPet or dogPet or catPet or validPets[1]
+    if picked then
+        debugPrint("Picked: " .. picked.id .. " (Age: " .. picked.age .. ", Type: " .. picked.petType .. ")")
+    else
+        debugPrint("No valid pets found!")
+    end
+    return picked
+end
+
+local function equipSelectedPet(petUniqueID)
+    if not petUniqueID then return false end
+    if isPetEquipped(petUniqueID) then return true end
+    local success = safeRemoteCall({"ToolAPI/Equip"}, "InvokeServer", petUniqueID, { use_sound_delay = true, equip_as_last = false })
+    if success then task.wait(3) end
+    return success
+end
+
+-- ==================================================================
+-- SELECT PET AND UPDATE ALL STATE + UI
+-- This is the ONLY function that sets PetID/selectedPetName/etc
+-- ==================================================================
+
+local ui = nil -- forward declare
+
+local function selectPet(petData)
+    if not petData or not petData.unique then
+        debugPrint("selectPet called with invalid data")
+        return false
+    end
+
+    PetID = petData.unique
+    selectedPetName = petData.id
+    selectedPetType = petData.petType
+    currentSelectedPetKey = buildPetKey(petData.id, petData.age, petData.neon)
+
+    debugPrint("=== PET SELECTED ===")
+    debugPrint("Name: " .. selectedPetName)
+    debugPrint("ID: " .. PetID)
+    debugPrint("Type: " .. selectedPetType)
+    debugPrint("Key: " .. currentSelectedPetKey)
+
+    -- Update dropdown button to show selected pet
+    if ui and ui.petsDropdownButton then
+        ui.petsDropdownButton.Text = "✅ " .. currentSelectedPetKey
+        ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+        ui.petsDropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+
+    -- Update status
+    if ui and ui.statusLabel then
+        local icon = getPetTypeIcon(selectedPetType)
+        ui.statusLabel.Text = "Status: Selected - " .. icon .. " " .. selectedPetName
+    end
+
+    -- Equip the pet
+    return equipSelectedPet(PetID)
+end
+
+-- ==================================================================
+-- UI CREATION
+-- ==================================================================
+
 local function updatePetsDropdown(dropdownButton, dropdownListFrame)
+    -- Clear old options
     for _, child in ipairs(dropdownListFrame:GetChildren()) do
         if child:IsA("TextButton") then child:Destroy() end
     end
 
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        updateDropdownButtonText(dropdownButton)
+        if not PetID then
+            dropdownButton.Text = "No Pets Found"
+            dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+            dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
         return
     end
 
@@ -785,21 +856,22 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         if petData and petData.id and petData.properties then
             local petName = string.lower(petData.id)
             if not string.find(petName, "practice_dog") then
-                local displayName = tostring(petData.id)
-                local petAge = petData.properties.age or 0
-                local neonStatus = petData.properties.neon and " 🔥NEON" or ""
-                local petType = "other"
-                if string.find(petName, "starter_egg") then petType = "starter_egg"
-                elseif string.find(petName, "dog") then petType = "dog"
-                elseif string.find(petName, "cat") then petType = "cat" end
-                local typeIcon = getPetTypeIcon(petType)
-                local key = string.format("%s %s (Age: %d)%s", typeIcon, displayName, petAge, neonStatus)
-                PetsShow[key] = { unique = uniqueId, id = petData.id, age = petAge, neon = petData.properties.neon, petType = petType }
+                local age = petData.properties.age or 0
+                local neon = petData.properties.neon or false
+                local key = buildPetKey(petData.id, age, neon)
+                PetsShow[key] = {
+                    unique = uniqueId,
+                    id = petData.id,
+                    age = age,
+                    neon = neon,
+                    petType = detectPetType(petData.id)
+                }
                 table.insert(List, key)
             end
         end
     end
 
+    -- Sort
     table.sort(List, function(a, b)
         local aData, bData = PetsShow[a], PetsShow[b]
         if not aData or not bData then return false end
@@ -850,19 +922,9 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         optionButton.MouseButton1Click:Connect(function()
             dropdownListFrame.Visible = false
             local selectedPet = PetsShow[petKey]
-            if selectedPet and selectedPet.unique then
-                PetID = selectedPet.unique
-                selectedPetName = selectedPet.id
-                selectedPetType = selectedPet.petType
-                currentSelectedPetKey = petKey
-                debugPrint("Selected: " .. selectedPet.id .. " (Type: " .. selectedPet.petType .. ")")
-                equipSelectedPet(PetID)
-                if ui and ui.statusLabel then
-                    ui.statusLabel.Text = "Status: Selected - " .. selectedPet.id
-                end
-                -- Immediately update button to show new selection
-                updateDropdownButtonText(dropdownButton)
-                -- Refresh list highlight
+            if selectedPet then
+                selectPet(selectedPet)
+                -- Refresh list to move highlight
                 updatePetsDropdown(dropdownButton, dropdownListFrame)
             end
         end)
@@ -870,8 +932,16 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
 
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 22)
 
-    -- KEY FIX: Always show selected pet on button, never reset to "Select a Pet"
-    updateDropdownButtonText(dropdownButton)
+    -- NEVER overwrite button if a pet is selected
+    if PetID and currentSelectedPetKey then
+        dropdownButton.Text = "✅ " .. currentSelectedPetKey
+        dropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+        dropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    else
+        dropdownButton.Text = "Select a Pet (" .. #List .. ")"
+        dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
+    end
 end
 
 local function createPetsDropdown(parentFrame, position)
@@ -882,10 +952,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownFrame.BorderSizePixel = 0
     dropdownFrame.BackgroundTransparency = 0.1
     dropdownFrame.Parent = parentFrame
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = dropdownFrame
+    Instance.new("UICorner", dropdownFrame).CornerRadius = UDim.new(0, 4)
 
     local dropdownTitle = Instance.new("TextLabel")
     dropdownTitle.Size = UDim2.new(1, 0, 0, 15)
@@ -907,10 +974,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownButton.Font = Enum.Font.SourceSansBold
     dropdownButton.TextSize = 11
     dropdownButton.Parent = dropdownFrame
-
-    local buttonCorner = Instance.new("UICorner")
-    buttonCorner.CornerRadius = UDim.new(0, 4)
-    buttonCorner.Parent = dropdownButton
+    Instance.new("UICorner", dropdownButton).CornerRadius = UDim.new(0, 4)
 
     local dropdownListFrame = Instance.new("ScrollingFrame")
     dropdownListFrame.Size = UDim2.new(1, 0, 0, 200)
@@ -922,10 +986,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownListFrame.ScrollBarThickness = 4
     dropdownListFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 120, 0)
     dropdownListFrame.Parent = dropdownFrame
-
-    local listCorner = Instance.new("UICorner")
-    listCorner.CornerRadius = UDim.new(0, 4)
-    listCorner.Parent = dropdownListFrame
+    Instance.new("UICorner", dropdownListFrame).CornerRadius = UDim.new(0, 4)
 
     local dropdownToggle = false
     dropdownButton.MouseButton1Click:Connect(function()
@@ -951,10 +1012,7 @@ local function createMainUI()
     frame.BorderSizePixel = 0
     frame.BackgroundTransparency = 0.1
     frame.Parent = screenGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = frame
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 
     local sessionLabel = Instance.new("TextLabel")
     sessionLabel.Size = UDim2.new(1, 0, 0, 20)
@@ -1102,7 +1160,7 @@ local function autoStart()
     checkAndBuyAllMissingFurniture()
 
     if ui then
-        ui.statusLabel.Text = "Status: Searching for Starter_Egg..."
+        ui.statusLabel.Text = "Status: Searching for best pet..."
         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
     end
 
@@ -1110,67 +1168,57 @@ local function autoStart()
 
     local selectedPet = findBestPet()
 
-    if selectedPet then
+    if not selectedPet then
+        debugPrint("❌ No valid pets found in inventory!")
         if ui then
-            ui.statusLabel.Text = "Status: Found " .. selectedPet.id .. " - Equipping..."
+            ui.statusLabel.Text = "Status: ❌ No pets found!"
+            ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            ui.petsDropdownButton.Text = "No Pets Found"
+            ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+            ui.petsDropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
+        return
+    end
+
+    -- Use selectPet() - it handles ALL state + UI updates
+    local equipOk = selectPet(selectedPet)
+
+    if not equipOk then
+        debugPrint("First equip failed, retrying...")
+        task.wait(2)
+        equipOk = equipSelectedPet(PetID)
+    end
+
+    if equipOk then
+        debugPrint("✅ Pet equipped successfully!")
+        if ui then
+            local icon = getPetTypeIcon(selectedPetType)
+            ui.statusLabel.Text = "Status: ✅ RUNNING - " .. icon .. " " .. selectedPetName
+            ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         end
 
-        PetID = selectedPet.unique
-        selectedPetName = selectedPet.id
-        selectedPetType = selectedPet.petType
-
-        -- Build key for dropdown
-        local typeIcon = getPetTypeIcon(selectedPet.petType)
-        local neonStatus = selectedPet.neon and " 🔥NEON" or ""
-        currentSelectedPetKey = string.format("%s %s (Age: %d)%s", typeIcon, selectedPet.id, selectedPet.age, neonStatus)
-
-        local equipSuccess = equipSelectedPet(selectedPet.unique)
-        if not equipSuccess then
-            task.wait(2)
-            equipSuccess = equipSelectedPet(selectedPet.unique)
+        if not AutoPetPenMode then
+            toggleAutoPetPenMode()
+            if ui and ui.autoPetPenButton then
+                ui.autoPetPenButton.Text = "Auto PetPen [ON]"
+                ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+            end
         end
 
-        if equipSuccess then
-            if ui then
-                ui.statusLabel.Text = "Status: ✅ RUNNING - " .. typeIcon .. " " .. selectedPet.id
-                ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-                -- FIX: Use the helper to update button text
-                updateDropdownButtonText(ui.petsDropdownButton)
-            end
-
-            if not AutoPetPenMode then
-                toggleAutoPetPenMode()
-                if ui and ui.autoPetPenButton then
-                    ui.autoPetPenButton.Text = "Auto PetPen [ON]"
-                    ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-                end
-            end
-
-            if not PetFarmMode then
-                togglePetFarmMode()
-                if ui and ui.petFarmButton then
-                    ui.petFarmButton.Text = "🛑 STOP PETFARM"
-                    ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-                    ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-                end
-            end
-
-            debugPrint("✅ PETFARM RUNNING: " .. selectedPet.id .. " (Type: " .. selectedPet.petType .. ")")
-        else
-            if ui then
-                ui.statusLabel.Text = "Status: ❌ Failed to equip pet!"
-                ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-                updateDropdownButtonText(ui.petsDropdownButton)
+        if not PetFarmMode then
+            togglePetFarmMode()
+            if ui and ui.petFarmButton then
+                ui.petFarmButton.Text = "🛑 STOP PETFARM"
+                ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+                ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
             end
         end
     else
+        debugPrint("❌ Failed to equip pet after retry!")
         if ui then
-            ui.statusLabel.Text = "Status: ❌ No valid pets found!"
+            ui.statusLabel.Text = "Status: ❌ Failed to equip!"
             ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-            -- FIX: Still update button even when no pet found
-            updateDropdownButtonText(ui.petsDropdownButton)
         end
-        debugPrint("❌ No valid pets found!")
     end
 end
 
@@ -1178,7 +1226,7 @@ end
 -- INITIALIZATION
 -- ==================================================================
 
-local ui = createMainUI()
+ui = createMainUI()
 lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
 
 coroutine.wrap(function()
