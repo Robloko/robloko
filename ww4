@@ -715,11 +715,6 @@ local function detectPetType(petId)
     else return "other" end
 end
 
--- ==================================================================
--- CENTRALIZED PET KEY BUILDER
--- Ensures the EXACT same format everywhere
--- ==================================================================
-
 local function buildPetKey(petId, petAge, isNeon)
     local petType = detectPetType(petId)
     local icon = getPetTypeIcon(petType)
@@ -728,8 +723,15 @@ local function buildPetKey(petId, petAge, isNeon)
 end
 
 -- ==================================================================
--- GET ALL VALID PETS (sorted by priority)
+-- INVENTORY CHECKS
 -- ==================================================================
+
+local function isPetStillInInventory(petUniqueID)
+    if not petUniqueID then return false end
+    local playerData = getPlayerData()
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then return false end
+    return playerData.inventory.pets[petUniqueID] ~= nil
+end
 
 local function getAllValidPets()
     local playerData = getPlayerData()
@@ -758,10 +760,6 @@ local function getAllValidPets()
     return validPets
 end
 
--- ==================================================================
--- FIND BEST PET (starter_egg > dog > cat > other)
--- ==================================================================
-
 local function findBestPet()
     debugPrint("Searching for best pet (Starter_Egg > Dog > Cat)...")
     local validPets = getAllValidPets()
@@ -789,11 +787,10 @@ local function equipSelectedPet(petUniqueID)
 end
 
 -- ==================================================================
--- SELECT PET AND UPDATE ALL STATE + UI
--- This is the ONLY function that sets PetID/selectedPetName/etc
+-- SELECT PET (centralized state + UI)
 -- ==================================================================
 
-local ui = nil -- forward declare
+local ui = nil
 
 local function selectPet(petData)
     if not petData or not petData.unique then
@@ -812,21 +809,115 @@ local function selectPet(petData)
     debugPrint("Type: " .. selectedPetType)
     debugPrint("Key: " .. currentSelectedPetKey)
 
-    -- Update dropdown button to show selected pet
     if ui and ui.petsDropdownButton then
         ui.petsDropdownButton.Text = "✅ " .. currentSelectedPetKey
         ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
         ui.petsDropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     end
 
-    -- Update status
     if ui and ui.statusLabel then
         local icon = getPetTypeIcon(selectedPetType)
         ui.statusLabel.Text = "Status: Selected - " .. icon .. " " .. selectedPetName
     end
 
-    -- Equip the pet
     return equipSelectedPet(PetID)
+end
+
+-- ==================================================================
+-- INVENTORY MONITOR - Auto switch when pet hatched/traded
+-- ==================================================================
+
+local function clearPetSelection()
+    PetID = nil
+    selectedPetName = nil
+    selectedPetType = nil
+    currentSelectedPetKey = nil
+    if ui and ui.petsDropdownButton then
+        ui.petsDropdownButton.Text = "No Pets Found"
+        ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        ui.petsDropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
+    end
+    if ui and ui.statusLabel then
+        ui.statusLabel.Text = "Status: ❌ No pets in inventory!"
+        ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+    PetFarmMode = false
+    if ui and ui.petFarmButton then
+        ui.petFarmButton.Text = "🥚 START PETFARM (Egg First!)"
+        ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
+        ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    end
+end
+
+local function monitorPetInventory()
+    debugPrint("🔍 Inventory monitor started (checks every 5s)...")
+    
+    while true do
+        task.wait(5)
+
+        -- Case 1: We have a pet selected - check if it still exists
+        if PetID then
+            if not isPetStillInInventory(PetID) then
+                local oldName = selectedPetName or "Unknown"
+                local oldType = selectedPetType or "unknown"
+                
+                debugPrint("========================================")
+                debugPrint("⚠️ PET REMOVED FROM INVENTORY!")
+                debugPrint("   Old: " .. oldName .. " (Type: " .. oldType .. ")")
+                debugPrint("========================================")
+
+                -- Wait a moment for hatched pet to appear in inventory
+                task.wait(3)
+
+                -- Find next best pet
+                local nextPet = findBestPet()
+
+                if nextPet then
+                    local icon = getPetTypeIcon(nextPet.petType)
+                    debugPrint("🔄 Auto-switching to: " .. icon .. " " .. nextPet.id)
+                    
+                    selectPet(nextPet)
+                    
+                    if ui and ui.statusLabel then
+                        ui.statusLabel.Text = "Status: 🔄 Switched - " .. icon .. " " .. nextPet.id
+                        ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+                    end
+
+                    -- If PetFarm was running, keep it running with new pet
+                    -- The ailment monitor already uses PetID which we just updated
+                    debugPrint("✅ PetFarm continues with new pet!")
+                else
+                    debugPrint("❌ No pets left to auto-select!")
+                    clearPetSelection()
+                end
+            end
+
+        -- Case 2: No pet selected - try to find one (new pet from trade/hatch)
+        else
+            local nextPet = findBestPet()
+            if nextPet then
+                debugPrint("🆕 Found new pet in inventory: " .. nextPet.id)
+                selectPet(nextPet)
+
+                if ui and ui.statusLabel then
+                    local icon = getPetTypeIcon(nextPet.petType)
+                    ui.statusLabel.Text = "Status: 🆕 Found - " .. icon .. " " .. nextPet.id
+                    ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+                end
+
+                -- Auto-start PetFarm if not running
+                if not PetFarmMode then
+                    PetFarmMode = true
+                    petFarmCoroutine = coroutine.wrap(startPetFarm)()
+                    if ui and ui.petFarmButton then
+                        ui.petFarmButton.Text = "🛑 STOP PETFARM"
+                        ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+                        ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- ==================================================================
@@ -834,7 +925,6 @@ end
 -- ==================================================================
 
 local function updatePetsDropdown(dropdownButton, dropdownListFrame)
-    -- Clear old options
     for _, child in ipairs(dropdownListFrame:GetChildren()) do
         if child:IsA("TextButton") then child:Destroy() end
     end
@@ -871,7 +961,6 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         end
     end
 
-    -- Sort
     table.sort(List, function(a, b)
         local aData, bData = PetsShow[a], PetsShow[b]
         if not aData or not bData then return false end
@@ -881,7 +970,6 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         return aData.age > bData.age
     end)
 
-    -- Build list items
     for i, petKey in ipairs(List) do
         local optionButton = Instance.new("TextButton")
         optionButton.Size = UDim2.new(1, 0, 0, 22)
@@ -924,7 +1012,6 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
             local selectedPet = PetsShow[petKey]
             if selectedPet then
                 selectPet(selectedPet)
-                -- Refresh list to move highlight
                 updatePetsDropdown(dropdownButton, dropdownListFrame)
             end
         end)
@@ -932,7 +1019,6 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
 
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 22)
 
-    -- NEVER overwrite button if a pet is selected
     if PetID and currentSelectedPetKey then
         dropdownButton.Text = "✅ " .. currentSelectedPetKey
         dropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
@@ -959,7 +1045,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
     dropdownTitle.BackgroundTransparency = 1
     dropdownTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
-    dropdownTitle.Text = "🥚 Pet List (Starter_Egg #1!)"
+    dropdownTitle.Text = "🥚 Auto: Egg > Dog > Cat"
     dropdownTitle.Font = Enum.Font.SourceSansBold
     dropdownTitle.TextSize = 10
     dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -1030,7 +1116,7 @@ local function createMainUI()
     title.Position = UDim2.new(0, 0, 0, 20)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 215, 0)
-    title.Text = "🥚 PetFarm - Starter_Egg #1!"
+    title.Text = "🥚 Auto-Switch: Egg > Dog > Cat"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = frame
@@ -1118,7 +1204,7 @@ local function createMainUI()
     petFarmButton.Position = UDim2.new(0, 10, 0, 145)
     petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
     petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
-    petFarmButton.Text = "🥚 START PETFARM (Egg First!)"
+    petFarmButton.Text = "🥚 START PETFARM (Auto-Switch!)"
     petFarmButton.Font = Enum.Font.SourceSansBold
     petFarmButton.TextSize = 11
     petFarmButton.Parent = frame
@@ -1170,17 +1256,10 @@ local function autoStart()
 
     if not selectedPet then
         debugPrint("❌ No valid pets found in inventory!")
-        if ui then
-            ui.statusLabel.Text = "Status: ❌ No pets found!"
-            ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-            ui.petsDropdownButton.Text = "No Pets Found"
-            ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-            ui.petsDropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
-        end
+        clearPetSelection()
         return
     end
 
-    -- Use selectPet() - it handles ALL state + UI updates
     local equipOk = selectPet(selectedPet)
 
     if not equipOk then
@@ -1213,6 +1292,15 @@ local function autoStart()
                 ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
             end
         end
+
+        -- Start the inventory monitor AFTER initial setup
+        debugPrint("========================================")
+        debugPrint("🔍 Starting inventory monitor...")
+        debugPrint("   Will auto-switch when pet hatched!")
+        debugPrint("   Priority: Egg > Dog > Cat")
+        debugPrint("========================================")
+        coroutine.wrap(monitorPetInventory)()
+
     else
         debugPrint("❌ Failed to equip pet after retry!")
         if ui then
@@ -1280,7 +1368,7 @@ if ui then
             ui.statusLabel.Text = "Status: ✅ RUNNING - " .. typeIcon .. " " .. (selectedPetName or "Selected")
             ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         else
-            ui.petFarmButton.Text = "🥚 START PETFARM (Egg First!)"
+            ui.petFarmButton.Text = "🥚 START PETFARM (Auto-Switch!)"
             ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
             ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
             ui.statusLabel.Text = "Status: ⏸️ STOPPED"
@@ -1289,6 +1377,12 @@ if ui then
     end)
 end
 
-debugPrint("Script loaded! Auto-starting in 3 seconds...")
+debugPrint("========================================")
+debugPrint("🥚 PetFarm with AUTO-SWITCH loaded!")
+debugPrint("========================================")
+debugPrint("Flow: starter_egg -> hatch -> auto dog/cat")
+debugPrint("Monitor checks inventory every 5 seconds")
+debugPrint("PetFarm continues seamlessly on switch")
+debugPrint("========================================")
 task.wait(3)
 autoStart()
