@@ -43,6 +43,9 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
+-- FLAG: Once starter_egg is hatched, ONLY select dog or cat
+local eggHasBeenHatched = false
+
 local AILMENT_TASKS = {
     sleepy = "BasicBed",
     hungry = "PetFoodBowl",
@@ -760,20 +763,52 @@ local function getAllValidPets()
     return validPets
 end
 
+-- ==================================================================
+-- FIND BEST PET
+-- If eggHasBeenHatched is true: SKIP starter_egg, only pick dog or cat
+-- If false (initial): pick starter_egg first, then dog, then cat
+-- ==================================================================
+
 local function findBestPet()
-    debugPrint("Searching for best pet (Starter_Egg > Dog > Cat)...")
     local validPets = getAllValidPets()
+    
+    -- AFTER hatch: ONLY dog or cat, never another egg
+    if eggHasBeenHatched then
+        debugPrint("🔍 Post-hatch mode: searching Dog/Cat ONLY...")
+        local dogPet, catPet = nil, nil
+        for _, pet in ipairs(validPets) do
+            if pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
+                dogPet = pet
+            elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
+                catPet = pet
+            end
+        end
+        local picked = dogPet or catPet
+        if picked then
+            debugPrint("✅ Post-hatch picked: " .. picked.id .. " (Type: " .. picked.petType .. ")")
+        else
+            debugPrint("❌ No Dog or Cat found after hatch!")
+        end
+        return picked
+    end
+
+    -- INITIAL: starter_egg > dog > cat
+    debugPrint("🔍 Initial mode: Egg > Dog > Cat...")
     local starterEggPet, dogPet, catPet = nil, nil, nil
     for _, pet in ipairs(validPets) do
-        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then starterEggPet = pet
-        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then dogPet = pet
-        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then catPet = pet end
+        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then
+            starterEggPet = pet
+        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
+            dogPet = pet
+        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
+            catPet = pet
+        end
     end
     local picked = starterEggPet or dogPet or catPet or validPets[1]
     if picked then
-        debugPrint("Picked: " .. picked.id .. " (Age: " .. picked.age .. ", Type: " .. picked.petType .. ")")
+        debugPrint("✅ Initial picked: " .. picked.id .. " (Type: " .. picked.petType .. ")")
     else
-        debugPrint("No valid pets found!")
+        debugPrint("❌ No valid pets found!")
     end
     return picked
 end
@@ -807,7 +842,7 @@ local function selectPet(petData)
     debugPrint("Name: " .. selectedPetName)
     debugPrint("ID: " .. PetID)
     debugPrint("Type: " .. selectedPetType)
-    debugPrint("Key: " .. currentSelectedPetKey)
+    debugPrint("Post-hatch mode: " .. tostring(eggHasBeenHatched))
 
     if ui and ui.petsDropdownButton then
         ui.petsDropdownButton.Text = "✅ " .. currentSelectedPetKey
@@ -817,7 +852,8 @@ local function selectPet(petData)
 
     if ui and ui.statusLabel then
         local icon = getPetTypeIcon(selectedPetType)
-        ui.statusLabel.Text = "Status: Selected - " .. icon .. " " .. selectedPetName
+        local modeTag = eggHasBeenHatched and " [Post-Hatch]" or " [Initial]"
+        ui.statusLabel.Text = "Status: " .. icon .. " " .. selectedPetName .. modeTag
     end
 
     return equipSelectedPet(PetID)
@@ -843,14 +879,19 @@ local function clearPetSelection()
     end
     PetFarmMode = false
     if ui and ui.petFarmButton then
-        ui.petFarmButton.Text = "🥚 START PETFARM (Egg First!)"
+        ui.petFarmButton.Text = "🥚 START PETFARM"
         ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
         ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     end
 end
 
 local function monitorPetInventory()
-    debugPrint("🔍 Inventory monitor started (checks every 5s)...")
+    debugPrint("========================================")
+    debugPrint("🔍 Inventory monitor started")
+    debugPrint("   Checks every 5 seconds")
+    debugPrint("   Initial: Egg > Dog > Cat")
+    debugPrint("   After hatch: Dog > Cat ONLY")
+    debugPrint("========================================")
     
     while true do
         task.wait(5)
@@ -863,13 +904,20 @@ local function monitorPetInventory()
                 
                 debugPrint("========================================")
                 debugPrint("⚠️ PET REMOVED FROM INVENTORY!")
-                debugPrint("   Old: " .. oldName .. " (Type: " .. oldType .. ")")
+                debugPrint("   Was: " .. oldName .. " (" .. oldType .. ")")
                 debugPrint("========================================")
 
-                -- Wait a moment for hatched pet to appear in inventory
+                -- If it was a starter_egg that disappeared, set the flag
+                if oldType == "starter_egg" then
+                    eggHasBeenHatched = true
+                    debugPrint("🥚 STARTER_EGG HATCHED!")
+                    debugPrint("   Switching to Dog/Cat ONLY mode!")
+                end
+
+                -- Wait for hatched pet to register
                 task.wait(3)
 
-                -- Find next best pet
+                -- Find next best pet (respects eggHasBeenHatched flag)
                 local nextPet = findBestPet()
 
                 if nextPet then
@@ -883,20 +931,18 @@ local function monitorPetInventory()
                         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
                     end
 
-                    -- If PetFarm was running, keep it running with new pet
-                    -- The ailment monitor already uses PetID which we just updated
                     debugPrint("✅ PetFarm continues with new pet!")
                 else
-                    debugPrint("❌ No pets left to auto-select!")
+                    debugPrint("❌ No Dog or Cat found to auto-select!")
                     clearPetSelection()
                 end
             end
 
-        -- Case 2: No pet selected - try to find one (new pet from trade/hatch)
+        -- Case 2: No pet selected - try to find one
         else
             local nextPet = findBestPet()
             if nextPet then
-                debugPrint("🆕 Found new pet in inventory: " .. nextPet.id)
+                debugPrint("🆕 Found new pet: " .. nextPet.id)
                 selectPet(nextPet)
 
                 if ui and ui.statusLabel then
@@ -1011,6 +1057,11 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
             dropdownListFrame.Visible = false
             local selectedPet = PetsShow[petKey]
             if selectedPet then
+                -- If user manually picks a starter_egg from dropdown, reset the flag
+                if selectedPet.petType == "starter_egg" then
+                    eggHasBeenHatched = false
+                    debugPrint("🔄 User manually selected starter_egg - reset hatch flag")
+                end
                 selectPet(selectedPet)
                 updatePetsDropdown(dropdownButton, dropdownListFrame)
             end
@@ -1045,7 +1096,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
     dropdownTitle.BackgroundTransparency = 1
     dropdownTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
-    dropdownTitle.Text = "🥚 Auto: Egg > Dog > Cat"
+    dropdownTitle.Text = "🥚 Auto: Egg->Dog/Cat ONLY"
     dropdownTitle.Font = Enum.Font.SourceSansBold
     dropdownTitle.TextSize = 10
     dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -1116,7 +1167,7 @@ local function createMainUI()
     title.Position = UDim2.new(0, 0, 0, 20)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 215, 0)
-    title.Text = "🥚 Auto-Switch: Egg > Dog > Cat"
+    title.Text = "🥚 Egg -> Dog/Cat ONLY"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = frame
@@ -1204,7 +1255,7 @@ local function createMainUI()
     petFarmButton.Position = UDim2.new(0, 10, 0, 145)
     petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
     petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
-    petFarmButton.Text = "🥚 START PETFARM (Auto-Switch!)"
+    petFarmButton.Text = "🥚 START PETFARM"
     petFarmButton.Font = Enum.Font.SourceSansBold
     petFarmButton.TextSize = 11
     petFarmButton.Parent = frame
@@ -1246,7 +1297,7 @@ local function autoStart()
     checkAndBuyAllMissingFurniture()
 
     if ui then
-        ui.statusLabel.Text = "Status: Searching for best pet..."
+        ui.statusLabel.Text = "Status: Searching best pet..."
         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
     end
 
@@ -1255,7 +1306,7 @@ local function autoStart()
     local selectedPet = findBestPet()
 
     if not selectedPet then
-        debugPrint("❌ No valid pets found in inventory!")
+        debugPrint("❌ No valid pets found!")
         clearPetSelection()
         return
     end
@@ -1269,10 +1320,10 @@ local function autoStart()
     end
 
     if equipOk then
-        debugPrint("✅ Pet equipped successfully!")
+        debugPrint("✅ Pet equipped!")
         if ui then
             local icon = getPetTypeIcon(selectedPetType)
-            ui.statusLabel.Text = "Status: ✅ RUNNING - " .. icon .. " " .. selectedPetName
+            ui.statusLabel.Text = "Status: ✅ " .. icon .. " " .. selectedPetName
             ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         end
 
@@ -1293,16 +1344,11 @@ local function autoStart()
             end
         end
 
-        -- Start the inventory monitor AFTER initial setup
-        debugPrint("========================================")
-        debugPrint("🔍 Starting inventory monitor...")
-        debugPrint("   Will auto-switch when pet hatched!")
-        debugPrint("   Priority: Egg > Dog > Cat")
-        debugPrint("========================================")
+        -- Start inventory monitor
         coroutine.wrap(monitorPetInventory)()
 
     else
-        debugPrint("❌ Failed to equip pet after retry!")
+        debugPrint("❌ Failed to equip pet!")
         if ui then
             ui.statusLabel.Text = "Status: ❌ Failed to equip!"
             ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -1365,10 +1411,10 @@ if ui then
             ui.petFarmButton.Text = "🛑 STOP PETFARM"
             ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
             ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            ui.statusLabel.Text = "Status: ✅ RUNNING - " .. typeIcon .. " " .. (selectedPetName or "Selected")
+            ui.statusLabel.Text = "Status: ✅ " .. typeIcon .. " " .. (selectedPetName or "Selected")
             ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         else
-            ui.petFarmButton.Text = "🥚 START PETFARM (Auto-Switch!)"
+            ui.petFarmButton.Text = "🥚 START PETFARM"
             ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
             ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
             ui.statusLabel.Text = "Status: ⏸️ STOPPED"
@@ -1378,11 +1424,11 @@ if ui then
 end
 
 debugPrint("========================================")
-debugPrint("🥚 PetFarm with AUTO-SWITCH loaded!")
+debugPrint("🥚 PetFarm loaded!")
 debugPrint("========================================")
-debugPrint("Flow: starter_egg -> hatch -> auto dog/cat")
-debugPrint("Monitor checks inventory every 5 seconds")
-debugPrint("PetFarm continues seamlessly on switch")
+debugPrint("Phase 1: starter_egg (auto-select)")
+debugPrint("Phase 2: hatch detected")
+debugPrint("Phase 3: Dog or Cat ONLY (no more eggs)")
 debugPrint("========================================")
 task.wait(3)
 autoStart()
