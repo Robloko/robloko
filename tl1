@@ -1,0 +1,142 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local localPlayer = Players.LocalPlayer
+
+local MAX_ATTEMPTS = 5
+local attemptCount = 0
+
+-- Fixed: Check ALL fields, not just toyData.id
+local function hasTradeLicense()
+    local found = false
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("Core"):WaitForChild("ClientData"))
+        local rawData = clientData.get_data()
+        local playerData = rawData[localPlayer.Name] or rawData[localPlayer.UserId]
+        
+        if playerData and playerData.inventory and playerData.inventory.toys then
+            print("🔍 Scanning toys...")
+            for toyKey, toyData in pairs(playerData.inventory.toys) do
+                -- Print EVERYTHING about this toy so we can see the structure
+                print("--- Toy Key: " .. tostring(toyKey) .. " ---")
+                if type(toyData) == "table" then
+                    for field, value in pairs(toyData) do
+                        print("  [" .. tostring(field) .. "] = " .. tostring(value))
+                    end
+                else
+                    print("  Value: " .. tostring(toyData))
+                end
+                
+                -- Check the KEY itself
+                if tostring(toyKey):lower():find("trade_license") then
+                    print("✅ FOUND in key!")
+                    found = true
+                    break
+                end
+                
+                -- Check ALL string fields inside the toy data
+                if type(toyData) == "table" then
+                    for field, value in pairs(toyData) do
+                        if type(value) == "string" and value:lower():find("trade_license") then
+                            print("✅ FOUND in field [" .. tostring(field) .. "] = " .. tostring(value))
+                            found = true
+                            break
+                        end
+                    end
+                end
+                
+                if found then break end
+            end
+        else
+            print("❌ No inventory.toys found")
+        end
+    end)
+
+    if not success then
+        print("Error: " .. tostring(errorMsg))
+    end
+    
+    return found
+end
+
+-- Function to click the dialog button
+local function clickDialogButton()
+    repeat task.wait() until localPlayer:FindFirstChild("PlayerGui")
+    
+    local button = localPlayer.PlayerGui:FindFirstChild("DialogApp")
+        and localPlayer.PlayerGui.DialogApp:FindFirstChild("Dialog")
+        and localPlayer.PlayerGui.DialogApp.Dialog:FindFirstChild("NormalDialog")
+        and localPlayer.PlayerGui.DialogApp.Dialog.NormalDialog:FindFirstChild("Buttons")
+        and localPlayer.PlayerGui.DialogApp.Dialog.NormalDialog.Buttons:FindFirstChild("ButtonTemplate")
+
+    if button then
+        if button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
+            firesignal(button.MouseButton1Down)
+            task.wait(0.05)
+            firesignal(button.MouseButton1Up)
+            firesignal(button.MouseButton1Click)
+            print("✅ Clicked dialog button!")
+            return true
+        end
+    end
+    return false
+end
+
+-- Main Trade License sequence
+local function runTradeSequence()
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("DownloadsAPI/Download"):InvokeServer("Interiors", "TradeLicenseZone")
+    ReplicatedStorage:WaitForChild("_package"):WaitForChild("playadopt.me"):WaitForChild("PerformanceLogger"):WaitForChild("logPlayerState"):FireServer("Interior", "TradeLicenseZone")
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/BeginQuiz"):FireServer()
+    task.wait(15)
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer("safe")
+    task.wait(15)
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer("safe")
+    task.wait(15)
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AnswerQuizQuestion"):FireServer("not safe")
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("JournalAPI/CommitCollection"):FireServer()
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer("2_7735857bb1824329b0b2bc49d4497e93")
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/SendPassiveDoorEnter"):FireServer("SafetyHub", "TradeLicenseZone", {studs_ahead_of_door = 9, start_transparency = 1})
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/EndQuiz"):FireServer()
+end
+
+-- ========================
+-- EXECUTION
+-- ========================
+
+print("🔍 Checking inventory...")
+if hasTradeLicense() then
+    print("✅ Already have Trade License!")
+    return
+end
+
+print("🚀 Running sequence...")
+runTradeSequence()
+task.wait(5)
+clickDialogButton()
+task.wait(2)
+
+while not hasTradeLicense() do
+    attemptCount = attemptCount + 1
+    
+    if attemptCount >= MAX_ATTEMPTS then
+        warn("⛔ Stopped after " .. MAX_ATTEMPTS .. " attempts")
+        break
+    end
+    
+    warn("🔄 Retry " .. attemptCount .. "/" .. MAX_ATTEMPTS)
+    
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("SettingsAPI/SetBooleanFlag"):FireServer("has_talked_to_trade_quest_npc", true)
+    ReplicatedStorage:WaitForChild("API"):WaitForChild("AdoptAPI/MarkEnteredDoorTime"):FireServer()
+    
+    runTradeSequence()
+    task.wait(5)
+    clickDialogButton()
+    task.wait(3)
+end
+
+print("🎉 Done! Trade License acquired!" .. (attemptCount >= MAX_ATTEMPTS and " (or max retries reached)" or ""))
