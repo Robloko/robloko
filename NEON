@@ -1,0 +1,127 @@
+-- Neon Pet Fuser: Fuse 4 Full Grown (Age 6) pets into Neon
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local function fuseToNeonPets()
+    local data = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    local fullGrownPets = {}
+    local eligibleList = {}
+
+    -- Find all non-neon, full grown (age 6) pets
+    for id, pet in pairs(data.inventory.pets) do
+        local isNeon = pet.properties.neon or false
+        local isMega = pet.properties.mega or false
+        local age = pet.properties.age or 0
+        local petName = pet.id
+
+        -- Only consider non-neon, non-mega pets at age 6
+        if not isNeon and not isMega and age == 6 then
+            if not fullGrownPets[petName] then
+                fullGrownPets[petName] = {}
+            end
+            table.insert(fullGrownPets[petName], id)
+            table.insert(eligibleList, petName .. " (Age: " .. age .. ") [ID: " .. id .. "]")
+        end
+    end
+
+    -- Show all eligible full grown pets
+    print("=== FULL GROWN PETS (AGE 6) - NON NEON ===")
+    if #eligibleList > 0 then
+        for i, pet in ipairs(eligibleList) do
+            print(i .. ". " .. pet)
+        end
+        print("Total Full Grown: " .. #eligibleList)
+    else
+        print("No full grown (age 6) non-neon pets found!")
+    end
+
+    -- Show count per pet type
+    print("\n=== COUNT PER PET TYPE ===")
+    for petType, petList in pairs(fullGrownPets) do
+        local sets = math.floor(#petList / 4)
+        local remainder = #petList % 4
+        print(string.format("%s: %d owned → %d neon fusion(s) possible (%d leftover)",
+            petType, #petList, sets, remainder))
+    end
+
+    -- Fuse 4 full grown pets of same type into neon
+    print("\n=== STARTING NEON FUSIONS ===")
+    local fused = 0
+
+    for petType, petList in pairs(fullGrownPets) do
+        while #petList >= 4 do
+            print(string.format("Fusing 4 Full Grown %s into NEON...", petType))
+
+            -- Take first 4 pet IDs
+            local fusionSet = {}
+            for i = 1, 4 do
+                table.insert(fusionSet, petList[1])
+                table.remove(petList, 1)
+            end
+
+            -- Perform neon fusion
+            local success, err = pcall(function()
+                local neonAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion")
+                if neonAPI then
+                    return neonAPI:InvokeServer(fusionSet)
+                else
+                    -- Fallback: try alternate naming conventions
+                    local altAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/NeonFusion")
+                        or ReplicatedStorage.API:FindFirstChild("PetAPI/FuseNeon")
+                        or ReplicatedStorage.API:FindFirstChild("NeonAPI/Fuse")
+                    if altAPI then
+                        return altAPI:InvokeServer(fusionSet)
+                    else
+                        warn("Could not find neon fusion API endpoint!")
+                        return nil
+                    end
+                end
+            end)
+
+            if success and err ~= nil then
+                print("✓ Successfully created NEON " .. petType .. "!")
+                fused = fused + 1
+                task.wait(2) -- Delay between fusions to avoid rate limiting
+            else
+                print("✗ Fusion failed for " .. petType .. ": " .. tostring(err))
+                -- Put the pets back in the list since fusion failed
+                for _, id in ipairs(fusionSet) do
+                    table.insert(petList, id)
+                end
+                break
+            end
+        end
+    end
+
+    -- Final summary
+    if fused > 0 then
+        print(string.format("\n✓ Completed %d neon fusion(s)!", fused))
+    else
+        print("\nNo fusions performed. Need 4 of the same pet at age 6 (Full Grown) to make neon!")
+    end
+
+    -- Show updated inventory
+    task.wait(3)
+    local newData = require(ReplicatedStorage.ClientModules.Core.ClientData).get_data()[player.Name]
+    local neonCount = 0
+    local fullGrownCount = 0
+    for id, pet in pairs(newData.inventory.pets) do
+        local isNeon = pet.properties.neon or false
+        local isMega = pet.properties.mega or false
+        local age = pet.properties.age or 0
+
+        if isNeon and not isMega then
+            neonCount = neonCount + 1
+        elseif not isNeon and not isMega and age == 6 then
+            fullGrownCount = fullGrownCount + 1
+        end
+    end
+
+    print("\n=== UPDATED INVENTORY ===")
+    print("Neon pets: " .. neonCount)
+    print("Remaining Full Grown (age 6): " .. fullGrownCount)
+end
+
+-- Run the fuser
+fuseToNeonPets()
