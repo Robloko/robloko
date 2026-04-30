@@ -43,6 +43,7 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
+-- FLAG: Once starter_egg is hatched, ONLY select dog or cat
 local eggHasBeenHatched = false
 
 local AILMENT_TASKS = {
@@ -94,14 +95,12 @@ local priorityEggs = {
     "sugarfest_2026_jiggly_jerboa",
     "sugarfest_2026_cocoadile",
     "egg_teaser_2026_dire_wolf",
+    "inspector_shepherd_2026_magpie",
     "cracked_egg",
     "starter_egg"
 }
 local prioritySet = {}
-for _, v in ipairs(priorityEggs) do prioritySet[v] = true end
-
--- ★ NEW: Pets we want to keep in pen to age up for neon fusion
-local FUSE_CANDIDATES = { dog = true, cat = true }
+for _, v in ipairs(priorityEggs) do prioritySet[string.lower(v)] = true end
 
 local function debugPrint(message)
     if not DEBUG_MODE then return end
@@ -563,7 +562,7 @@ end
 local function startPetFarm()
     if not PetID then PetFarmMode = false; return end
     if not ensureCharacterSpawned() then PetFarmMode = false; return end
-    if not ensurePetEquipped(PetID) then PetFarmMode = false; return end
+    if not ensurePetEquipped(PetID, 15) then PetFarmMode = false; return end
     monitorAndHandleAilments()
 end
 
@@ -574,6 +573,10 @@ local function togglePetFarmMode()
         petFarmCoroutine = coroutine.wrap(startPetFarm)()
     end
 end
+
+-- ==================================================================
+-- PETPEN SYSTEM WITH NEON FUSION & AUTO-BUY EGGS
+-- ==================================================================
 
 local function getPetPenSnapshot()
     local playerData = getPlayerData()
@@ -586,7 +589,26 @@ local function getPetPenSnapshot()
     return snapshot
 end
 
--- ★ MODIFIED: Don't purge dogs/cats under age 6 — they're fuse candidates
+local function getAvailablePets(snapshot)
+    local playerData = getPlayerData()
+    if not playerData or not playerData.inventory or not playerData.inventory.pets then return {} end
+    local inPen = {}
+    for _, pet in ipairs(snapshot) do inPen[pet.unique_id] = true end
+    
+    local available = {}
+    for uniqueId, petData in pairs(playerData.inventory.pets) do
+        if not inPen[uniqueId] then
+            table.insert(available, {
+                unique_id = uniqueId,
+                name = petData.id,
+                age = petData.properties and petData.properties.age or 0,
+                neon = petData.properties and petData.properties.neon or false
+            })
+        end
+    end
+    return available
+end
+
 local function purgeNonPriorityGarbage()
     local playerData = getPlayerData()
     if not playerData or not playerData.idle_progression_manager or not playerData.idle_progression_manager.active_pets then return 0 end
@@ -594,15 +616,11 @@ local function purgeNonPriorityGarbage()
     for uniqueId, _ in pairs(playerData.idle_progression_manager.active_pets) do
         local pet = playerData.inventory.pets[uniqueId]
         if pet and pet.id and pet.properties then
-            local petNameLower = string.lower(pet.id)
             local isNeon = pet.properties.neon or false
-            local isMega = pet.properties.mega or false
-            local age = pet.properties.age or 0
-            local isPriority = prioritySet[petNameLower]
-            -- ★ Keep fuse candidates (dogs/cats) that are still aging
-            local isFuseCandidate = FUSE_CANDIDATES[petNameLower] and not isNeon and not isMega and age < 6
-
-            if not isNeon and not isPriority and not isFuseCandidate then
+            local cleanName = string.lower(pet.id)
+            -- Protect Neon pets and Priority eggs from being purged
+            if not isNeon and not prioritySet[cleanName] then
+                debugPrint("REMOVING TRASH: " .. pet.id)
                 safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", uniqueId)
                 removed = removed + 1; task.wait(0.7)
             end
@@ -611,185 +629,167 @@ local function purgeNonPriorityGarbage()
     return removed
 end
 
--- ★ NEW: Fuse 4 Full Grown (Age 6) non-neon pets of the same type into Neon
-local function fuseEligiblePets()
+-- SMART NEON FUSION: Fuses 4 identical age 6 pets
+local function performNeonFusion()
+    debugPrint("Checking for eligible Neon Fusion sets...")
+    local fusionsPerformed = 0
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return 0 end
 
-    local fullGrownPets = {}
-
+    local ageSixPetsByType = {}
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        local isNeon = petData.properties.neon or false
-        local isMega = petData.properties.mega or false
-        local age = petData.properties.age or 0
-        local petName = petData.id
-
-        if not isNeon and not isMega and age == 6 then
-            if not fullGrownPets[petName] then
-                fullGrownPets[petName] = {}
+        if petData.properties and (petData.properties.age or 0) == 6 and not (petData.properties.neon or false) and not (petData.properties.mega or false) then
+            local petType = petData.id
+            if not ageSixPetsByType[petType] then
+                ageSixPetsByType[petType] = {}
             end
-            table.insert(fullGrownPets[petName], uniqueId)
+            table.insert(ageSixPetsByType[petType], uniqueId)
         end
     end
 
-    -- Debug: show counts
-    for petType, petList in pairs(fullGrownPets) do
-        debugPrint(string.format("🔮 Fuse inventory: %s × %d (need 4)", petType, #petList))
-    end
-
-    local fused = 0
-
-    for petType, petList in pairs(fullGrownPets) do
-        while #petList >= 4 do
-            debugPrint("🔮 Fusing 4 Full Grown " .. petType .. " into NEON...")
-
+    for petType, pets in pairs(ageSixPetsByType) do
+        while #pets >= 4 do
+            debugPrint(string.format("Found 4+ age 6 pets of type: %s. Attempting Neon Fusion...", petType))
             local fusionSet = {}
             for i = 1, 4 do
-                table.insert(fusionSet, petList[1])
-                table.remove(petList, 1)
+                table.insert(fusionSet, pets[1])
+                table.remove(pets, 1)
             end
 
-            -- Remove from pet pen first (pets in pen may be locked)
-            for _, petId in ipairs(fusionSet) do
-                pcall(function()
-                    safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", petId)
-                end)
-                task.wait(0.5)
-            end
-            task.wait(1)
-
-            -- Perform neon fusion
-            local success, result = pcall(function()
-                local apiFolder = ReplicatedStorage:FindFirstChild("API")
-                if not apiFolder then return nil end
-
-                local neonAPI = apiFolder:FindFirstChild("PetAPI/DoNeonFusion")
-                if not neonAPI then
-                    neonAPI = apiFolder:FindFirstChild("PetAPI/NeonFusion")
-                        or apiFolder:FindFirstChild("PetAPI/FuseNeon")
-                        or apiFolder:FindFirstChild("NeonAPI/Fuse")
-                end
-
+            local success, err = pcall(function()
+                local api = ReplicatedStorage:FindFirstChild("API")
+                if not api then return nil end
+                local neonAPI = api:FindFirstChild("PetAPI/DoNeonFusion")
                 if neonAPI then
                     return neonAPI:InvokeServer(fusionSet)
                 else
-                    warn("Could not find neon fusion API endpoint!")
-                    return nil
+                    local altAPI = api:FindFirstChild("PetAPI/NeonFusion") or api:FindFirstChild("PetAPI/FuseNeon") or api:FindFirstChild("NeonAPI/Fuse")
+                    if altAPI then
+                        return altAPI:InvokeServer(fusionSet)
+                    else
+                        warn("Could not find neon fusion API endpoint!")
+                        return nil
+                    end
                 end
             end)
 
-            if success and result ~= nil then
-                debugPrint("✅ Successfully created NEON " .. petType .. "!")
-                fused = fused + 1
-                task.wait(2)
+            if success and err ~= nil then
+                debugPrint(string.format("SUCCESS: Fused 4 %s into a Neon!", petType))
+                fusionsPerformed = fusionsPerformed + 1
+                task.wait(3)
             else
-                debugPrint("❌ Fusion failed for " .. petType .. ": " .. tostring(result))
-                for _, id in ipairs(fusionSet) do
-                    table.insert(petList, id)
-                end
+                debugPrint("FAILED to perform Neon Fusion: " .. tostring(err))
+                for _, id in ipairs(fusionSet) do table.insert(pets, id) end
                 break
             end
         end
     end
-
-    return fused
+    return fusionsPerformed
 end
 
--- ★ MODIFIED: Add neon pets, then priority eggs, then fuse candidates (dogs/cats)
+-- PRIORITY ADDITION: Neons -> Specific Eggs -> Auto-buy Cracked Eggs
 local function addPriorityPets(snapshot)
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return 0 end
     local slotsOpen = 4 - #snapshot
     if slotsOpen <= 0 then return 0 end
+
+    local inPen = {}
+    for _, pet in ipairs(snapshot) do inPen[pet.unique_id] = true end
+
     local added = 0
     local addedSet = {}
-
-    -- Priority 1: Neon pets (still aging, age < 6)
+    
+    -- Priority 1: NEON pets
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        local isNeon = petData.properties.neon or false
-        local isMega = petData.properties.mega or false
-        local age = petData.properties.age or 0
-        if isNeon and not isMega and age < 6 and added < slotsOpen and not addedSet[uniqueId] then
+        if petData.properties and petData.properties.neon and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
             safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
+            debugPrint("Added NEON: " .. petData.id)
             added = added + 1; addedSet[uniqueId] = true; task.wait(0.6)
         end
     end
-
-    -- Priority 2: Priority eggs
+    
+    -- Priority 2: Exact egg match
     for _, eggName in ipairs(priorityEggs) do
         for uniqueId, petData in pairs(playerData.inventory.pets) do
-            if petData.id == eggName and added < slotsOpen and not addedSet[uniqueId] then
+            if petData.id == eggName and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
                 safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
+                debugPrint("Added PRIORITY: " .. petData.id)
                 added = added + 1; addedSet[uniqueId] = true; task.wait(0.6)
             end
         end
     end
-
-    -- ★ Priority 3: Fuse candidates (dogs/cats) age < 6 — age them up for future fusion
-    for candidateName, _ in pairs(FUSE_CANDIDATES) do
-        for uniqueId, petData in pairs(playerData.inventory.pets) do
-            local petNameLower = string.lower(petData.id)
-            local isNeon = petData.properties.neon or false
-            local isMega = petData.properties.mega or false
-            local age = petData.properties.age or 0
-            if petNameLower == candidateName and not isNeon and not isMega and age < 6 and added < slotsOpen and not addedSet[uniqueId] then
-                safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
-                added = added + 1; addedSet[uniqueId] = true; task.wait(0.6)
+    
+    -- Priority 3: Auto-buy cracked eggs to fill remaining empty slots
+    while added < slotsOpen and AutoPetPenMode do
+        debugPrint("Buying cracked_egg to fill slot...")
+        local bought = pcall(function()
+            ReplicatedStorage.API["ShopAPI/BuyItem"]:InvokeServer("pets", "cracked_egg", {buy_count = 1})
+        end)
+        
+        if bought then
+            task.wait(3) -- Wait for server to replicate
+            local newPets = getAvailablePets(getPetPenSnapshot())
+            local foundEgg = false
+            
+            for _, pet in ipairs(newPets) do
+                if pet.name == "cracked_egg" and not addedSet[pet.unique_id] then
+                    safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", pet.unique_id)
+                    debugPrint("Added PURCHASED cracked_egg")
+                    added = added + 1
+                    addedSet[pet.unique_id] = true
+                    foundEgg = true
+                    task.wait(0.6)
+                    break
+                end
             end
+            
+            if not foundEgg then
+                debugPrint("Purchased cracked_egg but couldn't find it in inventory - stopping auto-buy")
+                break
+            end
+        else
+            debugPrint("Failed to buy cracked_egg (out of money?) - stopping auto-buy")
+            break
         end
     end
-
+    
+    debugPrint("Added " .. added .. " pets this cycle")
     return added
 end
 
--- ★ MODIFIED: Full pipeline — remove age 6 → fuse → purge → add → commit
 local function startAutoPetPen()
-    debugPrint("========================================")
-    debugPrint("🏠 Auto PetPen started (with Neon Fusion)")
-    debugPrint("   1. Remove age 6+ from pen")
-    debugPrint("   2. Fuse 4× age 6 same type → Neon")
-    debugPrint("   3. Purge non-priority garbage")
-    debugPrint("   4. Add: Neon → Eggs → Dogs/Cats")
-    debugPrint("   5. Commit progression every 5 min")
-    debugPrint("========================================")
-
     while AutoPetPenMode do
-        -- STEP 1: Remove age 6+ pets from pen (they can't progress further)
+        -- 1. Check for Neon Fusion opportunities FIRST
+        local fusionsPerformed = performNeonFusion()
+        if fusionsPerformed > 0 then
+            task.wait(5)
+        end
+        
+        -- 2. Purge non-priority garbage
+        purgeNonPriorityGarbage()
+        
+        -- 3. Remove aged pets
         local snapshot = getPetPenSnapshot()
         for _, pet in ipairs(snapshot) do
             if pet.age >= 6 then
-                debugPrint("📤 Removing age " .. pet.age .. " " .. pet.name .. " from pen")
+                debugPrint("Removing aged pet: " .. pet.name .. " (Age: " .. pet.age .. ")")
                 safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", pet.unique_id)
                 task.wait(0.7)
             end
         end
-
-        -- STEP 2: Fuse eligible full-grown pets into neon
-        local fusedCount = fuseEligiblePets()
-        if fusedCount > 0 then
-            debugPrint("🔮 Fused " .. fusedCount .. " neon pet(s) this cycle!")
-            task.wait(3)
-        end
-
-        -- STEP 3: Purge non-priority garbage (keeps dogs/cats under age 6)
-        purgeNonPriorityGarbage()
-
+        
+        -- 4. Add best pets (includes auto-buy)
         task.wait(2)
-
-        -- STEP 4: Add priority pets (neon → eggs → fuse candidates)
         snapshot = getPetPenSnapshot()
-        local addedCount = addPriorityPets(snapshot)
-        if addedCount > 0 then
-            debugPrint("📥 Added " .. addedCount .. " pet(s) to pen")
-        end
-
-        -- STEP 5: Commit progression periodically
+        addPriorityPets(snapshot)
+        
+        -- 5. Commit rewards
         if os.time() - lastPetPenCommitTime >= 300 then
             safeRemoteCall({"IdleProgressionAPI/CommitAllProgression"}, "FireServer")
             lastPetPenCommitTime = os.time()
-            debugPrint("💾 Committed all pen progression!")
         end
-
+        
         task.wait(60)
     end
 end
@@ -918,43 +918,28 @@ end
 
 local function findBestPet()
     local validPets = getAllValidPets()
-
+    
     if eggHasBeenHatched then
         debugPrint("🔍 Post-hatch mode: searching Dog/Cat ONLY...")
         local dogPet, catPet = nil, nil
         for _, pet in ipairs(validPets) do
-            if pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
-                dogPet = pet
-            elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
-                catPet = pet
-            end
+            if pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then dogPet = pet
+            elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then catPet = pet end
         end
         local picked = dogPet or catPet
-        if picked then
-            debugPrint("✅ Post-hatch picked: " .. picked.id .. " (Type: " .. picked.petType .. ")")
-        else
-            debugPrint("❌ No Dog or Cat found after hatch!")
-        end
+        if picked then debugPrint("✅ Post-hatch picked: " .. picked.id) else debugPrint("❌ No Dog or Cat found!") end
         return picked
     end
 
     debugPrint("🔍 Initial mode: Egg > Dog > Cat...")
     local starterEggPet, dogPet, catPet = nil, nil, nil
     for _, pet in ipairs(validPets) do
-        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then
-            starterEggPet = pet
-        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
-            dogPet = pet
-        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
-            catPet = pet
-        end
+        if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then starterEggPet = pet
+        elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then dogPet = pet
+        elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then catPet = pet end
     end
     local picked = starterEggPet or dogPet or catPet or validPets[1]
-    if picked then
-        debugPrint("✅ Initial picked: " .. picked.id .. " (Type: " .. picked.petType .. ")")
-    else
-        debugPrint("❌ No valid pets found!")
-    end
+    if picked then debugPrint("✅ Initial picked: " .. picked.id) else debugPrint("❌ No valid pets found!") end
     return picked
 end
 
@@ -967,27 +952,17 @@ local function equipSelectedPet(petUniqueID)
 end
 
 -- ==================================================================
--- SELECT PET (centralized state + UI)
+-- SELECT PET
 -- ==================================================================
 
 local ui = nil
 
 local function selectPet(petData)
-    if not petData or not petData.unique then
-        debugPrint("selectPet called with invalid data")
-        return false
-    end
-
+    if not petData or not petData.unique then return false end
     PetID = petData.unique
     selectedPetName = petData.id
     selectedPetType = petData.petType
     currentSelectedPetKey = buildPetKey(petData.id, petData.age, petData.neon)
-
-    debugPrint("=== PET SELECTED ===")
-    debugPrint("Name: " .. selectedPetName)
-    debugPrint("ID: " .. PetID)
-    debugPrint("Type: " .. selectedPetType)
-    debugPrint("Post-hatch mode: " .. tostring(eggHasBeenHatched))
 
     if ui and ui.petsDropdownButton then
         ui.petsDropdownButton.Text = "✅ " .. currentSelectedPetKey
@@ -1005,14 +980,11 @@ local function selectPet(petData)
 end
 
 -- ==================================================================
--- INVENTORY MONITOR - Auto switch when pet hatched/traded
+-- INVENTORY MONITOR
 -- ==================================================================
 
 local function clearPetSelection()
-    PetID = nil
-    selectedPetName = nil
-    selectedPetType = nil
-    currentSelectedPetKey = nil
+    PetID = nil; selectedPetName = nil; selectedPetType = nil; currentSelectedPetKey = nil
     if ui and ui.petsDropdownButton then
         ui.petsDropdownButton.Text = "No Pets Found"
         ui.petsDropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
@@ -1031,66 +1003,36 @@ local function clearPetSelection()
 end
 
 local function monitorPetInventory()
-    debugPrint("========================================")
     debugPrint("🔍 Inventory monitor started")
-    debugPrint("   Checks every 5 seconds")
-    debugPrint("   Initial: Egg > Dog > Cat")
-    debugPrint("   After hatch: Dog > Cat ONLY")
-    debugPrint("========================================")
-
     while true do
         task.wait(5)
-
         if PetID then
             if not isPetStillInInventory(PetID) then
-                local oldName = selectedPetName or "Unknown"
                 local oldType = selectedPetType or "unknown"
-
-                debugPrint("========================================")
-                debugPrint("⚠️ PET REMOVED FROM INVENTORY!")
-                debugPrint("   Was: " .. oldName .. " (" .. oldType .. ")")
-                debugPrint("========================================")
-
                 if oldType == "starter_egg" then
                     eggHasBeenHatched = true
-                    debugPrint("🥚 STARTER_EGG HATCHED!")
-                    debugPrint("   Switching to Dog/Cat ONLY mode!")
+                    debugPrint("🥚 STARTER_EGG HATCHED! Switching to Dog/Cat ONLY mode!")
                 end
-
                 task.wait(3)
-
                 local nextPet = findBestPet()
-
                 if nextPet then
-                    local icon = getPetTypeIcon(nextPet.petType)
-                    debugPrint("🔄 Auto-switching to: " .. icon .. " " .. nextPet.id)
-
                     selectPet(nextPet)
-
                     if ui and ui.statusLabel then
-                        ui.statusLabel.Text = "Status: 🔄 Switched - " .. icon .. " " .. nextPet.id
+                        ui.statusLabel.Text = "Status: 🔄 Switched - " .. getPetTypeIcon(nextPet.petType) .. " " .. nextPet.id
                         ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
                     end
-
-                    debugPrint("✅ PetFarm continues with new pet!")
                 else
-                    debugPrint("❌ No Dog or Cat found to auto-select!")
                     clearPetSelection()
                 end
             end
-
         else
             local nextPet = findBestPet()
             if nextPet then
-                debugPrint("🆕 Found new pet: " .. nextPet.id)
                 selectPet(nextPet)
-
                 if ui and ui.statusLabel then
-                    local icon = getPetTypeIcon(nextPet.petType)
-                    ui.statusLabel.Text = "Status: 🆕 Found - " .. icon .. " " .. nextPet.id
+                    ui.statusLabel.Text = "Status: 🆕 Found - " .. getPetTypeIcon(nextPet.petType) .. " " .. nextPet.id
                     ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
                 end
-
                 if not PetFarmMode then
                     PetFarmMode = true
                     petFarmCoroutine = coroutine.wrap(startPetFarm)()
@@ -1113,39 +1055,20 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
     for _, child in ipairs(dropdownListFrame:GetChildren()) do
         if child:IsA("TextButton") then child:Destroy() end
     end
-
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then
-        if not PetID then
-            dropdownButton.Text = "No Pets Found"
-            dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-            dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
-        end
+        if not PetID then dropdownButton.Text = "No Pets Found" end
         return
     end
-
     local List = {}
     PetsShow = {}
-
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData and petData.id and petData.properties then
-            local petName = string.lower(petData.id)
-            if not string.find(petName, "practice_dog") then
-                local age = petData.properties.age or 0
-                local neon = petData.properties.neon or false
-                local key = buildPetKey(petData.id, age, neon)
-                PetsShow[key] = {
-                    unique = uniqueId,
-                    id = petData.id,
-                    age = age,
-                    neon = neon,
-                    petType = detectPetType(petData.id)
-                }
-                table.insert(List, key)
-            end
+        if petData and petData.id and petData.properties and not string.find(string.lower(petData.id), "practice_dog") then
+            local key = buildPetKey(petData.id, petData.properties.age or 0, petData.properties.neon or false)
+            PetsShow[key] = { unique = uniqueId, id = petData.id, age = petData.properties.age or 0, neon = petData.properties.neon or false, petType = detectPetType(petData.id) }
+            table.insert(List, key)
         end
     end
-
     table.sort(List, function(a, b)
         local aData, bData = PetsShow[a], PetsShow[b]
         if not aData or not bData then return false end
@@ -1154,7 +1077,6 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         if ap ~= bp then return ap < bp end
         return aData.age > bData.age
     end)
-
     for i, petKey in ipairs(List) do
         local optionButton = Instance.new("TextButton")
         optionButton.Size = UDim2.new(1, 0, 0, 22)
@@ -1163,267 +1085,75 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
         optionButton.TextSize = 11
         optionButton.BorderSizePixel = 0
         optionButton.Parent = dropdownListFrame
-
         local petData = PetsShow[petKey]
         local isSelected = (PetID and petData and petData.unique == PetID)
-
         if isSelected then
-            optionButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
-            optionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            optionButton.Text = "✅ " .. petKey
-            optionButton.Font = Enum.Font.SourceSansBold
-            local indicator = Instance.new("Frame")
-            indicator.Size = UDim2.new(0, 3, 1, 0)
-            indicator.Position = UDim2.new(0, 0, 0, 0)
-            indicator.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-            indicator.BorderSizePixel = 0
-            indicator.Parent = optionButton
-        elseif petData and petData.neon then
-            optionButton.BackgroundColor3 = Color3.fromRGB(80, 20, 80)
-            optionButton.TextColor3 = Color3.fromRGB(255, 100, 255)
-            optionButton.Text = "🔥 " .. petKey
+            optionButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0); optionButton.TextColor3 = Color3.fromRGB(255, 255, 255); optionButton.Text = "✅ " .. petKey; optionButton.Font = Enum.Font.SourceSansBold
         elseif petData and petData.petType == "starter_egg" then
-            optionButton.BackgroundColor3 = Color3.fromRGB(80, 60, 20)
-            optionButton.TextColor3 = Color3.fromRGB(255, 215, 0)
-            optionButton.Text = petKey
+            optionButton.BackgroundColor3 = Color3.fromRGB(80, 60, 20); optionButton.TextColor3 = Color3.fromRGB(255, 215, 0); optionButton.Text = petKey
         else
-            optionButton.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
-            optionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
-            optionButton.Text = petKey
+            optionButton.BackgroundColor3 = Color3.fromRGB(55, 55, 55); optionButton.TextColor3 = Color3.fromRGB(200, 200, 200); optionButton.Text = petKey
         end
-
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 3)
-        btnCorner.Parent = optionButton
-
+        Instance.new("UICorner", optionButton).CornerRadius = UDim.new(0, 3)
         optionButton.MouseButton1Click:Connect(function()
             dropdownListFrame.Visible = false
             local selectedPet = PetsShow[petKey]
             if selectedPet then
-                if selectedPet.petType == "starter_egg" then
-                    eggHasBeenHatched = false
-                    debugPrint("🔄 User manually selected starter_egg - reset hatch flag")
-                end
+                if selectedPet.petType == "starter_egg" then eggHasBeenHatched = false end
                 selectPet(selectedPet)
                 updatePetsDropdown(dropdownButton, dropdownListFrame)
             end
         end)
     end
-
     dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, #List * 22)
-
-    if PetID and currentSelectedPetKey then
-        dropdownButton.Text = "✅ " .. currentSelectedPetKey
-        dropdownButton.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-        dropdownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    else
-        dropdownButton.Text = "Select a Pet (" .. #List .. ")"
-        dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
-    end
+    if PetID and currentSelectedPetKey then dropdownButton.Text = "✅ " .. currentSelectedPetKey else dropdownButton.Text = "Select a Pet (" .. #List .. ")" end
 end
 
 local function createPetsDropdown(parentFrame, position)
     local dropdownFrame = Instance.new("Frame")
-    dropdownFrame.Size = UDim2.new(0, 200, 0, 35)
-    dropdownFrame.Position = position
-    dropdownFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    dropdownFrame.BorderSizePixel = 0
-    dropdownFrame.BackgroundTransparency = 0.1
-    dropdownFrame.Parent = parentFrame
+    dropdownFrame.Size = UDim2.new(0, 200, 0, 35); dropdownFrame.Position = position; dropdownFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); dropdownFrame.BorderSizePixel = 0; dropdownFrame.BackgroundTransparency = 0.1; dropdownFrame.Parent = parentFrame
     Instance.new("UICorner", dropdownFrame).CornerRadius = UDim.new(0, 4)
-
     local dropdownTitle = Instance.new("TextLabel")
-    dropdownTitle.Size = UDim2.new(1, 0, 0, 15)
-    dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
-    dropdownTitle.BackgroundTransparency = 1
-    dropdownTitle.TextColor3 = Color3.fromRGB(255, 100, 255)
-    dropdownTitle.Text = "🔮 Auto: Fuse 4×Age6 → Neon"
-    dropdownTitle.Font = Enum.Font.SourceSansBold
-    dropdownTitle.TextSize = 10
-    dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
-    dropdownTitle.Parent = dropdownFrame
-
+    dropdownTitle.Size = UDim2.new(1, 0, 0, 15); dropdownTitle.Position = UDim2.new(0, 0, 0, 0); dropdownTitle.BackgroundTransparency = 1; dropdownTitle.TextColor3 = Color3.fromRGB(255, 215, 0); dropdownTitle.Text = "🥚 Auto: Egg->Dog/Cat ONLY"; dropdownTitle.Font = Enum.Font.SourceSansBold; dropdownTitle.TextSize = 10; dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left; dropdownTitle.Parent = dropdownFrame
     local dropdownButton = Instance.new("TextButton")
-    dropdownButton.Size = UDim2.new(1, 0, 0, 20)
-    dropdownButton.Position = UDim2.new(0, 0, 0, 15)
-    dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-    dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180)
-    dropdownButton.Text = "Select a Pet"
-    dropdownButton.Font = Enum.Font.SourceSansBold
-    dropdownButton.TextSize = 11
-    dropdownButton.Parent = dropdownFrame
+    dropdownButton.Size = UDim2.new(1, 0, 0, 20); dropdownButton.Position = UDim2.new(0, 0, 0, 15); dropdownButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70); dropdownButton.TextColor3 = Color3.fromRGB(180, 180, 180); dropdownButton.Text = "Select a Pet"; dropdownButton.Font = Enum.Font.SourceSansBold; dropdownButton.TextSize = 11; dropdownButton.Parent = dropdownFrame
     Instance.new("UICorner", dropdownButton).CornerRadius = UDim.new(0, 4)
-
     local dropdownListFrame = Instance.new("ScrollingFrame")
-    dropdownListFrame.Size = UDim2.new(1, 0, 0, 200)
-    dropdownListFrame.Position = UDim2.new(0, 0, 1, 0)
-    dropdownListFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    dropdownListFrame.BorderSizePixel = 0
-    dropdownListFrame.Visible = false
-    dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    dropdownListFrame.ScrollBarThickness = 4
-    dropdownListFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 120, 0)
-    dropdownListFrame.Parent = dropdownFrame
+    dropdownListFrame.Size = UDim2.new(1, 0, 0, 200); dropdownListFrame.Position = UDim2.new(0, 0, 1, 0); dropdownListFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35); dropdownListFrame.BorderSizePixel = 0; dropdownListFrame.Visible = false; dropdownListFrame.CanvasSize = UDim2.new(0, 0, 0, 0); dropdownListFrame.ScrollBarThickness = 4; dropdownListFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 120, 0); dropdownListFrame.Parent = dropdownFrame
     Instance.new("UICorner", dropdownListFrame).CornerRadius = UDim.new(0, 4)
-
     local dropdownToggle = false
     dropdownButton.MouseButton1Click:Connect(function()
-        dropdownToggle = not dropdownToggle
-        dropdownListFrame.Visible = dropdownToggle
-        if dropdownToggle then
-            updatePetsDropdown(dropdownButton, dropdownListFrame)
-        end
+        dropdownToggle = not dropdownToggle; dropdownListFrame.Visible = dropdownToggle
+        if dropdownToggle then updatePetsDropdown(dropdownButton, dropdownListFrame) end
     end)
-
     return dropdownFrame, dropdownButton, dropdownListFrame
 end
 
 local function createMainUI()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PetFarmUI"
-    screenGui.Parent = player:WaitForChild("PlayerGui")
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 220, 0, 280)
-    frame.Position = UDim2.new(0, 10, 0, 10)
-    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    frame.BorderSizePixel = 0
-    frame.BackgroundTransparency = 0.1
-    frame.Parent = screenGui
+    local screenGui = Instance.new("ScreenGui"); screenGui.Name = "PetFarmUI"; screenGui.Parent = player:WaitForChild("PlayerGui")
+    local frame = Instance.new("Frame"); frame.Size = UDim2.new(0, 220, 0, 280); frame.Position = UDim2.new(0, 10, 0, 10); frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30); frame.BorderSizePixel = 0; frame.BackgroundTransparency = 0.1; frame.Parent = screenGui
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
-
-    local sessionLabel = Instance.new("TextLabel")
-    sessionLabel.Size = UDim2.new(1, 0, 0, 20)
-    sessionLabel.Position = UDim2.new(0, 5, 0, 0)
-    sessionLabel.BackgroundTransparency = 1
-    sessionLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sessionLabel.Text = "💵 0 +0 | 🧪 0 +0"
-    sessionLabel.Font = Enum.Font.SourceSans
-    sessionLabel.TextSize = 11
-    sessionLabel.TextXAlignment = Enum.TextXAlignment.Left
-    sessionLabel.Parent = frame
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 20)
-    title.Position = UDim2.new(0, 0, 0, 20)
-    title.BackgroundTransparency = 1
-    title.TextColor3 = Color3.fromRGB(255, 100, 255)
-    title.Text = "🔮 Neon Fusion PetFarm"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 12
-    title.Parent = frame
-
-    local playerNameBox = Instance.new("TextBox")
-    playerNameBox.Size = UDim2.new(0, 200, 0, 20)
-    playerNameBox.Position = UDim2.new(0, 10, 0, 45)
-    playerNameBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    playerNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playerNameBox.PlaceholderText = "Enter player name for trade"
-    playerNameBox.Text = ""
-    playerNameBox.Font = Enum.Font.SourceSans
-    playerNameBox.TextSize = 10
-    playerNameBox.Parent = frame
+    local sessionLabel = Instance.new("TextLabel"); sessionLabel.Size = UDim2.new(1, 0, 0, 20); sessionLabel.Position = UDim2.new(0, 5, 0, 0); sessionLabel.BackgroundTransparency = 1; sessionLabel.TextColor3 = Color3.fromRGB(255, 255, 255); sessionLabel.Text = "💵 0 +0 | 🧪 0 +0"; sessionLabel.Font = Enum.Font.SourceSans; sessionLabel.TextSize = 11; sessionLabel.TextXAlignment = Enum.TextXAlignment.Left; sessionLabel.Parent = frame
+    local title = Instance.new("TextLabel"); title.Size = UDim2.new(1, 0, 0, 20); title.Position = UDim2.new(0, 0, 0, 20); title.BackgroundTransparency = 1; title.TextColor3 = Color3.fromRGB(255, 215, 0); title.Text = "🥚 Egg -> Dog/Cat ONLY"; title.Font = Enum.Font.SourceSansBold; title.TextSize = 12; title.Parent = frame
+    local playerNameBox = Instance.new("TextBox"); playerNameBox.Size = UDim2.new(0, 200, 0, 20); playerNameBox.Position = UDim2.new(0, 10, 0, 45); playerNameBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50); playerNameBox.TextColor3 = Color3.fromRGB(255, 255, 255); playerNameBox.PlaceholderText = "Enter player name for trade"; playerNameBox.Text = ""; playerNameBox.Font = Enum.Font.SourceSans; playerNameBox.TextSize = 10; playerNameBox.Parent = frame
     Instance.new("UICorner", playerNameBox).CornerRadius = UDim.new(0, 4)
-
-    local tradeButton = Instance.new("TextButton")
-    tradeButton.Size = UDim2.new(0, 98, 0, 20)
-    tradeButton.Position = UDim2.new(0, 10, 0, 70)
-    tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-    tradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    tradeButton.Text = "Send Trade"
-    tradeButton.Font = Enum.Font.SourceSansBold
-    tradeButton.TextSize = 10
-    tradeButton.Parent = frame
+    local tradeButton = Instance.new("TextButton"); tradeButton.Size = UDim2.new(0, 98, 0, 20); tradeButton.Position = UDim2.new(0, 10, 0, 70); tradeButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215); tradeButton.TextColor3 = Color3.fromRGB(255, 255, 255); tradeButton.Text = "Send Trade"; tradeButton.Font = Enum.Font.SourceSansBold; tradeButton.TextSize = 10; tradeButton.Parent = frame
     Instance.new("UICorner", tradeButton).CornerRadius = UDim.new(0, 4)
-
-    local addPetsButton = Instance.new("TextButton")
-    addPetsButton.Size = UDim2.new(0, 98, 0, 20)
-    addPetsButton.Position = UDim2.new(0, 112, 0, 70)
-    addPetsButton.BackgroundColor3 = Color3.fromRGB(170, 0, 170)
-    addPetsButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    addPetsButton.Text = "Add All Pets"
-    addPetsButton.Font = Enum.Font.SourceSansBold
-    addPetsButton.TextSize = 10
-    addPetsButton.Parent = frame
+    local addPetsButton = Instance.new("TextButton"); addPetsButton.Size = UDim2.new(0, 98, 0, 20); addPetsButton.Position = UDim2.new(0, 112, 0, 70); addPetsButton.BackgroundColor3 = Color3.fromRGB(170, 0, 170); addPetsButton.TextColor3 = Color3.fromRGB(255, 255, 255); addPetsButton.Text = "Add All Pets"; addPetsButton.Font = Enum.Font.SourceSansBold; addPetsButton.TextSize = 10; addPetsButton.Parent = frame
     Instance.new("UICorner", addPetsButton).CornerRadius = UDim.new(0, 4)
-
-    local autoTradeButton = Instance.new("TextButton")
-    autoTradeButton.Size = UDim2.new(0, 98, 0, 20)
-    autoTradeButton.Position = UDim2.new(0, 10, 0, 95)
-    autoTradeButton.BackgroundColor3 = Color3.fromRGB(215, 120, 0)
-    autoTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    autoTradeButton.Text = "Auto Trade [OFF]"
-    autoTradeButton.Font = Enum.Font.SourceSansBold
-    autoTradeButton.TextSize = 10
-    autoTradeButton.Parent = frame
+    local autoTradeButton = Instance.new("TextButton"); autoTradeButton.Size = UDim2.new(0, 98, 0, 20); autoTradeButton.Position = UDim2.new(0, 10, 0, 95); autoTradeButton.BackgroundColor3 = Color3.fromRGB(215, 120, 0); autoTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoTradeButton.Text = "Auto Trade [OFF]"; autoTradeButton.Font = Enum.Font.SourceSansBold; autoTradeButton.TextSize = 10; autoTradeButton.Parent = frame
     Instance.new("UICorner", autoTradeButton).CornerRadius = UDim.new(0, 4)
-
-    local autoPotionButton = Instance.new("TextButton")
-    autoPotionButton.Size = UDim2.new(0, 98, 0, 20)
-    autoPotionButton.Position = UDim2.new(0, 112, 0, 95)
-    autoPotionButton.BackgroundColor3 = Color3.fromRGB(0, 170, 170)
-    autoPotionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    autoPotionButton.Text = "Auto Potion [OFF]"
-    autoPotionButton.Font = Enum.Font.SourceSansBold
-    autoPotionButton.TextSize = 10
-    autoPotionButton.Parent = frame
+    local autoPotionButton = Instance.new("TextButton"); autoPotionButton.Size = UDim2.new(0, 98, 0, 20); autoPotionButton.Position = UDim2.new(0, 112, 0, 95); autoPotionButton.BackgroundColor3 = Color3.fromRGB(0, 170, 170); autoPotionButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoPotionButton.Text = "Auto Potion [OFF]"; autoPotionButton.Font = Enum.Font.SourceSansBold; autoPotionButton.TextSize = 10; autoPotionButton.Parent = frame
     Instance.new("UICorner", autoPotionButton).CornerRadius = UDim.new(0, 4)
-
-    local autoAcceptButton = Instance.new("TextButton")
-    autoAcceptButton.Size = UDim2.new(0, 98, 0, 20)
-    autoAcceptButton.Position = UDim2.new(0, 10, 0, 120)
-    autoAcceptButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-    autoAcceptButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    autoAcceptButton.Text = "Auto Accept [OFF]"
-    autoAcceptButton.Font = Enum.Font.SourceSansBold
-    autoAcceptButton.TextSize = 10
-    autoAcceptButton.Parent = frame
+    local autoAcceptButton = Instance.new("TextButton"); autoAcceptButton.Size = UDim2.new(0, 98, 0, 20); autoAcceptButton.Position = UDim2.new(0, 10, 0, 120); autoAcceptButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0); autoAcceptButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoAcceptButton.Text = "Auto Accept [OFF]"; autoAcceptButton.Font = Enum.Font.SourceSansBold; autoAcceptButton.TextSize = 10; autoAcceptButton.Parent = frame
     Instance.new("UICorner", autoAcceptButton).CornerRadius = UDim.new(0, 4)
-
-    local autoPetPenButton = Instance.new("TextButton")
-    autoPetPenButton.Size = UDim2.new(0, 98, 0, 20)
-    autoPetPenButton.Position = UDim2.new(0, 112, 0, 120)
-    autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0)
-    autoPetPenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    autoPetPenButton.Text = "Auto PetPen [ON]"
-    autoPetPenButton.Font = Enum.Font.SourceSansBold
-    autoPetPenButton.TextSize = 10
-    autoPetPenButton.Parent = frame
+    local autoPetPenButton = Instance.new("TextButton"); autoPetPenButton.Size = UDim2.new(0, 98, 0, 20); autoPetPenButton.Position = UDim2.new(0, 112, 0, 120); autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0); autoPetPenButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoPetPenButton.Text = "Auto PetPen [ON]"; autoPetPenButton.Font = Enum.Font.SourceSansBold; autoPetPenButton.TextSize = 10; autoPetPenButton.Parent = frame
     Instance.new("UICorner", autoPetPenButton).CornerRadius = UDim.new(0, 4)
-
-    local petFarmButton = Instance.new("TextButton")
-    petFarmButton.Size = UDim2.new(0, 200, 0, 25)
-    petFarmButton.Position = UDim2.new(0, 10, 0, 145)
-    petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
-    petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
-    petFarmButton.Text = "🥚 START PETFARM"
-    petFarmButton.Font = Enum.Font.SourceSansBold
-    petFarmButton.TextSize = 11
-    petFarmButton.Parent = frame
+    local petFarmButton = Instance.new("TextButton"); petFarmButton.Size = UDim2.new(0, 200, 0, 25); petFarmButton.Position = UDim2.new(0, 10, 0, 145); petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0); petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0); petFarmButton.Text = "🥚 START PETFARM"; petFarmButton.Font = Enum.Font.SourceSansBold; petFarmButton.TextSize = 11; petFarmButton.Parent = frame
     Instance.new("UICorner", petFarmButton).CornerRadius = UDim.new(0, 4)
-
-    local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 0, 0, 175)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-    statusLabel.Text = "Status: Initializing..."
-    statusLabel.Font = Enum.Font.SourceSans
-    statusLabel.TextSize = 10
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.Parent = frame
-
+    local statusLabel = Instance.new("TextLabel"); statusLabel.Size = UDim2.new(1, 0, 0, 20); statusLabel.Position = UDim2.new(0, 0, 0, 175); statusLabel.BackgroundTransparency = 1; statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100); statusLabel.Text = "Status: Initializing..."; statusLabel.Font = Enum.Font.SourceSans; statusLabel.TextSize = 10; statusLabel.TextXAlignment = Enum.TextXAlignment.Left; statusLabel.Parent = frame
     local petsDropdownFrame, petsDropdownButton, petsDropdownListFrame = createPetsDropdown(frame, UDim2.new(0, 10, 0, 200))
-
-    return {
-        frame = frame, sessionLabel = sessionLabel, playerNameBox = playerNameBox,
-        tradeButton = tradeButton, addPetsButton = addPetsButton,
-        autoTradeButton = autoTradeButton, autoPotionButton = autoPotionButton,
-        autoAcceptButton = autoAcceptButton, autoPetPenButton = autoPetPenButton,
-        petFarmButton = petFarmButton, statusLabel = statusLabel,
-        petsDropdownButton = petsDropdownButton, petsDropdownListFrame = petsDropdownListFrame
-    }
+    return { frame = frame, sessionLabel = sessionLabel, playerNameBox = playerNameBox, tradeButton = tradeButton, addPetsButton = addPetsButton, autoTradeButton = autoTradeButton, autoPotionButton = autoPotionButton, autoAcceptButton = autoAcceptButton, autoPetPenButton = autoPetPenButton, petFarmButton = petFarmButton, statusLabel = statusLabel, petsDropdownButton = petsDropdownButton, petsDropdownListFrame = petsDropdownListFrame }
 end
 
 -- ==================================================================
@@ -1431,69 +1161,21 @@ end
 -- ==================================================================
 
 local function autoStart()
-    if ui then
-        ui.statusLabel.Text = "Status: Checking furniture..."
-        ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-    end
-
+    if ui then ui.statusLabel.Text = "Status: Checking furniture..."; ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100) end
     checkAndBuyAllMissingFurniture()
-
-    if ui then
-        ui.statusLabel.Text = "Status: Searching best pet..."
-        ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-    end
-
+    if ui then ui.statusLabel.Text = "Status: Searching best pet..."; ui.statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0) end
     task.wait(3)
-
     local selectedPet = findBestPet()
-
-    if not selectedPet then
-        debugPrint("❌ No valid pets found!")
-        clearPetSelection()
-        return
-    end
-
+    if not selectedPet then clearPetSelection(); return end
     local equipOk = selectPet(selectedPet)
-
-    if not equipOk then
-        debugPrint("First equip failed, retrying...")
-        task.wait(2)
-        equipOk = equipSelectedPet(PetID)
-    end
-
+    if not equipOk then task.wait(2); equipOk = equipSelectedPet(PetID) end
     if equipOk then
-        debugPrint("✅ Pet equipped!")
-        if ui then
-            local icon = getPetTypeIcon(selectedPetType)
-            ui.statusLabel.Text = "Status: ✅ " .. icon .. " " .. selectedPetName
-            ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        end
-
-        if not AutoPetPenMode then
-            toggleAutoPetPenMode()
-            if ui and ui.autoPetPenButton then
-                ui.autoPetPenButton.Text = "Auto PetPen [ON]"
-                ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-            end
-        end
-
-        if not PetFarmMode then
-            togglePetFarmMode()
-            if ui and ui.petFarmButton then
-                ui.petFarmButton.Text = "🛑 STOP PETFARM"
-                ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-                ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            end
-        end
-
+        if ui then ui.statusLabel.Text = "Status: ✅ " .. getPetTypeIcon(selectedPetType) .. " " .. selectedPetName; ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) end
+        if not AutoPetPenMode then toggleAutoPetPenMode(); if ui and ui.autoPetPenButton then ui.autoPetPenButton.Text = "Auto PetPen [ON]"; ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0) end end
+        if not PetFarmMode then togglePetFarmMode(); if ui and ui.petFarmButton then ui.petFarmButton.Text = "🛑 STOP PETFARM"; ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0); ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255) end end
         coroutine.wrap(monitorPetInventory)()
-
     else
-        debugPrint("❌ Failed to equip pet!")
-        if ui then
-            ui.statusLabel.Text = "Status: ❌ Failed to equip!"
-            ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        end
+        if ui then ui.statusLabel.Text = "Status: ❌ Failed to equip!"; ui.statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100) end
     end
 end
 
@@ -1507,70 +1189,25 @@ lastMoneyAmount, lastPotionAmount = getCurrentMoneyAndPotions()
 coroutine.wrap(function()
     while true do
         local currentMoney, currentPotions = updateSessionEarnings()
-        if ui and ui.sessionLabel then
-            ui.sessionLabel.Text = string.format("💵 %d +%d | 🧪 %d +%d", currentMoney, sessionBucksEarned, currentPotions, sessionPotionsEarned)
-        end
+        if ui and ui.sessionLabel then ui.sessionLabel.Text = string.format("💵 %d +%d | 🧪 %d +%d", currentMoney, sessionBucksEarned, currentPotions, sessionPotionsEarned) end
         task.wait(1)
     end
 end)()
 
 if ui then
-    ui.tradeButton.MouseButton1Click:Connect(function()
-        sendTradeRequest(ui.playerNameBox.Text)
-    end)
-
+    ui.tradeButton.MouseButton1Click:Connect(function() sendTradeRequest(ui.playerNameBox.Text) end)
     ui.addPetsButton.MouseButton1Click:Connect(addAllPetsToTrade)
-
-    ui.autoTradeButton.MouseButton1Click:Connect(function()
-        ContinuousMode = not ContinuousMode
-        ui.autoTradeButton.Text = ContinuousMode and "Auto Trade [ON]" or "Auto Trade [OFF]"
-        ui.autoTradeButton.BackgroundColor3 = ContinuousMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(215, 120, 0)
-    end)
-
-    ui.autoPotionButton.MouseButton1Click:Connect(function()
-        toggleAutoPotionMode()
-        ui.autoPotionButton.Text = AutoPotionMode and "Auto Potion [ON]" or "Auto Potion [OFF]"
-        ui.autoPotionButton.BackgroundColor3 = AutoPotionMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(0, 170, 170)
-    end)
-
-    ui.autoAcceptButton.MouseButton1Click:Connect(function()
-        toggleAutoAcceptMode()
-        ui.autoAcceptButton.Text = AutoAcceptMode and "Auto Accept [ON]" or "Auto Accept [OFF]"
-        ui.autoAcceptButton.BackgroundColor3 = AutoAcceptMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-    end)
-
-    ui.autoPetPenButton.MouseButton1Click:Connect(function()
-        toggleAutoPetPenMode()
-        ui.autoPetPenButton.Text = AutoPetPenMode and "Auto PetPen [ON]" or "Auto PetPen [OFF]"
-        ui.autoPetPenButton.BackgroundColor3 = AutoPetPenMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 170, 0)
-    end)
-
+    ui.autoTradeButton.MouseButton1Click:Connect(function() ContinuousMode = not ContinuousMode; ui.autoTradeButton.Text = ContinuousMode and "Auto Trade [ON]" or "Auto Trade [OFF]"; ui.autoTradeButton.BackgroundColor3 = ContinuousMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(215, 120, 0) end)
+    ui.autoPotionButton.MouseButton1Click:Connect(function() toggleAutoPotionMode(); ui.autoPotionButton.Text = AutoPotionMode and "Auto Potion [ON]" or "Auto Potion [OFF]"; ui.autoPotionButton.BackgroundColor3 = AutoPotionMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(0, 170, 170) end)
+    ui.autoAcceptButton.MouseButton1Click:Connect(function() toggleAutoAcceptMode(); ui.autoAcceptButton.Text = AutoAcceptMode and "Auto Accept [ON]" or "Auto Accept [OFF]"; ui.autoAcceptButton.BackgroundColor3 = AutoAcceptMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0) end)
+    ui.autoPetPenButton.MouseButton1Click:Connect(function() toggleAutoPetPenMode(); ui.autoPetPenButton.Text = AutoPetPenMode and "Auto PetPen [ON]" or "Auto PetPen [OFF]"; ui.autoPetPenButton.BackgroundColor3 = AutoPetPenMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 170, 0) end)
     ui.petFarmButton.MouseButton1Click:Connect(function()
         togglePetFarmMode()
-        if PetFarmMode then
-            local typeIcon = selectedPetType and getPetTypeIcon(selectedPetType) or "🐾"
-            ui.petFarmButton.Text = "🛑 STOP PETFARM"
-            ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-            ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            ui.statusLabel.Text = "Status: ✅ " .. typeIcon .. " " .. (selectedPetName or "Selected")
-            ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        else
-            ui.petFarmButton.Text = "🥚 START PETFARM"
-            ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0)
-            ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0)
-            ui.statusLabel.Text = "Status: ⏸️ STOPPED"
-            ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-        end
+        if PetFarmMode then ui.petFarmButton.Text = "🛑 STOP PETFARM"; ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0); ui.petFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255); ui.statusLabel.Text = "Status: ✅ " .. getPetTypeIcon(selectedPetType) .. " " .. selectedPetName; ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else ui.petFarmButton.Text = "🥚 START PETFARM"; ui.petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0); ui.petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0); ui.statusLabel.Text = "Status: ⏸️ STOPPED"; ui.statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100) end
     end)
 end
 
-debugPrint("========================================")
-debugPrint("🔮 Neon Fusion PetFarm loaded!")
-debugPrint("========================================")
-debugPrint("Phase 1: Starter Egg → Hatch")
-debugPrint("Phase 2: Dog/Cat → Age to 6 in Pen")
-debugPrint("Phase 3: 4× Age 6 → NEON FUSION")
-debugPrint("Phase 4: Neon → Back in Pen → Age 6")
-debugPrint("========================================")
+debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat ONLY. PetPen includes Neon Fusion & Auto-Buy Cracked Eggs.")
 task.wait(3)
 autoStart()
