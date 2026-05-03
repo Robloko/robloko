@@ -267,7 +267,7 @@ local function startPetFarm() if not PetID then PetFarmMode = false; return end;
 local function togglePetFarmMode() PetFarmMode = not PetFarmMode; if PetFarmMode then if not PetID then PetFarmMode = false; return end; petFarmCoroutine = coroutine.wrap(startPetFarm)() end end
 
 -- ==================================================================
--- PETPEN SYSTEM WITH NEON FUSION & SMART INVENTORY CHECK
+-- PETPEN SYSTEM WITH NEON FUSION & STRICT PRIORITY
 -- ==================================================================
 
 local function getPetPenSnapshot()
@@ -290,8 +290,9 @@ local function purgeNonPriorityGarbage()
         if pet and pet.id and pet.properties then
             local isNeon = pet.properties.neon or false
             local cleanName = string.lower(pet.id)
+            -- Hatched pets (like "dog" or "cat") are NOT in prioritySet, so they get purged!
             if not isNeon and not prioritySet[cleanName] then
-                debugPrint("REMOVING TRASH: " .. pet.id)
+                debugPrint("REMOVING TRASH/HATCHED PET: " .. pet.id)
                 safeRemoteCall({"IdleProgressionAPI/RemovePet"}, "FireServer", uniqueId)
                 removed = removed + 1; task.wait(0.7)
             end
@@ -326,7 +327,7 @@ local function performNeonFusion()
     return fusionsPerformed
 end
 
--- SMART PRIORITY ADDITION
+-- STRICT PRIORITY ADDITION
 local function addPriorityPets(snapshot)
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return 0 end
@@ -357,19 +358,10 @@ local function addPriorityPets(snapshot)
         end
     end
     
-    -- Priority 3: ANY REMAINING PETS IN INVENTORY (Under Age 6 ONLY)
-    -- This prevents buying cracked eggs if we have existing levelable pets!
-    for uniqueId, petData in pairs(playerData.inventory.pets) do
-        local petName = string.lower(petData.id or "")
-        if not string.find(petName, "practice_dog") and not (petData.properties.mega or false) and (petData.properties.age or 0) < 6 and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
-            safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
-            debugPrint("Added INVENTORY PET: " .. petData.id); added += 1; addedSet[uniqueId] = true; task.wait(0.6)
-        end
-    end
-    
-    -- Priority 4: Auto-buy cracked eggs if STILL slots open (and no inventory pets left)
+    -- Priority 3: Auto-buy cracked eggs if STILL slots open
+    -- (Removed the logic that added random hatched inventory pets back into the pen)
     while added < slotsOpen and AutoPetPenMode do
-        debugPrint("No valid pets in inventory. Buying cracked_egg to fill slot...")
+        debugPrint("No valid priority pets in inventory. Buying cracked_egg to fill slot...")
         local bought = pcall(function() ReplicatedStorage.API["ShopAPI/BuyItem"]:InvokeServer("pets", "cracked_egg", {buy_count = 1}) end)
         
         if bought then
@@ -378,14 +370,13 @@ local function addPriorityPets(snapshot)
             if newData and newData.inventory and newData.inventory.pets then
                 local foundEgg = false
                 for uniqueId, petData in pairs(newData.inventory.pets) do
-                    -- Make sure we don't add the bought egg if it somehow instantly hit age 6 (impossible, but safe check)
                     if petData.id == "cracked_egg" and (petData.properties.age or 0) < 6 and not inPen[uniqueId] and not addedSet[uniqueId] then
                         safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
                         debugPrint("Added PURCHASED cracked_egg")
                         added += 1; addedSet[uniqueId] = true; inPen[uniqueId] = true; foundEgg = true; task.wait(0.6); break
                     end
                 end
-                if not foundEgg then debugPrint("Purchased cracked_egg but couldn't find it in inventory - stopping auto-buy"); break end
+                if not foundEgg then debugPrint("Purchased cracked_egg but couldn't find it - stopping auto-buy"); break end
             end
         else
             debugPrint("Failed to buy cracked_egg (out of money?) - stopping auto-buy"); break
@@ -405,13 +396,13 @@ local function startAutoPetPen()
         -- 0. Commit progression FIRST to update pet ages locally!
         pcall(function() ReplicatedStorage.API["IdleProgressionAPI/CommitAllProgression"]:FireServer() end)
         debugPrint("Committed progression to refresh age data")
-        task.wait(4) -- Wait slightly longer to guarantee local data updates
+        task.wait(4)
         
         -- 1. Check for Neon Fusion
         local fusionsPerformed = performNeonFusion()
         if fusionsPerformed > 0 then task.wait(5) end
         
-        -- 2. Purge trash
+        -- 2. Purge trash (Also purges hatched pets like Dogs/Cats)
         purgeNonPriorityGarbage()
         task.wait(2)
         
@@ -425,7 +416,7 @@ local function startAutoPetPen()
             end
         end
         
-        -- 4. Add best pets (checks existing inventory first, auto-buys if needed)
+        -- 4. Add best pets (Strictly Neons & Priority Eggs, buys cracked eggs if empty)
         task.wait(2)
         snapshot = getPetPenSnapshot()
         addPriorityPets(snapshot)
@@ -604,6 +595,6 @@ if ui then
     end)
 end
 
-debugPrint("🥚 PetFarm loaded! Checks inventory before buying. Removes 6+ pets.")
+debugPrint("🥚 PetFarm loaded! Hatched pets purged from pen, strictly buys cracked eggs for empty slots.")
 task.wait(3)
 autoStart()
