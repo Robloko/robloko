@@ -18,7 +18,6 @@ local currentToyID = nil
 local currentStrollerID = nil
 local currentFoodID = nil
 
--- FIX: Initialize as false so autoStart() can properly toggle it to true and start the loop
 local AutoPetPenMode = false
 local autoPetPenCoroutine = nil
 local lastPetPenCommitTime = 0
@@ -44,7 +43,6 @@ local PetsShow = {}
 local currentSelectedPetKey = nil
 local lastValidPetID = nil
 
--- FLAG: Once starter_egg is hatched, ONLY select dog or cat
 local eggHasBeenHatched = false
 
 local AILMENT_TASKS = {
@@ -75,8 +73,6 @@ local lastTaskTime = {}
 local TASK_COOLDOWN = 30
 
 local priorityEggs = {
-    "basic_egg_2022_ant",
-    "basic_egg_2022_mouse",
     "sugarfest_2026_jiggly_jerboa",
     "sugarfest_2026_cocoadile",
     "egg_teaser_2026_dire_wolf",
@@ -542,7 +538,7 @@ local function performNeonFusion()
     return fusionsPerformed
 end
 
--- PRIORITY ADDITION: Neons -> Specific Eggs -> Auto-buy Cracked Eggs
+-- PRIORITY ADDITION: Neons (Under 6) -> Specific Eggs -> Auto-buy Cracked Eggs
 local function addPriorityPets(snapshot)
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return 0 end
@@ -555,11 +551,11 @@ local function addPriorityPets(snapshot)
     local added = 0
     local addedSet = {}
     
-    -- Priority 1: NEON pets
+    -- Priority 1: NEON pets (FIX: Must be UNDER Age 6 so they can still level up)
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData.properties and petData.properties.neon and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+        if petData.properties and petData.properties.neon and (petData.properties.age or 0) < 6 and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
             safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
-            debugPrint("Added NEON: " .. petData.id); added += 1; addedSet[uniqueId] = true; task.wait(0.6)
+            debugPrint("Added NEON: " .. petData.id .. " (Age: " .. tostring(petData.properties.age or 0) .. ")"); added += 1; addedSet[uniqueId] = true; task.wait(0.6)
         end
     end
     
@@ -603,7 +599,6 @@ local function addPriorityPets(snapshot)
     return added
 end
 
--- FIX: Completely rewritten PetPen Loop to commit data first, fixing Age 6 checks
 local function startAutoPetPen()
     debugPrint("Auto PetPen loop started!")
     lastPetPenCommitTime = os.time()
@@ -613,7 +608,7 @@ local function startAutoPetPen()
         -- 0. Commit progression FIRST to update pet ages locally!
         pcall(function() ReplicatedStorage.API["IdleProgressionAPI/CommitAllProgression"]:FireServer() end)
         debugPrint("Committed progression to refresh age data")
-        task.wait(3) -- Wait for client data to update
+        task.wait(3)
         
         -- 1. Check for Neon Fusion
         local fusionsPerformed = performNeonFusion()
@@ -623,7 +618,7 @@ local function startAutoPetPen()
         purgeNonPriorityGarbage()
         task.wait(2)
         
-        -- 3. Remove aged pets
+        -- 3. Remove aged pets (This naturally removes any pet that hits 6, including Neons)
         local snapshot = getPetPenSnapshot()
         for _, pet in ipairs(snapshot) do
             if pet.age >= 6 then
@@ -879,7 +874,6 @@ local function createMainUI()
     Instance.new("UICorner", autoPotionButton).CornerRadius = UDim.new(0, 4)
     local autoAcceptButton = Instance.new("TextButton"); autoAcceptButton.Size = UDim2.new(0, 98, 0, 20); autoAcceptButton.Position = UDim2.new(0, 10, 0, 120); autoAcceptButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0); autoAcceptButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoAcceptButton.Text = "Auto Accept [OFF]"; autoAcceptButton.Font = Enum.Font.SourceSansBold; autoAcceptButton.TextSize = 10; autoAcceptButton.Parent = frame
     Instance.new("UICorner", autoAcceptButton).CornerRadius = UDim.new(0, 4)
-    -- FIX: Button accurately matches default state now
     local autoPetPenButton = Instance.new("TextButton"); autoPetPenButton.Size = UDim2.new(0, 98, 0, 20); autoPetPenButton.Position = UDim2.new(0, 112, 0, 120); autoPetPenButton.BackgroundColor3 = Color3.fromRGB(170, 170, 0); autoPetPenButton.TextColor3 = Color3.fromRGB(255, 255, 255); autoPetPenButton.Text = "Auto PetPen [OFF]"; autoPetPenButton.Font = Enum.Font.SourceSansBold; autoPetPenButton.TextSize = 10; autoPetPenButton.Parent = frame
     Instance.new("UICorner", autoPetPenButton).CornerRadius = UDim.new(0, 4)
     local petFarmButton = Instance.new("TextButton"); petFarmButton.Size = UDim2.new(0, 200, 0, 25); petFarmButton.Position = UDim2.new(0, 10, 0, 145); petFarmButton.BackgroundColor3 = Color3.fromRGB(180, 140, 0); petFarmButton.TextColor3 = Color3.fromRGB(0, 0, 0); petFarmButton.Text = "🥚 START PETFARM"; petFarmButton.Font = Enum.Font.SourceSansBold; petFarmButton.TextSize = 11; petFarmButton.Parent = frame
@@ -904,7 +898,6 @@ local function autoStart()
     if not equipOk then task.wait(2); equipOk = equipSelectedPet(PetID) end
     if equipOk then
         if ui then ui.statusLabel.Text = "Status: ✅ " .. getPetTypeIcon(selectedPetType) .. " " .. selectedPetName; ui.statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) end
-        -- FIX: Properly trigger PetPen Mode to true
         if not AutoPetPenMode then
             toggleAutoPetPenMode()
             if ui and ui.autoPetPenButton then ui.autoPetPenButton.Text = "Auto PetPen [ON]"; ui.autoPetPenButton.BackgroundColor3 = Color3.fromRGB(0, 170, 0) end
@@ -948,6 +941,6 @@ if ui then
     end)
 end
 
-debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat ONLY. PetPen includes Neon Fusion & Auto-Buy Cracked Eggs.")
+debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat ONLY. PetPen will NOT add Neon 6+ pets.")
 task.wait(3)
 autoStart()
