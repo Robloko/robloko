@@ -540,7 +540,7 @@ local function performNeonFusion()
     return fusionsPerformed
 end
 
--- PRIORITY ADDITION: Neons (Under 6) -> Specific Eggs -> Auto-buy Cracked Eggs
+-- FIX: Added checks to NEVER add pets that are Age 6+ back into the pen
 local function addPriorityPets(snapshot)
     local playerData = getPlayerData()
     if not playerData or not playerData.inventory or not playerData.inventory.pets then return 0 end
@@ -553,20 +553,24 @@ local function addPriorityPets(snapshot)
     local added = 0
     local addedSet = {}
     
-    -- Priority 1: NEON pets (FIX: Must be UNDER Age 6 so they can still level up)
+    -- Priority 1: NEON pets (MUST BE UNDER AGE 6)
     for uniqueId, petData in pairs(playerData.inventory.pets) do
-        if petData.properties and petData.properties.neon and (petData.properties.age or 0) < 6 and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+        local petAge = petData.properties and petData.properties.age or 0
+        if petData.properties and petData.properties.neon and petAge < 6 and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
             safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
-            debugPrint("Added NEON: " .. petData.id .. " (Age: " .. tostring(petData.properties.age or 0) .. ")"); added += 1; addedSet[uniqueId] = true; task.wait(0.6)
+            debugPrint("Added NEON: " .. petData.id .. " (Age: " .. petAge .. ")")
+            added += 1; addedSet[uniqueId] = true; inPen[uniqueId] = true; task.wait(0.6)
         end
     end
     
-    -- Priority 2: Exact egg match
+    -- Priority 2: Exact egg match (MUST BE UNDER AGE 6)
     for _, eggName in ipairs(priorityEggs) do
         for uniqueId, petData in pairs(playerData.inventory.pets) do
-            if petData.id == eggName and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+            local petAge = petData.properties and petData.properties.age or 0
+            if petData.id == eggName and petAge < 6 and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
                 safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
-                debugPrint("Added PRIORITY: " .. petData.id); added += 1; addedSet[uniqueId] = true; task.wait(0.6)
+                debugPrint("Added PRIORITY: " .. petData.id .. " (Age: " .. petAge .. ")")
+                added += 1; addedSet[uniqueId] = true; inPen[uniqueId] = true; task.wait(0.6)
             end
         end
     end
@@ -584,7 +588,8 @@ local function addPriorityPets(snapshot)
             if newData and newData.inventory and newData.inventory.pets then
                 local foundEgg = false
                 for uniqueId, petData in pairs(newData.inventory.pets) do
-                    if petData.id == "cracked_egg" and not inPen[uniqueId] and not addedSet[uniqueId] then
+                    local petAge = petData.properties and petData.properties.age or 0
+                    if petData.id == "cracked_egg" and petAge < 6 and not inPen[uniqueId] and not addedSet[uniqueId] then
                         safeRemoteCall({"IdleProgressionAPI/AddPet"}, "FireServer", uniqueId)
                         debugPrint("Added PURCHASED cracked_egg")
                         added += 1; addedSet[uniqueId] = true; inPen[uniqueId] = true; foundEgg = true; task.wait(0.6); break
@@ -610,7 +615,7 @@ local function startAutoPetPen()
         -- 0. Commit progression FIRST to update pet ages locally!
         pcall(function() ReplicatedStorage.API["IdleProgressionAPI/CommitAllProgression"]:FireServer() end)
         debugPrint("Committed progression to refresh age data")
-        task.wait(3)
+        task.wait(3) -- Wait for client data to update
         
         -- 1. Check for Neon Fusion
         local fusionsPerformed = performNeonFusion()
@@ -620,7 +625,7 @@ local function startAutoPetPen()
         purgeNonPriorityGarbage()
         task.wait(2)
         
-        -- 3. Remove aged pets (This naturally removes any pet that hits 6, including Neons)
+        -- 3. Remove aged pets (This now correctly permanently removes 6+ Neon pets because addPriorityPets won't re-add them)
         local snapshot = getPetPenSnapshot()
         for _, pet in ipairs(snapshot) do
             if pet.age >= 6 then
@@ -943,6 +948,6 @@ if ui then
     end)
 end
 
-debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat ONLY. PetPen will NOT add Neon 6+ pets.")
+debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat ONLY. PetPen includes Neon Fusion, Auto-Buy Cracked Eggs & Correctly Removes Age 6+ Pets.")
 task.wait(3)
 autoStart()
