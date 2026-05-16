@@ -1,6 +1,6 @@
 -- ==================================================================
--- PET TREAT GIVER SCRIPT
--- Finds all pet_treat items in food inventory and gives to 2FinnPets
+-- POLYMORPH POTION GIVER SCRIPT
+-- Finds all pet_polymorph_potion items in food inventory and gives to 2FinnPets
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,13 +8,13 @@ local player = Players.LocalPlayer
 
 local DEBUG_MODE = true
 local TARGET_PLAYER_NAME = "2FinnPets"
-local TREAT_ID = "pet_treat"
+local POTION_ID = "pet_polymorph_potion"
 local GIVE_DELAY = 9 -- seconds between each give (rate limit safety)
 
 -- Debug print
 local function debugPrint(msg)
     if DEBUG_MODE then
-        print("[TreatGiver] " .. msg)
+        print("[PolyPotionGiver] " .. msg)
     end
 end
 
@@ -22,9 +22,9 @@ end
 -- FOOD INVENTORY SCANNER
 -- ==================================================================
 
--- Function to scan food inventory and find all pet_treat entries
-local function findAllTreats()
-    local treats = {}
+-- Function to scan food inventory and find all pet_polymorph_potion entries
+local function findAllPolymorphPotions()
+    local potions = {}
 
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -32,9 +32,9 @@ local function findAllTreats()
 
         if playerData and playerData.inventory and playerData.inventory.food then
             for uniqueId, itemData in pairs(playerData.inventory.food) do
-                if itemData.id == TREAT_ID then
+                if itemData.id == POTION_ID then
                     local amount = itemData.amount or itemData.properties and itemData.properties.stack_count or 1
-                    table.insert(treats, {
+                    table.insert(potions, {
                         uid = uniqueId,
                         id = itemData.id,
                         amount = amount
@@ -49,17 +49,17 @@ local function findAllTreats()
         return {}
     end
 
-    return treats
+    return potions
 end
 
--- Function to count total treats
-local function countTotalTreats()
-    local treats = findAllTreats()
+-- Function to count total polymorph potions
+local function countTotalPotions()
+    local potions = findAllPolymorphPotions()
     local total = 0
-    for _, treat in ipairs(treats) do
-        total = total + treat.amount
+    for _, potion in ipairs(potions) do
+        total = total + potion.amount
     end
-    return total, #treats
+    return total, #potions
 end
 
 -- Function to print the entire food inventory (for inspection)
@@ -76,8 +76,8 @@ local function inspectFoodInventory()
                 foodCount = foodCount + 1
                 local id = itemData.id or "unknown"
                 local amount = itemData.amount or (itemData.properties and itemData.properties.stack_count) or 1
-                local isTreat = (id == TREAT_ID) and " ★ TREAT" or ""
-                debugPrint(string.format("  [%s] ID: %s | Amount: %d%s", tostring(uniqueId), id, amount, isTreat))
+                local isPotion = (id == POTION_ID) and " ★ POLYMORPH" or ""
+                debugPrint(string.format("  [%s] ID: %s | Amount: %d%s", tostring(uniqueId), id, amount, isPotion))
             end
 
             if foodCount == 0 then
@@ -98,31 +98,31 @@ local function inspectFoodInventory()
 end
 
 -- ==================================================================
--- GIVE TREATS TO TARGET PLAYER
+-- GIVE POTIONS TO TARGET PLAYER
 -- ==================================================================
 
--- Function to give a single treat stack to target player
-local function giveTreatToPlayer(targetPlayer, treatUid)
-    if not targetPlayer or not treatUid then
+-- Function to give a single potion stack to target player
+local function givePotionToPlayer(targetPlayer, potionUid)
+    if not targetPlayer or not potionUid then
         return false
     end
 
-    local args = { targetPlayer, treatUid }
+    local args = { targetPlayer, potionUid }
     local success, result = pcall(function()
         return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
     end)
 
     if success then
-        debugPrint("Successfully gave treat to " .. targetPlayer.Name)
+        debugPrint("Successfully gave polymorph potion to " .. targetPlayer.Name)
         return true
     else
-        debugPrint("Failed to give treat: " .. tostring(result))
+        debugPrint("Failed to give polymorph potion: " .. tostring(result))
         return false
     end
 end
 
--- Main function: give ALL pet_treat stacks to 2FinnPets
-local function giveAllTreatsToTarget()
+-- Main function: give ALL pet_polymorph_potion stacks to 2FinnPets
+local function giveAllPotionsToTarget()
     -- Verify target player is in game
     local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
     if not targetPlayer then
@@ -135,26 +135,26 @@ local function giveAllTreatsToTarget()
     -- First inspect the full food inventory
     inspectFoodInventory()
 
-    -- Find all treats
-    local treats = findAllTreats()
+    -- Find all polymorph potions
+    local potions = findAllPolymorphPotions()
 
-    if #treats == 0 then
-        debugPrint("No pet_treat items found in food inventory!")
+    if #potions == 0 then
+        debugPrint("No pet_polymorph_potion items found in food inventory!")
         return false
     end
 
-    local totalAmount, stackCount = countTotalTreats()
-    debugPrint(string.format("Found %d treat stacks (total amount: %d)", stackCount, totalAmount))
+    local totalAmount, stackCount = countTotalPotions()
+    debugPrint(string.format("Found %d potion stacks (total amount: %d)", stackCount, totalAmount))
 
     -- Give each stack
     local successCount = 0
     local failCount = 0
 
-    for i, treat in ipairs(treats) do
-        debugPrint(string.format("Giving treat stack %d/%d (uid: %s, amount: %d)...",
-            i, #treats, tostring(treat.uid), treat.amount))
+    for i, potion in ipairs(potions) do
+        debugPrint(string.format("Giving potion stack %d/%d (uid: %s, amount: %d)...",
+            i, #potions, tostring(potion.uid), potion.amount))
 
-        local success = giveTreatToPlayer(targetPlayer, treat.uid)
+        local success = givePotionToPlayer(targetPlayer, potion.uid)
 
         if success then
             successCount = successCount + 1
@@ -165,7 +165,7 @@ local function giveAllTreatsToTarget()
         end
 
         -- Wait between gives to avoid rate limiting
-        if i < #treats then
+        if i < #potions then
             debugPrint(string.format("  Waiting %d seconds before next give...", GIVE_DELAY))
             task.wait(GIVE_DELAY)
         end
@@ -173,13 +173,13 @@ local function giveAllTreatsToTarget()
 
     -- Final report
     debugPrint("========== RESULTS ==========")
-    debugPrint(string.format("Total stacks: %d", #treats))
+    debugPrint(string.format("Total stacks: %d", #potions))
     debugPrint(string.format("Successful: %d", successCount))
     debugPrint(string.format("Failed: %d", failCount))
 
-    -- Re-check remaining treats
-    local remainingAmount, remainingStacks = countTotalTreats()
-    debugPrint(string.format("Remaining treats: %d stacks (%d total)", remainingStacks, remainingAmount))
+    -- Re-check remaining potions
+    local remainingAmount, remainingStacks = countTotalPotions()
+    debugPrint(string.format("Remaining polymorph potions: %d stacks (%d total)", remainingStacks, remainingAmount))
     debugPrint("=============================")
 
     return failCount == 0
@@ -191,11 +191,11 @@ end
 
 local function createUI()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "TreatGiverUI"
+    screenGui.Name = "PolymorphPotionGiverUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 220, 0, 160)
+    mainFrame.Size = UDim2.new(0, 240, 0, 160)
     mainFrame.Position = UDim2.new(0, 10, 1, -170)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
@@ -239,8 +239,8 @@ local function createUI()
     title.Size = UDim2.new(1, 0, 0, 25)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
-    title.TextColor3 = Color3.fromRGB(255, 200, 50)
-    title.Text = "Pet Treat Giver"
+    title.TextColor3 = Color3.fromRGB(200, 50, 255)
+    title.Text = "Polymorph Potion Giver"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 14
     title.Parent = mainFrame
@@ -269,13 +269,13 @@ local function createUI()
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.Parent = mainFrame
 
-    -- Give All Treats button
+    -- Give All Potions button
     local giveAllButton = Instance.new("TextButton")
     giveAllButton.Size = UDim2.new(0.9, 0, 0, 28)
     giveAllButton.Position = UDim2.new(0.05, 0, 0, 68)
-    giveAllButton.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(150, 0, 200)
     giveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    giveAllButton.Text = "GIVE ALL TREATS"
+    giveAllButton.Text = "GIVE ALL POTIONS"
     giveAllButton.Font = Enum.Font.SourceSansBold
     giveAllButton.TextSize = 13
     giveAllButton.Parent = mainFrame
@@ -304,28 +304,28 @@ local function createUI()
 
     -- Update status
     local function updateStatus()
-        local totalAmount, stackCount = countTotalTreats()
+        local totalAmount, stackCount = countTotalPotions()
         local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
         local targetOnline = targetPlayer and "✓ Online" or "✗ Offline"
 
-        statusLabel.Text = string.format("Treats: %d stacks (%d) | %s", stackCount, totalAmount, targetOnline)
+        statusLabel.Text = string.format("Potions: %d stacks (%d) | %s", stackCount, totalAmount, targetOnline)
     end
 
     -- Give All button click
     giveAllButton.MouseButton1Click:Connect(function()
         if isGiving then
-            debugPrint("Already giving treats, please wait...")
+            debugPrint("Already giving potions, please wait...")
             return
         end
 
         isGiving = true
         giveAllButton.Text = "GIVING..."
-        giveAllButton.BackgroundColor3 = Color3.fromRGB(100, 100, 0)
+        giveAllButton.BackgroundColor3 = Color3.fromRGB(100, 0, 150)
 
-        local success = giveAllTreatsToTarget()
+        local success = giveAllPotionsToTarget()
 
-        giveAllButton.Text = success and "ALL GIVEN ✓" or "GIVE ALL TREATS"
-        giveAllButton.BackgroundColor3 = success and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(200, 150, 0)
+        giveAllButton.Text = success and "ALL GIVEN ✓" or "GIVE ALL POTIONS"
+        giveAllButton.BackgroundColor3 = success and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(150, 0, 200)
 
         updateStatus()
         isGiving = false
@@ -333,8 +333,8 @@ local function createUI()
         -- Reset button text after 3 seconds
         task.delay(3, function()
             if not isGiving then
-                giveAllButton.Text = "GIVE ALL TREATS"
-                giveAllButton.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+                giveAllButton.Text = "GIVE ALL POTIONS"
+                giveAllButton.BackgroundColor3 = Color3.fromRGB(150, 0, 200)
             end
         end)
     end)
@@ -360,8 +360,8 @@ end
 -- INITIALIZATION
 -- ==================================================================
 createUI()
-debugPrint("Pet Treat Giver loaded!")
+debugPrint("Polymorph Potion Giver loaded!")
 debugPrint("Target: " .. TARGET_PLAYER_NAME)
-debugPrint("Looking for: " .. TREAT_ID)
-debugPrint("Click 'GIVE ALL TREATS' to start giving")
+debugPrint("Looking for: " .. POTION_ID)
+debugPrint("Click 'GIVE ALL POTIONS' to start giving")
 debugPrint("Click 'Inspect Food Inventory' to see all food items")
