@@ -1,0 +1,367 @@
+-- ==================================================================
+-- PET TREAT GIVER SCRIPT
+-- Finds all pet_treat items in food inventory and gives to 2FinnPets
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+local DEBUG_MODE = true
+local TARGET_PLAYER_NAME = "2FinnPets"
+local TREAT_ID = "pet_treat"
+local GIVE_DELAY = 9 -- seconds between each give (rate limit safety)
+
+-- Debug print
+local function debugPrint(msg)
+    if DEBUG_MODE then
+        print("[TreatGiver] " .. msg)
+    end
+end
+
+-- ==================================================================
+-- FOOD INVENTORY SCANNER
+-- ==================================================================
+
+-- Function to scan food inventory and find all pet_treat entries
+local function findAllTreats()
+    local treats = {}
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for uniqueId, itemData in pairs(playerData.inventory.food) do
+                if itemData.id == TREAT_ID then
+                    local amount = itemData.amount or itemData.properties and itemData.properties.stack_count or 1
+                    table.insert(treats, {
+                        uid = uniqueId,
+                        id = itemData.id,
+                        amount = amount
+                    })
+                end
+            end
+        end
+    end)
+
+    if not success then
+        debugPrint("Error scanning food inventory: " .. tostring(errorMsg))
+        return {}
+    end
+
+    return treats
+end
+
+-- Function to count total treats
+local function countTotalTreats()
+    local treats = findAllTreats()
+    local total = 0
+    for _, treat in ipairs(treats) do
+        total = total + treat.amount
+    end
+    return total, #treats
+end
+
+-- Function to print the entire food inventory (for inspection)
+local function inspectFoodInventory()
+    debugPrint("=== FOOD INVENTORY INSPECTION ===")
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.food then
+            local foodCount = 0
+            for uniqueId, itemData in pairs(playerData.inventory.food) do
+                foodCount = foodCount + 1
+                local id = itemData.id or "unknown"
+                local amount = itemData.amount or (itemData.properties and itemData.properties.stack_count) or 1
+                local isTreat = (id == TREAT_ID) and " ★ TREAT" or ""
+                debugPrint(string.format("  [%s] ID: %s | Amount: %d%s", tostring(uniqueId), id, amount, isTreat))
+            end
+
+            if foodCount == 0 then
+                debugPrint("  Food inventory is empty!")
+            else
+                debugPrint("Total food items: " .. foodCount)
+            end
+        else
+            debugPrint("No food inventory found!")
+        end
+    end)
+
+    if not success then
+        debugPrint("Error inspecting food inventory: " .. tostring(errorMsg))
+    end
+
+    debugPrint("=================================")
+end
+
+-- ==================================================================
+-- GIVE TREATS TO TARGET PLAYER
+-- ==================================================================
+
+-- Function to give a single treat stack to target player
+local function giveTreatToPlayer(targetPlayer, treatUid)
+    if not targetPlayer or not treatUid then
+        return false
+    end
+
+    local args = { targetPlayer, treatUid }
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+    end)
+
+    if success then
+        debugPrint("Successfully gave treat to " .. targetPlayer.Name)
+        return true
+    else
+        debugPrint("Failed to give treat: " .. tostring(result))
+        return false
+    end
+end
+
+-- Main function: give ALL pet_treat stacks to 2FinnPets
+local function giveAllTreatsToTarget()
+    -- Verify target player is in game
+    local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+    if not targetPlayer then
+        debugPrint("Target player '" .. TARGET_PLAYER_NAME .. "' is NOT in the server!")
+        return false
+    end
+
+    debugPrint("Target player found: " .. targetPlayer.Name)
+
+    -- First inspect the full food inventory
+    inspectFoodInventory()
+
+    -- Find all treats
+    local treats = findAllTreats()
+
+    if #treats == 0 then
+        debugPrint("No pet_treat items found in food inventory!")
+        return false
+    end
+
+    local totalAmount, stackCount = countTotalTreats()
+    debugPrint(string.format("Found %d treat stacks (total amount: %d)", stackCount, totalAmount))
+
+    -- Give each stack
+    local successCount = 0
+    local failCount = 0
+
+    for i, treat in ipairs(treats) do
+        debugPrint(string.format("Giving treat stack %d/%d (uid: %s, amount: %d)...",
+            i, #treats, tostring(treat.uid), treat.amount))
+
+        local success = giveTreatToPlayer(targetPlayer, treat.uid)
+
+        if success then
+            successCount = successCount + 1
+            debugPrint(string.format("  ✓ Stack %d given successfully", i))
+        else
+            failCount = failCount + 1
+            debugPrint(string.format("  ✗ Stack %d FAILED", i))
+        end
+
+        -- Wait between gives to avoid rate limiting
+        if i < #treats then
+            debugPrint(string.format("  Waiting %d seconds before next give...", GIVE_DELAY))
+            task.wait(GIVE_DELAY)
+        end
+    end
+
+    -- Final report
+    debugPrint("========== RESULTS ==========")
+    debugPrint(string.format("Total stacks: %d", #treats))
+    debugPrint(string.format("Successful: %d", successCount))
+    debugPrint(string.format("Failed: %d", failCount))
+
+    -- Re-check remaining treats
+    local remainingAmount, remainingStacks = countTotalTreats()
+    debugPrint(string.format("Remaining treats: %d stacks (%d total)", remainingStacks, remainingAmount))
+    debugPrint("=============================")
+
+    return failCount == 0
+end
+
+-- ==================================================================
+-- SIMPLE UI
+-- ==================================================================
+
+local function createUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "TreatGiverUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 220, 0, 160)
+    mainFrame.Position = UDim2.new(0, 10, 1, -170)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.BackgroundTransparency = 0.1
+    mainFrame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = mainFrame
+
+    -- Draggable
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    mainFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    mainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 25)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 200, 50)
+    title.Text = "Pet Treat Giver"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 14
+    title.Parent = mainFrame
+
+    -- Status label
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -10, 0, 20)
+    statusLabel.Position = UDim2.new(0, 5, 0, 28)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLabel.Text = "Loading..."
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 11
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = mainFrame
+
+    -- Target label
+    local targetLabel = Instance.new("TextLabel")
+    targetLabel.Size = UDim2.new(1, -10, 0, 15)
+    targetLabel.Position = UDim2.new(0, 5, 0, 48)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    targetLabel.Text = "Target: " .. TARGET_PLAYER_NAME
+    targetLabel.Font = Enum.Font.SourceSans
+    targetLabel.TextSize = 10
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.Parent = mainFrame
+
+    -- Give All Treats button
+    local giveAllButton = Instance.new("TextButton")
+    giveAllButton.Size = UDim2.new(0.9, 0, 0, 28)
+    giveAllButton.Position = UDim2.new(0.05, 0, 0, 68)
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+    giveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    giveAllButton.Text = "GIVE ALL TREATS"
+    giveAllButton.Font = Enum.Font.SourceSansBold
+    giveAllButton.TextSize = 13
+    giveAllButton.Parent = mainFrame
+
+    local giveAllCorner = Instance.new("UICorner")
+    giveAllCorner.CornerRadius = UDim.new(0, 4)
+    giveAllCorner.Parent = giveAllButton
+
+    -- Inspect Inventory button
+    local inspectButton = Instance.new("TextButton")
+    inspectButton.Size = UDim2.new(0.9, 0, 0, 25)
+    inspectButton.Position = UDim2.new(0.05, 0, 0.75, 0)
+    inspectButton.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
+    inspectButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    inspectButton.Text = "Inspect Food Inventory"
+    inspectButton.Font = Enum.Font.SourceSans
+    inspectButton.TextSize = 11
+    inspectButton.Parent = mainFrame
+
+    local inspectCorner = Instance.new("UICorner")
+    inspectCorner.CornerRadius = UDim.new(0, 4)
+    inspectCorner.Parent = inspectButton
+
+    -- Track if currently giving
+    local isGiving = false
+
+    -- Update status
+    local function updateStatus()
+        local totalAmount, stackCount = countTotalTreats()
+        local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+        local targetOnline = targetPlayer and "✓ Online" or "✗ Offline"
+
+        statusLabel.Text = string.format("Treats: %d stacks (%d) | %s", stackCount, totalAmount, targetOnline)
+    end
+
+    -- Give All button click
+    giveAllButton.MouseButton1Click:Connect(function()
+        if isGiving then
+            debugPrint("Already giving treats, please wait...")
+            return
+        end
+
+        isGiving = true
+        giveAllButton.Text = "GIVING..."
+        giveAllButton.BackgroundColor3 = Color3.fromRGB(100, 100, 0)
+
+        local success = giveAllTreatsToTarget()
+
+        giveAllButton.Text = success and "ALL GIVEN ✓" or "GIVE ALL TREATS"
+        giveAllButton.BackgroundColor3 = success and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(200, 150, 0)
+
+        updateStatus()
+        isGiving = false
+
+        -- Reset button text after 3 seconds
+        task.delay(3, function()
+            if not isGiving then
+                giveAllButton.Text = "GIVE ALL TREATS"
+                giveAllButton.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+            end
+        end)
+    end)
+
+    -- Inspect button click
+    inspectButton.MouseButton1Click:Connect(function()
+        inspectFoodInventory()
+        updateStatus()
+    end)
+
+    -- Auto-update status every 5 seconds
+    coroutine.wrap(function()
+        while true do
+            updateStatus()
+            task.wait(5)
+        end
+    end)()
+
+    updateStatus()
+end
+
+-- ==================================================================
+-- INITIALIZATION
+-- ==================================================================
+createUI()
+debugPrint("Pet Treat Giver loaded!")
+debugPrint("Target: " .. TARGET_PLAYER_NAME)
+debugPrint("Looking for: " .. TREAT_ID)
+debugPrint("Click 'GIVE ALL TREATS' to start giving")
+debugPrint("Click 'Inspect Food Inventory' to see all food items")
