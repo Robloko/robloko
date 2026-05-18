@@ -114,7 +114,7 @@ local function findFirstAvailablePlayer()
 end
 
 -- ==================================================================
--- POTION RELEASER FUNCTIONS (FIXED: spawn_cframe + 9s delay)
+-- POTION RELEASER FUNCTIONS (FIXED: GUARANTEED 9-SECOND DELAY)
 -- ==================================================================
 
 -- Function to find pet age potion in inventory
@@ -201,16 +201,14 @@ local function findPetsNeedingPotions()
     return petsNeedingPotions
 end
 
--- Function to use potion on a specific pet (FIXED: ADDED spawn_cframe + 9s delay)
+-- Function to use potion on a specific pet (FIXED: GUARANTEED 9-SECOND DELAY)
 local function usePotionOnPet(petUniqueID)
     if not petUniqueID then
         return false
     end
 
-    -- Verify the pet still exists
-    local petExists = false
-    local currentPetAge = 0
-    local petName = "Unknown"
+    -- Verify the pet still exists and needs a potion
+    local petExists, currentPetAge, petName = false, 0, "Unknown"
     pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
@@ -231,15 +229,15 @@ local function usePotionOnPet(petUniqueID)
         return false
     end
 
-    -- Equip the target pet before aging
-    local equipSuccess = equipPet(petUniqueID)
-    if not equipSuccess then
+    -- Equip the pet
+    if not equipPet(petUniqueID) then
         debugPrint("Failed to equip pet: " .. petName, "PotionRelease")
         return false
     end
     debugPrint("Equipped pet: " .. petName, "PotionRelease")
     task.wait(1)
 
+    -- Find and equip potion
     local potionID = findPetAgePotion()
     if not potionID then
         debugPrint("No potion found!", "PotionRelease")
@@ -247,32 +245,21 @@ local function usePotionOnPet(petUniqueID)
     end
 
     -- Equip potion
-    local args1 = {
-        potionID,
-        {
-            use_sound_delay = true,
-            equip_as_last = false
-        }
-    }
-    local equipSuccessPotion = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args1))
+    local equipPotionSuccess = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(
+            potionID, { use_sound_delay = true, equip_as_last = false }
+        )
     end)
-
-    if not equipSuccessPotion then
+    if not equipPotionSuccess then
         debugPrint("Failed to equip potion", "PotionRelease")
         return false
     end
     task.wait(1)
 
     -- Start using potion
-    local args2 = {
-        potionID,
-        "START"
-    }
     local startSuccess = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(unpack(args2))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(potionID, "START")
     end)
-
     if not startSuccess then
         safelyUnequipFood(potionID)
         debugPrint("Failed to start using potion", "PotionRelease")
@@ -280,18 +267,17 @@ local function usePotionOnPet(petUniqueID)
     end
     task.wait(1)
 
-    -- Create pet object for consumption (FIXED: ADDED spawn_cframe)
-    local args3 = {
-        "__Enum_PetObjectCreatorType_2",
-        {
-            pet_unique = petUniqueID,
-            spawn_cframe = CFrame.new(0, 0, 0), -- Default spawn position (adjust if needed)
-            additional_consume_uniques = {},
-            unique_id = potionID
-        }
-    }
+    -- Create pet object for consumption (FIXED: Added spawn_cframe)
     local petObjectSuccess = pcall(function()
-        return ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(args3))
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
+            "__Enum_PetObjectCreatorType_2",
+            {
+                pet_unique = petUniqueID,
+                spawn_cframe = CFrame.new(0, 0, 0), -- Default spawn position
+                additional_consume_uniques = {},
+                unique_id = potionID
+            }
+        )
     end)
 
     if not petObjectSuccess then
@@ -300,16 +286,19 @@ local function usePotionOnPet(petUniqueID)
         return false
     end
 
-    -- WAIT 9 SECONDS (CRITICAL FIX)
+    -- WAIT 9 SECONDS (GUARANTEED: Uses repeat-until loop)
     debugPrint("Waiting 9 seconds for potion to feed " .. petName .. "...", "PotionRelease")
-    task.wait(9)
+    local startTime = tick()
+    repeat
+        task.wait(0.1) -- Small increments to avoid yielding issues
+    until tick() - startTime >= 9
     debugPrint("Potion feed complete for " .. petName, "PotionRelease")
 
     safelyUnequipFood(potionID)
     return true
 end
 
--- Main potion releaser loop (FIXED: REMOVED REDUNDANT WAITS)
+-- Main potion releaser loop (FIXED: Ensures sequential execution)
 local function startPotionReleaser()
     while PotionReleaserMode do
         local petsNeedingPotions = findPetsNeedingPotions()
@@ -329,7 +318,6 @@ local function startPotionReleaser()
 
         debugPrint("Found " .. #petsNeedingPotions .. " pets needing potions", "PotionRelease")
 
-        local potionsUsed = 0
         for _, petData in ipairs(petsNeedingPotions) do
             if not PotionReleaserMode then break end
 
@@ -353,21 +341,17 @@ local function startPotionReleaser()
                 continue
             end
 
+            -- WAIT FOR usePotionOnPet TO FINISH BEFORE CONTINUING
             local success = usePotionOnPet(petData.unique_id)
 
-            if success then
-                potionsUsed = potionsUsed + 1
-                -- NO EXTRA WAIT HERE (9s is already in usePotionOnPet)
-            else
-                task.wait(2)
+            if not success then
+                task.wait(2) -- Small delay if feeding fails
             end
+            -- NO EXTRA WAIT HERE (9s is already in usePotionOnPet)
         end
 
-        if potionsUsed > 0 then
-            debugPrint("Cycle complete: " .. potionsUsed .. " potions used", "PotionRelease")
-        end
-
-        task.wait(10) -- Small delay before next cycle
+        -- Small delay before checking again
+        task.wait(5)
     end
 end
 
@@ -375,7 +359,7 @@ end
 local function togglePotionReleaserMode()
     PotionReleaserMode = not PotionReleaserMode
     if PotionReleaserMode then
-        debugPrint("STARTED - Targeting pets until age 6", "PotionRelease")
+        debugPrint("STARTED - Targeting pets until age 6 (GUARANTEED 9s delay)", "PotionRelease")
         potionReleaserCoroutine = coroutine.wrap(startPotionReleaser)()
     else
         debugPrint("STOPPED", "PotionRelease")
@@ -1185,7 +1169,7 @@ end
 local ui = createCombinedUI()
 debugPrint("5-in-1 Auto Script loaded successfully!", "System")
 debugPrint("Features:", "System")
-debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED: spawn_cframe + 9s delay)", "System")
+debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED: GUARANTEED 9s delay + spawn_cframe)", "System")
 debugPrint("2. Box Opener - Opens all sugarfest_2026_choccybunny_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to first available player", "System")
 debugPrint("4. Giveaway - Auto gives trash pets to first available player", "System")
