@@ -114,7 +114,7 @@ local function findFirstAvailablePlayer()
 end
 
 -- ==================================================================
--- POTION RELEASER FUNCTIONS (FIXED: GUARANTEED 9-SECOND DELAY)
+-- POTION RELEASER FUNCTIONS (FIXED: API MATCHES EXAMPLE EXACTLY)
 -- ==================================================================
 
 -- Function to find pet age potion in inventory
@@ -201,7 +201,7 @@ local function findPetsNeedingPotions()
     return petsNeedingPotions
 end
 
--- Function to use potion on a specific pet (FIXED: GUARANTEED 9-SECOND DELAY)
+-- Function to use potion on a specific pet (FIXED: Matches provided example API perfectly)
 local function usePotionOnPet(petUniqueID)
     if not petUniqueID then
         return false
@@ -229,25 +229,18 @@ local function usePotionOnPet(petUniqueID)
         return false
     end
 
-    -- Equip the pet
-    if not equipPet(petUniqueID) then
-        debugPrint("Failed to equip pet: " .. petName, "PotionRelease")
-        return false
-    end
-    debugPrint("Equipped pet: " .. petName, "PotionRelease")
-    task.wait(1)
-
-    -- Find and equip potion
+    -- Find potion
     local potionID = findPetAgePotion()
     if not potionID then
         debugPrint("No potion found!", "PotionRelease")
         return false
     end
 
-    -- Equip potion
+    -- STEP 1: Equip the potion
     local equipPotionSuccess = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(
-            potionID, { use_sound_delay = true, equip_as_last = false }
+            potionID, 
+            { use_sound_delay = true, equip_as_last = false }
         )
     end)
     if not equipPotionSuccess then
@@ -256,9 +249,9 @@ local function usePotionOnPet(petUniqueID)
     end
     task.wait(1)
 
-    -- Start using potion
+    -- STEP 2: Start using the potion (InvokeServer, NOT FireServer)
     local startSuccess = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):FireServer(potionID, "START")
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(potionID, "START")
     end)
     if not startSuccess then
         safelyUnequipFood(potionID)
@@ -267,14 +260,13 @@ local function usePotionOnPet(petUniqueID)
     end
     task.wait(1)
 
-    -- Create pet object for consumption (FIXED: Added spawn_cframe)
+    -- STEP 3: Create pet object for consumption (No spawn_cframe, exact table format from example)
     local petObjectSuccess = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
             "__Enum_PetObjectCreatorType_2",
             {
-                pet_unique = petUniqueID,
-                spawn_cframe = CFrame.new(0, 0, 0), -- Default spawn position
                 additional_consume_uniques = {},
+                pet_unique = petUniqueID,
                 unique_id = potionID
             }
         )
@@ -294,6 +286,7 @@ local function usePotionOnPet(petUniqueID)
     until tick() - startTime >= 9
     debugPrint("Potion feed complete for " .. petName, "PotionRelease")
 
+    -- STEP 4: Unequip the potion
     safelyUnequipFood(potionID)
     return true
 end
@@ -1169,15 +1162,8 @@ end
 local ui = createCombinedUI()
 debugPrint("5-in-1 Auto Script loaded successfully!", "System")
 debugPrint("Features:", "System")
-debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED: GUARANTEED 9s delay + spawn_cframe)", "System")
+debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED API Calls)", "System")
 debugPrint("2. Box Opener - Opens all sugarfest_2026_choccybunny_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to first available player", "System")
 debugPrint("4. Giveaway - Auto gives trash pets to first available player", "System")
 debugPrint("5. Gift Giver - Gives all 2d_tuesdays_2025_box to first available player", "System")
-debugPrint("Controls:", "System")
-debugPrint("- Left-click buttons to toggle auto modes", "System")
-debugPrint("- Right-click OPEN ALL for single box open", "System")
-debugPrint("- Right-click EGG TRADE for manual trade", "System")
-debugPrint("- Right-click GIVEAWAY for manual single give", "System")
-debugPrint("- Click GIVE GIFTS to give all gifts", "System")
-debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Gifts | Total pets", "System")
