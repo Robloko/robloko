@@ -1,0 +1,338 @@
+-- ==================================================================
+-- POLYMORPH POTION GIVER SCRIPT
+-- Finds all pet_polymorph_potion items in food inventory and gives to 2FinnPets
+-- Continuously loops until all potions are given
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+local DEBUG_MODE = true
+local TARGET_PLAYER_NAME = "2FinnPets"
+local POTION_ID = "pet_polymorph_potion"
+local GIVE_DELAY = 9 -- seconds between each give (rate limit safety)
+local RETRY_DELAY = 15 -- seconds to wait before retrying on failure
+
+-- Debug print
+local function debugPrint(msg)
+    if DEBUG_MODE then
+        print("[PolyPotionGiver] " .. msg)
+    end
+end
+
+-- ==================================================================
+-- FOOD INVENTORY SCANNER
+-- ==================================================================
+
+-- Function to scan food inventory and find all pet_polymorph_potion entries
+local function findAllPolymorphPotions()
+    local potions = {}
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for uniqueId, itemData in pairs(playerData.inventory.food) do
+                if itemData.id == POTION_ID then
+                    local amount = itemData.amount or itemData.properties and itemData.properties.stack_count or 1
+                    table.insert(potions, {
+                        uid = uniqueId,
+                        id = itemData.id,
+                        amount = amount
+                    })
+                end
+            end
+        end
+    end)
+
+    if not success then
+        debugPrint("Error scanning food inventory: " .. tostring(errorMsg))
+        return {}
+    end
+
+    return potions
+end
+
+-- Function to count total polymorph potions
+local function countTotalPotions()
+    local potions = findAllPolymorphPotions()
+    local total = 0
+    for _, potion in ipairs(potions) do
+        total = total + potion.amount
+    end
+    return total, #potions
+end
+
+-- Function to print the entire food inventory (for inspection)
+local function inspectFoodInventory()
+    debugPrint("=== FOOD INVENTORY INSPECTION ===")
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.food then
+            local foodCount = 0
+            for uniqueId, itemData in pairs(playerData.inventory.food) do
+                foodCount = foodCount + 1
+                local id = itemData.id or "unknown"
+                local amount = itemData.amount or (itemData.properties and itemData.properties.stack_count) or 1
+                local isPotion = (id == POTION_ID) and " ★ POLYMORPH" or ""
+                debugPrint(string.format("  [%s] ID: %s | Amount: %d%s", tostring(uniqueId), id, amount, isPotion))
+            end
+
+            if foodCount == 0 then
+                debugPrint("  Food inventory is empty!")
+            else
+                debugPrint("Total food items: " .. foodCount)
+            end
+        else
+            debugPrint("No food inventory found!")
+        end
+    end)
+
+    if not success then
+        debugPrint("Error inspecting food inventory: " .. tostring(errorMsg))
+    end
+
+    debugPrint("=================================")
+end
+
+-- ==================================================================
+-- GIVE POTIONS TO TARGET PLAYER (LOOP UNTIL EMPTY)
+-- ==================================================================
+
+-- Function to give a single potion stack to target player
+local function givePotionToPlayer(targetPlayer, potionUid)
+    if not targetPlayer or not potionUid then
+        return false
+    end
+
+    local args = { targetPlayer, potionUid }
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(unpack(args))
+    end)
+
+    if success then
+        debugPrint("Successfully gave polymorph potion stack to " .. targetPlayer.Name)
+        return true
+    else
+        debugPrint("Failed to give polymorph potion: " .. tostring(result))
+        return false
+    end
+end
+
+-- Main loop function: continuously gives ALL pet_polymorph_potion stacks to 2FinnPets until none are left
+local function startAutoGiveLoop()
+    debugPrint("Starting continuous polymorph potion giving loop...")
+    
+    while isAutoGiving do
+        -- Check if target is in game
+        local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+        if not targetPlayer then
+            debugPrint("Target player '" .. TARGET_PLAYER_NAME .. "' is NOT in the server. Waiting 10 seconds...")
+            task.wait(10)
+            continue -- Loop again to check if they joined
+        end
+
+        -- Check for potions
+        local potions = findAllPolymorphPotions()
+
+        if #potions == 0 then
+            debugPrint("No more pet_polymorph_potion items found! Loop complete.")
+            break -- Exit the loop naturally because we are out of potions
+        end
+
+        -- Grab the first available stack
+        local potion = potions[1]
+        debugPrint(string.format("Attempting to give potion stack (uid: %s, amount: %d)...", tostring(potion.uid), potion.amount))
+
+        local success = givePotionToPlayer(targetPlayer, potion.uid)
+
+        if success then
+            debugPrint("Give successful. Waiting " .. GIVE_DELAY .. " seconds for cooldown...")
+            task.wait(GIVE_DELAY)
+        else
+            debugPrint("Give failed. Waiting " .. RETRY_DELAY .. " seconds before retrying...")
+            task.wait(RETRY_DELAY)
+        end
+    end
+
+    -- Loop ended (either finished or stopped by user)
+    isAutoGiving = false
+    giveAllButton.Text = "GIVE ALL POTIONS"
+    giveAllButton.BackgroundColor3 = Color3.fromRGB(150, 0, 200)
+    updateStatus()
+    
+    debugPrint("Auto-give loop terminated.")
+end
+
+-- ==================================================================
+-- SIMPLE UI
+-- ==================================================================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PolymorphPotionGiverUI"
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 240, 0, 160)
+mainFrame.Position = UDim2.new(0, 10, 1, -170)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 6)
+corner.Parent = mainFrame
+
+-- Draggable
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+mainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 25)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(200, 50, 255)
+title.Text = "Polymorph Potion Giver"
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 14
+title.Parent = mainFrame
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 0, 20)
+statusLabel.Position = UDim2.new(0, 5, 0, 28)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.Text = "Loading..."
+statusLabel.Font = Enum.Font.SourceSans
+statusLabel.TextSize = 11
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
+
+-- Target label
+local targetLabel = Instance.new("TextLabel")
+targetLabel.Size = UDim2.new(1, -10, 0, 15)
+targetLabel.Position = UDim2.new(0, 5, 0, 48)
+targetLabel.BackgroundTransparency = 1
+targetLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+targetLabel.Text = "Target: " .. TARGET_PLAYER_NAME
+targetLabel.Font = Enum.Font.SourceSans
+targetLabel.TextSize = 10
+targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+targetLabel.Parent = mainFrame
+
+-- Give All Potions button (Acts as Toggle)
+local giveAllButton = Instance.new("TextButton")
+giveAllButton.Size = UDim2.new(0.9, 0, 0, 28)
+giveAllButton.Position = UDim2.new(0.05, 0, 0, 68)
+giveAllButton.BackgroundColor3 = Color3.fromRGB(150, 0, 200)
+giveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+giveAllButton.Text = "GIVE ALL POTIONS"
+giveAllButton.Font = Enum.Font.SourceSansBold
+giveAllButton.TextSize = 13
+giveAllButton.Parent = mainFrame
+
+local giveAllCorner = Instance.new("UICorner")
+giveAllCorner.CornerRadius = UDim.new(0, 4)
+giveAllCorner.Parent = giveAllButton
+
+-- Inspect Inventory button
+local inspectButton = Instance.new("TextButton")
+inspectButton.Size = UDim2.new(0.9, 0, 0, 25)
+inspectButton.Position = UDim2.new(0.05, 0, 0.75, 0)
+inspectButton.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
+inspectButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+inspectButton.Text = "Inspect Food Inventory"
+inspectButton.Font = Enum.Font.SourceSans
+inspectButton.TextSize = 11
+inspectButton.Parent = mainFrame
+
+local inspectCorner = Instance.new("UICorner")
+inspectCorner.CornerRadius = UDim.new(0, 4)
+inspectCorner.Parent = inspectButton
+
+-- Track if currently giving
+isAutoGiving = false
+
+-- Update status
+function updateStatus()
+    local totalAmount, stackCount = countTotalPotions()
+    local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+    local targetOnline = targetPlayer and "✓ Online" or "✗ Offline"
+
+    statusLabel.Text = string.format("Potions: %d stacks (%d) | %s", stackCount, totalAmount, targetOnline)
+end
+
+-- Give All button click (Now a toggle to start/stop the loop)
+giveAllButton.MouseButton1Click:Connect(function()
+    if isAutoGiving then
+        -- Stop the loop
+        isAutoGiving = false
+        giveAllButton.Text = "STOPPING..."
+        giveAllButton.BackgroundColor3 = Color3.fromRGB(100, 100, 0)
+    else
+        -- Start the loop
+        isAutoGiving = true
+        giveAllButton.Text = "STOP GIVING"
+        giveAllButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+        
+        -- Run the loop in a coroutine so the UI doesn't freeze
+        coroutine.wrap(startAutoGiveLoop)()
+    end
+end)
+
+-- Inspect button click
+inspectButton.MouseButton1Click:Connect(function()
+    inspectFoodInventory()
+    updateStatus()
+end)
+
+-- Auto-update status every 5 seconds
+coroutine.wrap(function()
+    while true do
+        updateStatus()
+        task.wait(5)
+    end
+end)()
+
+updateStatus()
+
+-- ==================================================================
+-- INITIALIZATION
+-- ==================================================================
+debugPrint("Polymorph Potion Giver loaded!")
+debugPrint("Target: " .. TARGET_PLAYER_NAME)
+debugPrint("Looking for: " .. POTION_ID)
+debugPrint("Click 'GIVE ALL POTIONS' to start the auto-give loop")
+debugPrint("Click 'STOP GIVING' to abort the loop early")
+debugPrint("Click 'Inspect Food Inventory' to see all food items")
