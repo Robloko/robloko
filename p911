@@ -20,6 +20,7 @@ local TARGET_PETS_FOR_POTIONS = {
     "basic_egg_2022_ant",
     "basic_egg_2022_mouse",
     "basic_egg_2022_poodle",
+    "basic_egg_2022_zebra",
     "summerfest_2024_cow_calf",
     "halloween_2023_slime",
     "sugarfest_2026_jiggly_jerboa",
@@ -113,7 +114,7 @@ local function findFirstAvailablePlayer()
 end
 
 -- ==================================================================
--- POTION RELEASER FUNCTIONS (FIXED: API MATCHES EXAMPLE EXACTLY)
+-- POTION RELEASER FUNCTIONS (FIXED: API STRUCTURE & INVOKESERVER)
 -- ==================================================================
 
 -- Function to find pet age potion in inventory
@@ -132,14 +133,17 @@ local function findPetAgePotion()
     return success and result or nil
 end
 
--- Function to safely unequip items
+-- Function to safely unequip items (FIXED: Matches API example)
 local function safelyUnequipFood(itemId)
     pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(itemId)
+        local args = {
+            itemId
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(unpack(args))
     end)
 end
 
--- Function to equip a specific pet
+-- Function to equip a specific pet (PRESERVED as requested)
 local function equipPet(petUniqueID)
     if not petUniqueID then
         return false
@@ -200,7 +204,7 @@ local function findPetsNeedingPotions()
     return petsNeedingPotions
 end
 
--- Function to use potion on a specific pet (FIXED: Matches provided example API perfectly)
+-- Function to use potion on a specific pet (FIXED: Strict API Example Structure)
 local function usePotionOnPet(petUniqueID)
     if not petUniqueID then
         return false
@@ -228,19 +232,31 @@ local function usePotionOnPet(petUniqueID)
         return false
     end
 
-    -- Find potion
+    -- Equip the pet (KEPT AS REQUESTED)
+    if not equipPet(petUniqueID) then
+        debugPrint("Failed to equip pet: " .. petName, "PotionRelease")
+        return false
+    end
+    debugPrint("Equipped pet: " .. petName, "PotionRelease")
+    task.wait(1)
+
+    -- Find and equip potion
     local potionID = findPetAgePotion()
     if not potionID then
         debugPrint("No potion found!", "PotionRelease")
         return false
     end
 
-    -- STEP 1: Equip the potion
+    -- Equip potion (FIXED: Matches example unpack structure)
     local equipPotionSuccess = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(
-            potionID, 
-            { use_sound_delay = true, equip_as_last = false }
-        )
+        local args = {
+            potionID,
+            {
+                use_sound_delay = true,
+                equip_as_last = false
+            }
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(unpack(args))
     end)
     if not equipPotionSuccess then
         debugPrint("Failed to equip potion", "PotionRelease")
@@ -248,9 +264,13 @@ local function usePotionOnPet(petUniqueID)
     end
     task.wait(1)
 
-    -- STEP 2: Start using the potion (InvokeServer, NOT FireServer)
+    -- Start using potion (FIXED: Changed from FireServer to InvokeServer + Matches example)
     local startSuccess = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(potionID, "START")
+        local args = {
+            potionID,
+            "START"
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(unpack(args))
     end)
     if not startSuccess then
         safelyUnequipFood(potionID)
@@ -259,16 +279,17 @@ local function usePotionOnPet(petUniqueID)
     end
     task.wait(1)
 
-    -- STEP 3: Create pet object for consumption (No spawn_cframe, exact table format from example)
+    -- Create pet object for consumption (FIXED: Removed spawn_cframe, matched example dictionary order)
     local petObjectSuccess = pcall(function()
-        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
+        local args = {
             "__Enum_PetObjectCreatorType_2",
             {
                 additional_consume_uniques = {},
                 pet_unique = petUniqueID,
                 unique_id = potionID
             }
-        )
+        }
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(unpack(args))
     end)
 
     if not petObjectSuccess then
@@ -285,7 +306,6 @@ local function usePotionOnPet(petUniqueID)
     until tick() - startTime >= 9
     debugPrint("Potion feed complete for " .. petName, "PotionRelease")
 
-    -- STEP 4: Unequip the potion
     safelyUnequipFood(potionID)
     return true
 end
@@ -1161,8 +1181,15 @@ end
 local ui = createCombinedUI()
 debugPrint("5-in-1 Auto Script loaded successfully!", "System")
 debugPrint("Features:", "System")
-debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED API Calls)", "System")
+debugPrint("1. Potion Releaser - Ages target pets to age 6 (FIXED: InvokeServer Fix + Removed spawn_cframe)", "System")
 debugPrint("2. Box Opener - Opens all sugarfest_2026_choccybunny_box", "System")
 debugPrint("3. Egg Trader - Auto trades eggs to first available player", "System")
 debugPrint("4. Giveaway - Auto gives trash pets to first available player", "System")
 debugPrint("5. Gift Giver - Gives all 2d_tuesdays_2025_box to first available player", "System")
+debugPrint("Controls:", "System")
+debugPrint("- Left-click buttons to toggle auto modes", "System")
+debugPrint("- Right-click OPEN ALL for single box open", "System")
+debugPrint("- Right-click EGG TRADE for manual trade", "System")
+debugPrint("- Right-click GIVEAWAY for manual single give", "System")
+debugPrint("- Click GIVE GIFTS to give all gifts", "System")
+debugPrint("Status shows: Boxes | Pets needing potions | Eggs | Potion availability | Gifts | Total pets", "System")
