@@ -1,73 +1,66 @@
+wait(5)
 local Players = game:GetService("Players")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local localPlayer = Players.LocalPlayer
 
--- Function to click the center of any specific UI element
-local function clickUiElement(guiObj)
-    if not guiObj then return false end
-    if not guiObj.Visible then return false end
-    
-    local pos = guiObj.AbsolutePosition
-    local size = guiObj.AbsoluteSize
-    
-    -- Make sure the element actually has a size on screen
-    if size.X > 0 and size.Y > 0 then
-        local clickX = pos.X + (size.X / 2)
-        local clickY = pos.Y + (size.Y / 2)
-        
-        print("Clicking element at:", clickX, clickY)
-        VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 1)
-        task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 1)
-        return true
-    end
-    
-    return false
-end
+-- Wait for player GUI to load
+repeat task.wait() until localPlayer.PlayerGui
 
--- Background loop to constantly monitor for the dialogs
+-- ==================================================================
+-- BACKGROUND DIALOG AUTO-CLICKER (Strictly for your 2 paths)
+-- ==================================================================
 task.spawn(function()
     print("Dialog monitor started...")
     
     while true do
-        -- 1. Safely navigate down the hierarchy
-        local dialogApp = playerGui:FindFirstChild("DialogApp")
-        local dialog = dialogApp and dialogApp:FindFirstChild("Dialog", true)
-        local normalDialog = dialog and dialog:FindFirstChild("NormalDialog", true)
-        local buttons = normalDialog and normalDialog:FindFirstChild("Buttons", true)
-        local buttonTemplate = buttons and buttons:FindFirstChild("ButtonTemplate", true)
+        local pGui = localPlayer.PlayerGui
         
-        local clickedSomething = false
-        
-        -- 2. If ButtonTemplate exists, look for our specific elements
-        if buttonTemplate then
-            -- Check for Face.Colors
-            local face = buttonTemplate:FindFirstChild("Face", true)
-            if face then
-                local faceColors = face:FindFirstChild("Colors", true)
-                if clickUiElement(faceColors) then
-                    print("Clicked Face.Colors")
-                    clickedSomething = true
-                end
+        -- Function to safely traverse the exact paths you provided
+        local function getTarget(pathList)
+            local current = pGui
+            for _, name in ipairs(pathList) do
+                current = current:FindFirstChild(name)
+                if not current then return nil end
             end
-            
-            -- Check for Shadow.Colors.Left
-            local shadow = buttonTemplate:FindFirstChild("Shadow", true)
-            if shadow then
-                local shadowColors = shadow:FindFirstChild("Colors", true)
-                if shadowColors then
-                    local leftColor = shadowColors:FindFirstChild("Left", true)
-                    if clickUiElement(leftColor) then
-                        print("Clicked Shadow.Colors.Left")
-                        clickedSomething = true
-                    end
-                end
+            return current
+        end
+
+        -- 1. Target: DialogApp.Dialog.NormalDialog.Buttons.ButtonTemplate.Face.Colors
+        local target1 = getTarget({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Face", "Colors"})
+        
+        -- 2. Target: DialogApp.Dialog.NormalDialog.Buttons.ButtonTemplate.Shadow.Colors.Left
+        local target2 = getTarget({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Shadow", "Colors", "Left"})
+
+        local clicked = false
+
+        -- Check Target 1
+        if target1 and target1.Visible then
+            -- Find the actual GuiButton to fire the signal on (prevents errors if Colors is a Frame)
+            local btn = target1:IsA("GuiButton") and target1 or target1:FindFirstAncestorWhichIsA("GuiButton")
+            if btn and btn.Active then
+                print("Dialog 1 detected! Clicking...")
+                firesignal(btn.MouseButton1Down)
+                task.wait(0.05)
+                firesignal(btn.MouseButton1Up)
+                firesignal(btn.MouseButton1Click)
+                clicked = true
             end
         end
-        
+
+        -- Check Target 2
+        if target2 and target2.Visible then
+            local btn = target2:IsA("GuiButton") and target2 or target2:FindFirstAncestorWhichIsA("GuiButton")
+            if btn and btn.Active then
+                print("Dialog 2 detected! Clicking...")
+                firesignal(btn.MouseButton1Down)
+                task.wait(0.05)
+                firesignal(btn.MouseButton1Up)
+                firesignal(btn.MouseButton1Click)
+                clicked = true
+            end
+        end
+
         -- Wait 1 second if we clicked something to let the dialog close
-        if clickedSomething then
+        if clicked then
             task.wait(1)
         end
         
@@ -75,3 +68,4 @@ task.spawn(function()
         task.wait(0.5)
     end
 end)
+-- ==================================================================
