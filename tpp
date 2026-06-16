@@ -8,11 +8,11 @@ screenGui.Name = "TeleportUI"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Create the main frame (Centered and Smaller)
+-- Create the main frame (Centered and Even Smaller)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 150, 0, 290) -- Reduced size (Width: 150, Height: 290)
-mainFrame.Position = UDim2.new(0.5, -75, 0.5, -145) -- Adjusted offset to stay centered
+mainFrame.Size = UDim2.new(0, 120, 0, 240) -- Reduced size (Width: 120, Height: 240)
+mainFrame.Position = UDim2.new(0.5, -60, 0.5, -120) -- Adjusted offset to stay centered
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
@@ -24,12 +24,12 @@ uicorner.Parent = mainFrame
 
 -- Create a Title
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30) -- Reduced height
+title.Size = UDim2.new(1, 0, 0, 24) -- Reduced height
 title.BackgroundTransparency = 1
-title.Text = "Teleport Menu"
+title.Text = "Teleports"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.SourceSansBold
-title.TextSize = 16 -- Smaller text
+title.TextSize = 14 -- Smaller text
 title.Parent = mainFrame
 
 -- Create a List for the buttons
@@ -37,7 +37,7 @@ local listLayout = Instance.new("UIListLayout")
 listLayout.Parent = mainFrame
 listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-listLayout.Padding = UDim.new(0, 4) -- Tighter padding
+listLayout.Padding = UDim.new(0, 3) -- Tighter padding
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
 -- Define the 10 locations
@@ -58,11 +58,11 @@ local locations = {
 local function createButton(index, targetCFrame)
     local button = Instance.new("TextButton")
     button.Name = "TeleportButton" .. index
-    button.Size = UDim2.new(0, 130, 0, 22) -- Reduced button size
+    button.Size = UDim2.new(0, 100, 0, 18) -- Reduced button size (Width: 100, Height: 18)
     button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     button.TextColor3 = Color3.fromRGB(255, 255, 255)
     button.Font = Enum.Font.SourceSans
-    button.TextSize = 14 -- Smaller text
+    button.TextSize = 12 -- Smaller text
     button.Text = "Location " .. index
     button.Parent = mainFrame
     
