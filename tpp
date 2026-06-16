@@ -8,40 +8,39 @@ screenGui.Name = "TeleportUI"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Create the main frame (Centered)
+-- Create the main frame (Centered and Smaller)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 220, 0, 380)
-mainFrame.Position = UDim2.new(0.5, -110, 0.5, -190) -- Centers the frame on screen
+mainFrame.Size = UDim2.new(0, 150, 0, 290) -- Reduced size (Width: 150, Height: 290)
+mainFrame.Position = UDim2.new(0.5, -75, 0.5, -145) -- Adjusted offset to stay centered
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
 
 -- Add rounded corners to the main frame
 local uicorner = Instance.new("UICorner")
-uicorner.CornerRadius = UDim.new(0, 8)
+uicorner.CornerRadius = UDim.new(0, 6)
 uicorner.Parent = mainFrame
 
 -- Create a Title
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 40)
+title.Size = UDim2.new(1, 0, 0, 30) -- Reduced height
 title.BackgroundTransparency = 1
 title.Text = "Teleport Menu"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.SourceSansBold
-title.TextSize = 20
+title.TextSize = 16 -- Smaller text
 title.Parent = mainFrame
 
--- Create a ScrollingFrame or List for the buttons
+-- Create a List for the buttons
 local listLayout = Instance.new("UIListLayout")
 listLayout.Parent = mainFrame
 listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-listLayout.Padding = UDim.new(0, 6)
+listLayout.Padding = UDim.new(0, 4) -- Tighter padding
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- Define the 10 locations using the 12-number CFrame format
--- Format: CFrame.new(x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22)
+-- Define the 10 locations
 local locations = {
     CFrame.new(-286.926758, 27.1907673, -1760.88855, -0.855764151, 0, -0.517366052, 0, 1, 0, 0.517366052, 0, -0.855764151),
     CFrame.new(-600.940552, 27.1901321, -1582.34888, -0.981422424, 0, 0.191859722, 0, 1, 0, -0.191859722, 0, -0.981422424),
@@ -59,11 +58,11 @@ local locations = {
 local function createButton(index, targetCFrame)
     local button = Instance.new("TextButton")
     button.Name = "TeleportButton" .. index
-    button.Size = UDim2.new(0, 180, 0, 30)
+    button.Size = UDim2.new(0, 130, 0, 22) -- Reduced button size
     button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     button.TextColor3 = Color3.fromRGB(255, 255, 255)
     button.Font = Enum.Font.SourceSans
-    button.TextSize = 16
+    button.TextSize = 14 -- Smaller text
     button.Text = "Location " .. index
     button.Parent = mainFrame
     
@@ -76,7 +75,6 @@ local function createButton(index, targetCFrame)
     button.MouseButton1Click:Connect(function()
         local character = player.Character
         if character and character:FindFirstChild("HumanoidRootPart") then
-            -- Teleport the player by setting their HumanoidRootPart CFrame
             character.HumanoidRootPart.CFrame = targetCFrame
         end
     end)
