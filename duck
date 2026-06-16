@@ -6,10 +6,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local targetSandwich = "schospital_refresh_2023_cafeteria_sandwich"
 
--- Function to inspect food inventory and check for the sandwich
+-- Function to inspect food inventory and find the unique ID of the sandwich
 local function inspectFoodInventory()
     local foods = {}
-    local foundSandwich = false
+    local sandwichUniqueId = nil
     
     local success, errorMsg = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
@@ -20,14 +20,14 @@ local function inspectFoodInventory()
             for foodId, foodData in pairs(playerData.inventory.food) do
                 if foodData.id then
                     table.insert(foods, {
-                        id = foodId,
-                        name = foodData.id,
+                        id = foodId, -- This is the unique instance ID
+                        name = foodData.id, -- This is the item type name
                         amount = foodData.amount or 1
                     })
                     
                     -- Check if this is the sandwich we are looking for
-                    if foodData.id == targetSandwich or foodId == targetSandwich then
-                        foundSandwich = true
+                    if foodData.id == targetSandwich then
+                        sandwichUniqueId = foodId -- Save the unique instance ID for trading
                     end
                 end
             end
@@ -36,7 +36,7 @@ local function inspectFoodInventory()
 
     if not success then
         print("Error reading food inventory: " .. tostring(errorMsg))
-        return false
+        return nil
     end
 
     -- Print the inventory
@@ -45,13 +45,13 @@ local function inspectFoodInventory()
     else
         print("=== AVAILABLE FOOD IN INVENTORY ===")
         for i, food in ipairs(foods) do
-            print(string.format("%d. %s (ID: %s) - Amount: %d", i, food.name, food.id, food.amount))
+            print(string.format("%d. %s (Unique ID: %s) - Amount: %d", i, food.name, food.id, food.amount))
         end
         print("Total food items: " .. #foods)
         print("===================================")
     end
 
-    return foundSandwich
+    return sandwichUniqueId
 end
 
 -- Function to buy the sandwich
@@ -79,16 +79,21 @@ local function buySandwich()
     task.wait(1.5)
 end
 
--- Function to exchange sandwich for sheep duck
-local function exchangeForSheepDuck()
-    print("Attempting to exchange sandwich for sheep duck...")
+-- Function to exchange sandwich for sheep duck using the unique ID
+local function exchangeForSheepDuck(sandwichId)
+    if not sandwichId then
+        print("Cannot exchange: No sandwich ID found.")
+        return
+    end
+
+    print("Attempting to exchange sandwich (Unique ID: " .. sandwichId .. ") for sheep duck...")
     local character = player.Character or player.CharacterAdded:Wait()
     
     local args = {
         "dagi_npc",
         "UseBlock",
         {
-            r_1 = "2_94f7c8503bc94e8d943247dc4159931a"
+            r_1 = sandwichId -- Uses the dynamic unique ID grabbed from the inventory
         },
         character
     }
@@ -106,15 +111,19 @@ end
 
 -- == Main Execution Flow ==
 
--- 1. Inspect inventory and check for the sandwich
-local hasSandwich = inspectFoodInventory()
+-- 1. Inspect inventory and check for the sandwich's unique ID
+local sandwichId = inspectFoodInventory()
 
--- 2. Buy the sandwich if we don't have it
-if not hasSandwich then
+-- 2. Buy the sandwich if we don't have it, then re-inspect to get the new ID
+if not sandwichId then
     buySandwich()
-else
-    print("Sandwich already in inventory! Proceeding to exchange...")
+    sandwichId = inspectFoodInventory()
 end
 
--- 3. Attempt the exchange
-exchangeForSheepDuck()
+-- 3. Attempt the exchange using the specific sandwich's unique ID
+if sandwichId then
+    print("Sandwich found! Proceeding to exchange...")
+    exchangeForSheepDuck(sandwichId)
+else
+    print("Failed to obtain a sandwich ID for the trade.")
+end
