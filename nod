@@ -1,83 +1,47 @@
--- Services
 local Players = game:GetService("Players")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
--- Wait for PlayerGui to load
-repeat task.wait() until player:FindFirstChild("PlayerGui")
+-- Run this in a background loop so it doesn't stop your other scripts
+task.spawn(function()
+    print("Dialog Auto-Clicker started. Waiting for pop-up...")
+    
+    while true do
+        -- Safely check if the exact UI path exists
+        local dialogApp = playerGui:FindFirstChild("DialogApp")
+        local dialog = dialogApp and dialogApp:FindFirstChild("Dialog", true)
+        local normalDialog = dialog and dialog:FindFirstChild("NormalDialog", true)
+        local buttonsFolder = normalDialog and normalDialog:FindFirstChild("Buttons", true)
+        local buttonTemplate = buttonsFolder and buttonsFolder:FindFirstChild("ButtonTemplate", true)
 
--- Function to simulate a click on a GUI button
-local function clickButton(button)
-    if button and button.Visible and button.Active and (button:IsA("GuiButton") or button:IsA("TextButton") or button:IsA("ImageButton")) then
-        firesignal(button.MouseButton1Down)
-        task.wait(0.05)
-        firesignal(button.MouseButton1Up)
-        firesignal(button.MouseButton1Click)
-        print("✅ Clicked button: " .. button:GetFullName())
-        return true
-    end
-    return false
-end
-
--- Function to click all buttons in a dialog
-local function clickDialogButtons(dialog)
-    -- Check for ButtonTemplate
-    local buttonTemplate = dialog:FindFirstChild("Buttons", true) and dialog.Buttons:FindFirstChild("ButtonTemplate", true)
-    if buttonTemplate then
-        -- Click the main button
-        clickButton(buttonTemplate)
-
-        -- Click Face.Colors if it exists
-        local faceColors = buttonTemplate:FindFirstChild("Face", true) and buttonTemplate.Face:FindFirstChild("Colors", true)
-        if faceColors then
-            clickButton(faceColors)
+        -- If the button exists and is visible, click it
+        if buttonTemplate and buttonTemplate.Visible then
+            print("Dialog pop-up detected! Clicking ButtonTemplate...")
+            
+            -- Method 1: Fire the GUI click signals (works for most UI buttons)
+            if buttonTemplate:IsA("GuiButton") then
+                firesignal(buttonTemplate.MouseButton1Down)
+                task.wait(0.05)
+                firesignal(buttonTemplate.MouseButton1Up)
+                firesignal(buttonTemplate.MouseButton1Click)
+            end
+            
+            -- Method 2: Fallback coordinate click (uses VirtualInputManager exactly like your other clicks)
+            local pos = buttonTemplate.AbsolutePosition
+            local size = buttonTemplate.AbsoluteSize
+            local clickX = pos.X + (size.X / 2)
+            local clickY = pos.Y + (size.Y / 2)
+            
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 1)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 1)
+            
+            -- Wait 1 second to allow the dialog to close before searching again
+            task.wait(1) 
         end
-
-        -- Click Shadow.Colors.Left if it exists
-        local shadowColorsLeft = buttonTemplate:FindFirstChild("Shadow", true) and
-                                  buttonTemplate.Shadow:FindFirstChild("Colors", true) and
-                                  buttonTemplate.Shadow.Colors:FindFirstChild("Left", true)
-        if shadowColorsLeft then
-            clickButton(shadowColorsLeft)
-        end
+        
+        -- Check for the dialog every 0.5 seconds
+        task.wait(0.5)
     end
-end
-
--- Monitor for DialogApp
-local function monitorDialogs()
-    -- Check if DialogApp already exists
-    local dialogApp = player.PlayerGui:FindFirstChild("DialogApp")
-    if dialogApp then
-        setupDialogMonitor(dialogApp)
-    end
-
-    -- Listen for new DialogApp
-    player.PlayerGui.ChildAdded:Connect(function(child)
-        if child.Name == "DialogApp" then
-            setupDialogMonitor(child)
-        end
-    end)
-end
-
--- Setup monitoring for a specific DialogApp
-local function setupDialogMonitor(dialogApp)
-    print("🔍 Monitoring DialogApp for dialogs...")
-
-    -- Check for existing NormalDialog
-    local normalDialog = dialogApp:FindFirstChild("Dialog", true) and dialogApp.Dialog:FindFirstChild("NormalDialog", true)
-    if normalDialog then
-        clickDialogButtons(normalDialog)
-    end
-
-    -- Listen for new NormalDialogs
-    dialogApp.DescendantAdded:Connect(function(descendant)
-        if descendant.Name == "NormalDialog" then
-            print("💬 New NormalDialog detected!")
-            clickDialogButtons(descendant)
-        end
-    end)
-end
-
--- Start monitoring
-monitorDialogs()
-print("🚀 Auto-clicker for dialog buttons is running!")
+end)
