@@ -1,66 +1,50 @@
 wait(5)
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 -- Wait for player GUI to load
 repeat task.wait() until localPlayer.PlayerGui
 
+-- Function to click at specific coordinates
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
+
 -- ==================================================================
--- BACKGROUND DIALOG AUTO-CLICKER (Strictly for your 2 paths)
+-- BACKGROUND DIALOG AUTO-CLICKER (Clicks 375, 375 when visible)
 -- ==================================================================
 task.spawn(function()
     print("Dialog monitor started...")
+    local pGui = localPlayer.PlayerGui
     
-    while true do
-        local pGui = localPlayer.PlayerGui
-        
-        -- Function to safely traverse the exact paths you provided
-        local function getTarget(pathList)
-            local current = pGui
-            for _, name in ipairs(pathList) do
-                current = current:FindFirstChild(name)
-                if not current then return nil end
-            end
-            return current
+    -- Function to safely check the exact paths
+    local function checkPath(pathList)
+        local current = pGui
+        for _, name in ipairs(pathList) do
+            current = current:FindFirstChild(name)
+            if not current then return false end
         end
+        -- Only return true if the final object exists AND is visible
+        return current.Visible
+    end
 
+    while true do
         -- 1. Target: DialogApp.Dialog.NormalDialog.Buttons.ButtonTemplate.Face.Colors
-        local target1 = getTarget({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Face", "Colors"})
+        local path1Visible = checkPath({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Face", "Colors"})
         
         -- 2. Target: DialogApp.Dialog.NormalDialog.Buttons.ButtonTemplate.Shadow.Colors.Left
-        local target2 = getTarget({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Shadow", "Colors", "Left"})
+        local path2Visible = checkPath({"DialogApp", "Dialog", "NormalDialog", "Buttons", "ButtonTemplate", "Shadow", "Colors", "Left"})
 
-        local clicked = false
-
-        -- Check Target 1
-        if target1 and target1.Visible then
-            -- Find the actual GuiButton to fire the signal on (prevents errors if Colors is a Frame)
-            local btn = target1:IsA("GuiButton") and target1 or target1:FindFirstAncestorWhichIsA("GuiButton")
-            if btn and btn.Active then
-                print("Dialog 1 detected! Clicking...")
-                firesignal(btn.MouseButton1Down)
-                task.wait(0.05)
-                firesignal(btn.MouseButton1Up)
-                firesignal(btn.MouseButton1Click)
-                clicked = true
-            end
-        end
-
-        -- Check Target 2
-        if target2 and target2.Visible then
-            local btn = target2:IsA("GuiButton") and target2 or target2:FindFirstAncestorWhichIsA("GuiButton")
-            if btn and btn.Active then
-                print("Dialog 2 detected! Clicking...")
-                firesignal(btn.MouseButton1Down)
-                task.wait(0.05)
-                firesignal(btn.MouseButton1Up)
-                firesignal(btn.MouseButton1Click)
-                clicked = true
-            end
-        end
-
-        -- Wait 1 second if we clicked something to let the dialog close
-        if clicked then
+        -- If either is visible, click at 375, 375
+        if path1Visible or path2Visible then
+            print("Dialog detected! Clicking at 375, 375")
+            clickAt(375, 375)
+            
+            -- Wait 1 second to let the dialog close before clicking again
             task.wait(1)
         end
         
@@ -69,3 +53,5 @@ task.spawn(function()
     end
 end)
 -- ==================================================================
+
+-- (Your rest of the script continues below...)
