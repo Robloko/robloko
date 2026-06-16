@@ -3,45 +3,75 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Run this in a background loop so it doesn't stop your other scripts
+-- Function to click the center of any specific UI element
+local function clickUiElement(guiObj)
+    if not guiObj then return false end
+    if not guiObj.Visible then return false end
+    
+    local pos = guiObj.AbsolutePosition
+    local size = guiObj.AbsoluteSize
+    
+    -- Make sure the element actually has a size on screen
+    if size.X > 0 and size.Y > 0 then
+        local clickX = pos.X + (size.X / 2)
+        local clickY = pos.Y + (size.Y / 2)
+        
+        print("Clicking element at:", clickX, clickY)
+        VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 1)
+        return true
+    end
+    
+    return false
+end
+
+-- Background loop to constantly monitor for the dialogs
 task.spawn(function()
-    print("Dialog Auto-Clicker started. Waiting for pop-up...")
+    print("Dialog monitor started...")
     
     while true do
-        -- Safely check if the exact UI path exists
+        -- 1. Safely navigate down the hierarchy
         local dialogApp = playerGui:FindFirstChild("DialogApp")
         local dialog = dialogApp and dialogApp:FindFirstChild("Dialog", true)
         local normalDialog = dialog and dialog:FindFirstChild("NormalDialog", true)
-        local buttonsFolder = normalDialog and normalDialog:FindFirstChild("Buttons", true)
-        local buttonTemplate = buttonsFolder and buttonsFolder:FindFirstChild("ButtonTemplate", true)
-
-        -- If the button exists and is visible, click it
-        if buttonTemplate and buttonTemplate.Visible then
-            print("Dialog pop-up detected! Clicking ButtonTemplate...")
-            
-            -- Method 1: Fire the GUI click signals (works for most UI buttons)
-            if buttonTemplate:IsA("GuiButton") then
-                firesignal(buttonTemplate.MouseButton1Down)
-                task.wait(0.05)
-                firesignal(buttonTemplate.MouseButton1Up)
-                firesignal(buttonTemplate.MouseButton1Click)
+        local buttons = normalDialog and normalDialog:FindFirstChild("Buttons", true)
+        local buttonTemplate = buttons and buttons:FindFirstChild("ButtonTemplate", true)
+        
+        local clickedSomething = false
+        
+        -- 2. If ButtonTemplate exists, look for our specific elements
+        if buttonTemplate then
+            -- Check for Face.Colors
+            local face = buttonTemplate:FindFirstChild("Face", true)
+            if face then
+                local faceColors = face:FindFirstChild("Colors", true)
+                if clickUiElement(faceColors) then
+                    print("Clicked Face.Colors")
+                    clickedSomething = true
+                end
             end
             
-            -- Method 2: Fallback coordinate click (uses VirtualInputManager exactly like your other clicks)
-            local pos = buttonTemplate.AbsolutePosition
-            local size = buttonTemplate.AbsoluteSize
-            local clickX = pos.X + (size.X / 2)
-            local clickY = pos.Y + (size.Y / 2)
-            
-            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 1)
-            task.wait(0.05)
-            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 1)
-            
-            -- Wait 1 second to allow the dialog to close before searching again
-            task.wait(1) 
+            -- Check for Shadow.Colors.Left
+            local shadow = buttonTemplate:FindFirstChild("Shadow", true)
+            if shadow then
+                local shadowColors = shadow:FindFirstChild("Colors", true)
+                if shadowColors then
+                    local leftColor = shadowColors:FindFirstChild("Left", true)
+                    if clickUiElement(leftColor) then
+                        print("Clicked Shadow.Colors.Left")
+                        clickedSomething = true
+                    end
+                end
+            end
         end
         
-        -- Check for the dialog every 0.5 seconds
+        -- Wait 1 second if we clicked something to let the dialog close
+        if clickedSomething then
+            task.wait(1)
+        end
+        
+        -- Check every 0.5 seconds
         task.wait(0.5)
     end
 end)
