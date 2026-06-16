@@ -1,0 +1,120 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Player
+local player = Players.LocalPlayer
+local targetSandwich = "schospital_refresh_2023_cafeteria_sandwich"
+
+-- Function to inspect food inventory and check for the sandwich
+local function inspectFoodInventory()
+    local foods = {}
+    local foundSandwich = false
+    
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        -- Check for food in inventory
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id then
+                    table.insert(foods, {
+                        id = foodId,
+                        name = foodData.id,
+                        amount = foodData.amount or 1
+                    })
+                    
+                    -- Check if this is the sandwich we are looking for
+                    if foodData.id == targetSandwich or foodId == targetSandwich then
+                        foundSandwich = true
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        print("Error reading food inventory: " .. tostring(errorMsg))
+        return false
+    end
+
+    -- Print the inventory
+    if #foods == 0 then
+        print("No food found in your inventory!")
+    else
+        print("=== AVAILABLE FOOD IN INVENTORY ===")
+        for i, food in ipairs(foods) do
+            print(string.format("%d. %s (ID: %s) - Amount: %d", i, food.name, food.id, food.amount))
+        end
+        print("Total food items: " .. #foods)
+        print("===================================")
+    end
+
+    return foundSandwich
+end
+
+-- Function to buy the sandwich
+local function buySandwich()
+    print("Sandwich not found! Attempting to buy one...")
+    local args = {
+        "food",
+        targetSandwich,
+        {
+            buy_count = 1
+        }
+    }
+    
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+    end)
+    
+    if success then
+        print("Successfully bought the sandwich.")
+    else
+        print("Failed to buy sandwich: " .. tostring(err))
+    end
+    
+    -- Wait a moment for the server to register the purchase and update inventory
+    task.wait(1.5)
+end
+
+-- Function to exchange sandwich for sheep duck
+local function exchangeForSheepDuck()
+    print("Attempting to exchange sandwich for sheep duck...")
+    local character = player.Character or player.CharacterAdded:Wait()
+    
+    local args = {
+        "dagi_npc",
+        "UseBlock",
+        {
+            r_1 = "2_94f7c8503bc94e8d943247dc4159931a"
+        },
+        character
+    }
+    
+    local success, err = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(unpack(args))
+    end)
+    
+    if success then
+        print("Exchange command sent successfully!")
+    else
+        print("Failed to exchange: " .. tostring(err))
+    end
+end
+
+-- == Main Execution Flow ==
+
+-- 1. Inspect inventory and check for the sandwich
+local hasSandwich = inspectFoodInventory()
+
+-- 2. Buy the sandwich if we don't have it
+if not hasSandwich then
+    buySandwich()
+else
+    print("Sandwich already in inventory! Proceeding to exchange...")
+end
+
+-- 3. Attempt the exchange
+exchangeForSheepDuck()
