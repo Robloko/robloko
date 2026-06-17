@@ -1,10 +1,19 @@
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- Player
+-- Player Variables
 local player = Players.LocalPlayer
 local targetSandwich = "schospital_refresh_2023_cafeteria_sandwich"
+
+-- Function to click at specific coordinates
+local function clickAt(x, y)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    task.wait(0.05) -- Small delay for realistic click
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    return true
+end
 
 -- Function to inspect food inventory and find the unique ID of the sandwich
 local function inspectFoodInventory()
@@ -15,19 +24,17 @@ local function inspectFoodInventory()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
 
-        -- Check for food in inventory
         if playerData and playerData.inventory and playerData.inventory.food then
             for foodId, foodData in pairs(playerData.inventory.food) do
                 if foodData.id then
                     table.insert(foods, {
-                        id = foodId, -- This is the unique instance ID
-                        name = foodData.id, -- This is the item type name
+                        id = foodId, 
+                        name = foodData.id, 
                         amount = foodData.amount or 1
                     })
                     
-                    -- Check if this is the sandwich we are looking for
                     if foodData.id == targetSandwich then
-                        sandwichUniqueId = foodId -- Save the unique instance ID for trading
+                        sandwichUniqueId = foodId
                     end
                 end
             end
@@ -39,7 +46,6 @@ local function inspectFoodInventory()
         return nil
     end
 
-    -- Print the inventory
     if #foods == 0 then
         print("No food found in your inventory!")
     else
@@ -47,7 +53,6 @@ local function inspectFoodInventory()
         for i, food in ipairs(foods) do
             print(string.format("%d. %s (Unique ID: %s) - Amount: %d", i, food.name, food.id, food.amount))
         end
-        print("Total food items: " .. #foods)
         print("===================================")
     end
 
@@ -75,7 +80,6 @@ local function buySandwich()
         print("Failed to buy sandwich: " .. tostring(err))
     end
     
-    -- Wait a moment for the server to register the purchase and update inventory
     task.wait(1.5)
 end
 
@@ -93,7 +97,7 @@ local function exchangeForSheepDuck(sandwichId)
         "dagi_npc",
         "UseBlock",
         {
-            r_1 = sandwichId -- Uses the dynamic unique ID grabbed from the inventory
+            r_1 = sandwichId
         },
         character
     }
@@ -109,21 +113,58 @@ local function exchangeForSheepDuck(sandwichId)
     end
 end
 
--- == Main Execution Flow ==
+-- == Main Execution Function ==
 
--- 1. Inspect inventory and check for the sandwich's unique ID
-local sandwichId = inspectFoodInventory()
+local function buyItem()
+    print("=== STARTING ITEM SEQUENCE ===")
+    
+    -- Step 1: UI Navigation
+    -- Initial 5 second delay before clicking starts
+    task.wait(5)
+    -- Click sequence
+    print("Clicking at 444, 480")
+    clickAt(444, 480)
+    task.wait(2)
 
--- 2. Buy the sandwich if we don't have it, then re-inspect to get the new ID
-if not sandwichId then
-    buySandwich()
-    sandwichId = inspectFoodInventory()
-end
+    print("Clicking at 333, 313")
+    clickAt(333, 313)
+    task.wait(2)
 
--- 3. Attempt the exchange using the specific sandwich's unique ID
-if sandwichId then
-    print("Sandwich found! Proceeding to exchange...")
-    exchangeForSheepDuck(sandwichId)
-else
-    print("Failed to obtain a sandwich ID for the trade.")
+    print("Clicking at 415, 161")
+    clickAt(415, 161)
+    task.wait(2)
+
+    print("Clicking at 500, 373")
+    clickAt(500, 373)
+    print("Finished clicking sequence.")
+
+    -- 15 second wait between Step 1 (Clicking) and Step 2 (Inventory Check)
+    task.wait(15)
+
+    -- Step 2: Inspect inventory and check for the sandwich's unique ID
+    local sandwichId = inspectFoodInventory()
+
+    -- Step 3: Buy the sandwich if we don't have it, then re-inspect to get the new ID
+    if not sandwichId then
+        buySandwich()
+        sandwichId = inspectFoodInventory()
+    end
+
+    -- Step 4: Attempt the exchange using the specific sandwich's unique ID
+    if sandwichId then
+        print("Sandwich found! Proceeding to exchange...")
+        exchangeForSheepDuck(sandwichId)
+    else
+        print("Failed to obtain a sandwich ID for the trade.")
+    end
+
+    -- Wait 15 seconds before respawning
+    task.wait(15)
+    
+    -- Step 5: Team API Spawn
+    pcall(function()
+        ReplicatedStorage.API["TeamAPI/Spawn"]:InvokeServer()
+    end)
+    
+    print("=== SEQUENCE COMPLETE ===")
 end
