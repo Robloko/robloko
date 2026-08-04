@@ -907,12 +907,12 @@ end
 local function getPetTypeIcon(petType)
     if petType == "starter_egg" then
         return "🥚"
+    elseif petType == "2d_kitty" then
+        return "🐱"
     elseif petType == "dog" then
         return "🐕"
     elseif petType == "cat" then
         return "🐈"
-    elseif petType == "2d_kitty" then
-        return "🐱"
     else
         return "📦"
     end
@@ -922,9 +922,11 @@ local function detectPetType(petId)
     local name = string.lower(tostring(petId))
     if string.find(name, "starter_egg") then
         return "starter_egg"
+    elseif string.find(name, "2d_kitty") then
+        return "2d_kitty"
     elseif string.find(name, "dog") then
         return "dog"
-    elseif string.find(name, "cat") or string.find(name, "2d_kitty") then
+    elseif string.find(name, "cat") then
         return "cat"
     else
         return "other"
@@ -979,14 +981,16 @@ local function getAllValidPets()
     end
     table.sort(validPets, function(a, b)
         local function p(t)
-            if t == "starter_egg" then
+            if t == "2d_kitty" then
                 return 1
-            elseif t == "dog" then
+            elseif t == "starter_egg" then
                 return 2
-            elseif t == "cat" then
+            elseif t == "dog" then
                 return 3
+            elseif t == "cat" then
+                return 4
             end
-            return 4
+            return 5
         end
         local ap, bp = p(a.petType), p(b.petType)
         if ap ~= bp then
@@ -1004,39 +1008,39 @@ end
 local function findBestPet()
     local validPets = getAllValidPets()
     if eggHasBeenHatched then
-        debugPrint("🔍 Post-hatch mode: searching Dog/Cat/2D Kitty ONLY...")
-        local dogPet, catPet, kittyPet = nil, nil, nil
+        debugPrint("🔍 Post-hatch mode: searching 2D Kitty > Dog > Cat ONLY...")
+        local kittyPet, dogPet, catPet = nil, nil, nil
         for _, pet in ipairs(validPets) do
-            if pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
+            if pet.petType == "2d_kitty" and (not kittyPet or pet.age > kittyPet.age) then
+                kittyPet = pet
+            elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
                 dogPet = pet
             elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
                 catPet = pet
-            elseif string.find(string.lower(pet.id), "2d_kitty") and (not kittyPet or pet.age > kittyPet.age) then
-                kittyPet = pet
             end
         end
-        local picked = dogPet or catPet or kittyPet
+        local picked = kittyPet or dogPet or catPet
         if picked then
             debugPrint("✅ Post-hatch picked: " .. picked.id)
         else
-            debugPrint("❌ No Dog, Cat, or 2D Kitty found!")
+            debugPrint("❌ No 2D Kitty, Dog, or Cat found!")
         end
         return picked
     end
-    debugPrint("🔍 Initial mode: Egg > Dog > Cat > 2D Kitty...")
-    local starterEggPet, dogPet, catPet, kittyPet = nil, nil, nil, nil
+    debugPrint("🔍 Initial mode: Egg > 2D Kitty > Dog > Cat...")
+    local starterEggPet, kittyPet, dogPet, catPet = nil, nil, nil, nil
     for _, pet in ipairs(validPets) do
         if pet.petType == "starter_egg" and (not starterEggPet or pet.age > starterEggPet.age) then
             starterEggPet = pet
+        elseif pet.petType == "2d_kitty" and (not kittyPet or pet.age > kittyPet.age) then
+            kittyPet = pet
         elseif pet.petType == "dog" and (not dogPet or pet.age > dogPet.age) then
             dogPet = pet
         elseif pet.petType == "cat" and (not catPet or pet.age > catPet.age) then
             catPet = pet
-        elseif string.find(string.lower(pet.id), "2d_kitty") and (not kittyPet or pet.age > kittyPet.age) then
-            kittyPet = pet
         end
     end
-    local picked = starterEggPet or dogPet or catPet or kittyPet or validPets[1]
+    local picked = starterEggPet or kittyPet or dogPet or catPet or validPets[1]
     if picked then
         debugPrint("✅ Initial picked: " .. picked.id)
     else
@@ -1121,7 +1125,7 @@ local function monitorPetInventory()
                 local oldType = selectedPetType or "unknown"
                 if oldType == "starter_egg" then
                     eggHasBeenHatched = true
-                    debugPrint("🥚 STARTER_EGG HATCHED! Switching to Dog/Cat/2D Kitty ONLY mode!")
+                    debugPrint("🥚 STARTER_EGG HATCHED! Switching to 2D Kitty > Dog > Cat ONLY mode!")
                 end
                 task.wait(3)
                 local nextPet = findBestPet()
@@ -1195,14 +1199,16 @@ local function updatePetsDropdown(dropdownButton, dropdownListFrame)
             return false
         end
         local function p(t)
-            if t == "starter_egg" then
+            if t == "2d_kitty" then
                 return 1
-            elseif t == "dog" then
+            elseif t == "starter_egg" then
                 return 2
-            elseif t == "cat" then
+            elseif t == "dog" then
                 return 3
+            elseif t == "cat" then
+                return 4
             end
-            return 4
+            return 5
         end
         local ap, bp = p(aData.petType), p(bData.petType)
         if ap ~= bp then
@@ -1269,7 +1275,7 @@ local function createPetsDropdown(parentFrame, position)
     dropdownTitle.Position = UDim2.new(0, 0, 0, 0)
     dropdownTitle.BackgroundTransparency = 1
     dropdownTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
-    dropdownTitle.Text = "🥚 Auto: Egg->Dog/Cat/2D Kitty ONLY"
+    dropdownTitle.Text = "🥚 Auto: Egg->2D Kitty>Dog>Cat ONLY"
     dropdownTitle.Font = Enum.Font.SourceSansBold
     dropdownTitle.TextSize = 10
     dropdownTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -1333,7 +1339,7 @@ local function createMainUI()
     title.Position = UDim2.new(0, 0, 0, 20)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 215, 0)
-    title.Text = "🥚 Egg -> Dog/Cat/2D Kitty ONLY"
+    title.Text = "🥚 Egg -> 2D Kitty > Dog > Cat"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 12
     title.Parent = frame
@@ -1560,6 +1566,6 @@ if ui then
     end)
 end
 
-debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: Dog/Cat/2D Kitty ONLY. PetPen excludes 2D Kitty.")
+debugPrint("🥚 PetFarm loaded! Phase 1: Egg. Phase 2: Hatch Detected. Phase 3: 2D Kitty > Dog > Cat ONLY. PetPen excludes 2D Kitty.")
 task.wait(3)
 autoStart()
