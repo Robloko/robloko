@@ -1,0 +1,91 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local MinigameAPI = ReplicatedStorage.API:WaitForChild("MinigameAPI/MessageServer")
+local ToolAPI = ReplicatedStorage.API:FindFirstChild("ToolAPI/ServerUseTool")
+
+-- ====== SETTINGS ======
+local CLUSTER_ID = "ghost_clusters::a947b7a8-80f4-417e-90cc-0ebff227117e" -- captured; auto-updated if spied
+local HIT_DELAY = 0.1        -- delay between hits
+local AUTO_START = true      -- try to start the minigame if not running
+local TOOL_ARGS = { "2_438a2ed8962844b5b0c4a8fa3cf8994e", "START" } -- auto-updated if spied
+
+-- ====== LIVE TOKEN CAPTURE (spy on your own traffic) ======
+-- FireServer calls made by the game's own UI will refresh our token/ghost_id
+local captured = {
+    cluster_id = nil,
+    use_token = nil,
+    ghost_id = nil,
+}
+
+if hookmetamethod and getnamecallmethod then
+    local old
+    old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "FireServer" or method == "InvokeServer") and self == MinigameAPI then
+            local a1, a2, a3 = ...
+            if typeof(a1) == "string" and a1:match("^ghost_clusters::") and a3 then
+                if a3.use_token then captured.use_token = a3.use_token end
+                if a3.ghost_id then captured.ghost_id = a3.ghost_id end
+                captured.cluster_id = a1
+            end
+        elseif method == "InvokeServer" and self == ToolAPI then
+            local a1 = ...
+            if typeof(a1) == "string" then
+                TOOL_ARGS[1] = a1
+            end
+        end
+        return old(self, ...)
+    end))
+    print("[BOSS] Remote spy active — click the minigame once manually if tokens aren't captured yet")
+end
+
+-- Fallback: try to grab ghost_id from the workspace boss name
+task.spawn(function()
+    local folder = workspace:FindFirstChild("GhostClustersVisuals")
+    if folder then
+        for _, c in ipairs(folder:GetChildren()) do
+            local id = c.Name:match("Ghost_Large_([%a%d%-]+)")
+            if id then
+                captured.ghost_id = captured.ghost_id or id
+                print("[BOSS] Found boss in workspace, ghost_id = " .. id)
+                break
+            end
+        end
+    end
+end)
+
+-- ====== HIT FUNCTION ======
+local hits = 0
+local function hitBoss()
+    -- Prefer live-captured values, fall back to your recorded ones
+    local cluster = captured.cluster_id or CLUSTER_ID
+    local token = captured.use_token or "77b9bf61-56dc-4cff-9e83-495aee042d30"
+    local ghost = captured.ghost_id or "4c027586-5806-4d41-bb99-4427095924e6"
+
+    local payload = {
+        ["use_token"] = token,
+        ["ghost_id"] = ghost,
+    }
+
+    -- Some games require start -> hit -> stop cycle per damage tick
+    MinigameAPI:FireServer(cluster, "start_contribute", payload)
+    MinigameAPI:FireServer(cluster, "stop_contribute", payload)
+
+    hits += 1
+    print("[BOSS] Hit #" .. hits .. " sent (ghost: " .. ghost .. ")")
+end
+
+-- ====== MAIN LOOP ======
+if AUTO_START then
+    pcall(function()
+        ToolAPI:InvokeServer(TOOL_ARGS[1], "START")
+        print("[BOSS] ToolAPI START sent")
+    end)
+end
+
+print("[BOSS] Auto-hitter running... Press once manually if nothing happens (to refresh tokens)")
+while task.wait(HIT_DELAY) do
+    pcall(hitBoss)
+end
