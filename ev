@@ -1,99 +1,42 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MinigameAPI = ReplicatedStorage.API:WaitForChild("MinigameAPI/MessageServer")
 
-local detected = {
-    ghost_id = nil,
-    source = nil,
-}
+-- ====== LIVE CAPTURE ======
+local captured = { cluster_id = nil, use_token = nil, ghost_id = nil }
 
-local function report(id, source)
-    if id and id ~= detected.ghost_id then
-        detected.ghost_id = id
-        detected.source = source
-        print("[GHOST ID] " .. id .. " (from " .. source .. ")")
-    end
-end
-
--- ====== SOURCE 1: workspace boss names (Ghost_Large_<uuid>) ======
-task.spawn(function()
-    local folder = workspace:FindFirstChild("GhostClustersVisuals") or workspace:WaitForChild("GhostClustersVisuals", 10)
-    if not folder then return end
-
-    local function scan(child)
-        local id = child.Name and child.Name:match("Ghost_Large_([%a%d%-]+)")
-        if id then report(id, "workspace: " .. child.Name) end
-    end
-
-    for _, c in ipairs(folder:GetChildren()) do scan(c) end
-    folder.ChildAdded:Connect(scan)
-end)
-
--- Also scan the whole workspace in case ghosts live elsewhere
-task.spawn(function()
-    while not detected.ghost_id do
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if d.Name and (d.Name:match("^Ghost_") or d.Name:match("^ghost")) then
-                local id = d.Name:match("([%a%d]+%-%d+%-%d+%-%d+%-%d+[%a%d]+)")
-                if id then report(id, "workspace-scan: " .. d:GetFullName()) end
-            end
-        end
-        task.wait(2)
-    end
-end)
-
--- ====== SOURCE 2: remote spy (most reliable — captures the real ID the game uses) ======
-if hookmetamethod and getnamecallmethod then
-    local old
-    old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if method == "FireServer" or method == "InvokeServer" then
-            local a1, a2, a3 = ...
-            -- Pattern 1: ghost_clusters::xxx with ghost_id in table arg
-            if typeof(a1) == "string" and a1:match("^ghost_clusters::") and typeof(a3) == "table" and a3.ghost_id then
-                report(a3.ghost_id, "remote: " .. a1 .. " -> " .. tostring(a2))
-            -- Pattern 2: ghost_id passed directly as any string arg
-            elseif typeof(a1) == "string" and a1:match("^[%a%d]+%-%d+%-%d+%-%d+%-%d+[%a%d]+$") then
-                report(a1, "remote direct-arg: " .. self.Name .. " " .. method)
-            end
-            if typeof(a3) == "string" and a3:match("^[%a%d]+%-%d+%-%d+%-%d+%-%d+[%a%d]+$") then
-                report(a3, "remote arg3: " .. self.Name .. " " .. method)
-            end
-        end
-        return old(self, ...)
-    end))
-    print("[GHOST ID] Remote spy active — interact with the minigame once")
-else
-    warn("[GHOST ID] hookmetamethod not available — using workspace scan only")
-end
-
--- ====== SOURCE 3: attributes / StringValues (some games store IDs on instances) ======
-task.spawn(function()
-    local function checkInst(inst)
-        for _, attr in ipairs({"ghost_id", "ghostId", "GhostId", "id", "Id"}) do
-            local v = inst:GetAttribute(attr)
-            if typeof(v) == "string" then report(v, "attribute " .. attr .. " on " .. inst:GetFullName()) end
-        end
-        if inst:IsA("StringValue") and inst.Value:match("^[%a%d]+%-%d+%-%d+%-%d+%-%d+[%a%d]+$") then
-            report(inst.Value, "StringValue: " .. inst:GetFullName())
+local old
+old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if method == "FireServer" or method == "InvokeServer" then
+        local a1, a2, a3 = ...
+        if self == MinigameAPI and typeof(a1) == "string" and a1:match("^ghost_clusters::") and typeof(a3) == "table" then
+            captured.cluster_id = a1
+            captured.use_token = a3.use_token or captured.use_token
+            captured.ghost_id = a3.ghost_id or captured.ghost_id
+            print("[CAPTURE] cluster=" .. a1 .. " ghost=" .. tostring(a3.ghost_id) .. " token=" .. tostring(a3.use_token))
         end
     end
-    for _, d in ipairs(game:GetDescendants()) do pcall(checkInst, d) end
-    workspace.DescendantAdded:Connect(function(d) pcall(checkInst, d) end)
-end)
+    return old(self, ...)
+end))
 
--- ====== Readable result ======
-task.spawn(function()
-    while true do
-        if detected.ghost_id then
-            print(string.format("[GHOST ID] Current: %s (source: %s)", detected.ghost_id, detected.source))
-        else
-            print("[GHOST ID] Not found yet — go near/spawn the boss or interact with the minigame")
-        end
-        task.wait(10)
-    end
-end)
+-- ====== AUTO-HIT LOOP ======
+local HIT_DELAY = 0.2
+print("[BOSS] Waiting for first manual minigame interaction to capture IDs...")
 
--- Expose for other scripts
-getgenv().GetGhostID = function()
-    return detected.ghost_id, detected.source
+repeat task.wait(0.1) until captured.cluster_id and captured.ghost_id
+print("[BOSS] Captured! Starting auto-hit...")
+
+while task.wait(HIT_DELAY) do
+    pcall(function()
+        MinigameAPI:FireServer(
+            captured.cluster_id,
+            "start_contribute",
+            { use_token = captured.use_token, ghost_id = captured.ghost_id }
+        )
+        MinigameAPI:FireServer(
+            captured.cluster_id,
+            "stop_contribute",
+            { use_token = captured.use_token, ghost_id = captured.ghost_id }
+        )
+    end)
 end
