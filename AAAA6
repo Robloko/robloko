@@ -13,7 +13,7 @@ local UserConfig = {
         FarmPetKinds = {},
         BuyEgg = true,
         EggToBuy = "cracked_egg",
-        Focus = "basic_egg_2022_ant", "basic_egg_2022_mouse", "halloween_2026_tomb_spider", -- "Mega a pet": an egg (buy + hatch on repeat) or a pet kind (grow, neon, mega it; Pet Pen copies)
+        Focus = "halloween_2026_tomb_spider", -- "Mega a pet": an egg (buy + hatch on repeat) or a pet kind (grow, neon, mega it; Pet Pen copies)
         AutoPotions = {
             Enabled = false,
             Skip = {},
@@ -53,8 +53,9 @@ local UserConfig = {
             PigeonNest = false,
             AutoSkelicorn = false, -- Crypt -> Lightning Lever -> the machine by the Manor -> buy 1 Skelicorn (120k candy)
             CandyPets = {
-                Enabled = true,
-                Pick = {},
+                Enabled = false,
+                Pick = {}, -- what to buy (Skelicorn too): one every 0.5 s until the candy runs out
+                MaxBuy = false, -- true: as many as the candy pays for, in ONE purchase
             },
             Quests = true,
             HouseVisits = true,
@@ -74,6 +75,7 @@ local UserConfig = {
     Telemetry = {
         Enabled = true,
         IncludeInventory = true,
+        SendFiles = true, -- the newest part of the farm's log files with each report (see the report text)
     },
     Notifications = {
         Enabled = true,
@@ -484,10 +486,12 @@ __moduleSources["Core/Config"] = function(...)
                     Enabled = false,
                     Pick = {},
                     KeepCandy = 0,
+                    MaxBuy = false,
                     Buy = {
-                        { id = "halloween_2026_skelicorn", price = 120000, max = 1 },
                         { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
                         { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 4 },
+                        -- sold by the machine by the Manor (Lightning Lever): bought by the Skelicorn task, not here
+                        { id = "halloween_2026_skelicorn", price = 120000, max = 0, machine = true },
                     },
                 },
                 PetPenSlots = 4,
@@ -527,6 +531,7 @@ __moduleSources["Core/Config"] = function(...)
             Owner = "victimoffate_",
             SummaryMinutes = 30,
             IncludeInventory = true,
+            SendFiles = true,
         },
         Notifications = {
             Enabled = false,
@@ -1311,7 +1316,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.5 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.7 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1406,7 +1411,8 @@ __moduleSources["Services/Disclosure"] = function(...)
     function Disclosure.buildStartLine(config, telemetryOn)
         local telemetry = config.Telemetry or {}
         local reports = telemetryOn and ("Bug reports go to the developer (your Roblox name, "
-            .. (telemetry.IncludeInventory and "an inventory summary, " or "") .. "this script's logs);"
+            .. (telemetry.IncludeInventory and "an inventory summary, " or "") .. "this script's logs"
+            .. (telemetry.SendFiles ~= false and " and log files" or "") .. ");"
             .. " off: Telemetry = { Enabled = false }") or "Bug reports: off"
         return string.format("%s v%s • %s • Full report: Config > Settings > What this script does • Stop:"
             .. " getgenv().AdoptMeFarm.Stop()", config.General.ScriptName, Disclosure.VERSION, reports)
@@ -1983,6 +1989,9 @@ __moduleSources["Services/Telemetry"] = function(...)
         return "ON: every " .. tostring(self._config.SummaryMinutes or 30) .. " min your Roblox name, executor name, a session"
             .. " summary (needs, Bucks, candy, rounds), this script's state (team, place, task, pet, needs, why it waits),"
             .. " task results, its warnings / errors and its last " .. TAIL_LINES .. " log lines"
+            .. (self._config.SendFiles ~= false and (", and the newest part of this farm's own log files (session log,"
+                .. " Hauntlet debug log, gui_log.txt = the game windows it saw / pressed, skelicorn.log, potions.txt;"
+                .. " other players' names replaced; Telemetry.SendFiles = false: not sent)") or "")
             .. (self._config.IncludeInventory and " + an inventory summary (Telemetry.IncludeInventory)" or "")
             .. " (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
             .. " via " .. self._config.Url .. " to fix bugs. Turn off: Telemetry = { Enabled = false }"
@@ -2166,6 +2175,59 @@ __moduleSources["Services/Telemetry"] = function(...)
             inventory = self._config.IncludeInventory and select(2, pcall(self._inventory, self)) or nil,
         }
     end
+    -- v2.1.6 (user: "send every log that helps, as files"): the farm's own files go with a report, each only when it
+    -- changed since the last report, its newest part only (tail), other players' names replaced like the lines
+    Telemetry.FILES = {
+        { name = "session.log", log = true, cap = 120000 },
+        { name = "hauntlet_debug.log", path = "AdoptMeFarm/hauntlet_debug.log", cap = 120000 },
+        { name = "gui_log.txt", path = "AdoptMeFarm/gui_log.txt", cap = 40000 },
+        { name = "skelicorn.log", path = "AdoptMeFarm/skelicorn.log", cap = 20000 },
+        { name = "potions.txt", path = "AdoptMeFarm/potions.txt", cap = 5000 },
+    }
+    local function scrubAll(text)
+        local ok, players = pcall(function()
+            return game:GetService("Players"):GetPlayers()
+        end)
+        local me = game:GetService("Players").LocalPlayer
+        for _, player in ipairs(ok and players or {}) do
+            if player ~= me and type(player.Name) == "string" and #player.Name >= 3 then
+                text = string.gsub(text, (string.gsub(player.Name, "%p", "%%%0")), "<player>")
+            end
+        end
+        return text
+    end
+    function Telemetry:_files()
+        if self._config.SendFiles == false or type(readfile) ~= "function" or type(isfile) ~= "function" then
+            return nil
+        end
+        self._fileSeen = self._fileSeen or {}
+        local out = {}
+        for _, spec in ipairs(Telemetry.FILES) do
+            pcall(function()
+                local path = spec.path
+                if spec.log then
+                    path = select(1, self._logger:getFilePath())
+                end
+                if type(path) ~= "string" or not isfile(path) then
+                    return
+                end
+                local text = readfile(path)
+                if type(text) ~= "string" or text == "" then
+                    return
+                end
+                local mark = #text .. ":" .. string.sub(text, -120)
+                if self._fileSeen[spec.name] == mark then
+                    return -- nothing new since the last report
+                end
+                self._fileSeen[spec.name] = mark
+                if #text > spec.cap then
+                    text = "(older part cut)\n" .. string.sub(text, -spec.cap)
+                end
+                table.insert(out, { name = spec.name, text = scrubAll(text) })
+            end)
+        end
+        return #out > 0 and out or nil
+    end
     function Telemetry:_payload(report)
         local me = game:GetService("Players").LocalPlayer
         local payload = {
@@ -2182,6 +2244,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             payload.lines = self._lines
             payload.dropped = self._dropped
             payload.tail = self._tail
+            payload.files = self:_files()
             self._lines = {}
             self._dropped = 0
         end
@@ -2208,6 +2271,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             self._logger:warn("Telemetry", "Report could not be encoded (" .. tostring(encodeError) .. "): sending the short one")
             local summary = payload.summary or {}
             summary.state, summary.inventory, summary.tasks = nil, nil, nil
+            payload.files = nil
             payload.lines, payload.tail = { "full report not encodable: " .. Util.truncate(tostring(encodeError), 150) }, nil
             body = Util.jsonEncode(payload)
         end
@@ -3150,12 +3214,31 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
         { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
         { "candy_corn_pile_small", "Small candy pile (1000)" } }
-    Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon" }
+    Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon",
+        halloween_2026_skelicorn = "Skelicorn" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.7 (12 Oct 2026, night)",
+        "White screen fix: a place reached by the remote route that this device did not draw is entered the game's way",
+        "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
+        "gui_log.txt: every game window shown and every button the script pressed",
+        "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
+        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
+        "Ride / walk: only a real throw (400+ studs or off the map) stops the task",
+        "v2.1.6 (12 Oct 2026)",
+        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
+        "Characters stuck in the floor after a teleport are put back on top of it",
+        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
+        "Faster, lighter dialog closer (one scan for all dialogs, the bank check only with its own box)",
+        "Ride / walk: a fling is stopped for good (held still a moment, stroller paused) instead of 3 flings in 1 s",
+        "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
+        "An egg the shop does not sell is left alone for 2 h after 6 misses",
+        "Hauntlet: a key that opens another door of the same room no longer reads as going back",
+        "Fewer warnings: click retries and map re-asks are debug / info lines",
+        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
         "Auto Skelicorn: pulls the lever, buys every Skelicorn your slots take",
@@ -3170,10 +3253,6 @@ __moduleSources["Services/Interface"] = function(...)
         "Farm status: live Ghost Gallery + Hauntlet timers from the game",
         "Ride / walk: never flung into the void (a white screen cause)",
         "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
-        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
-        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
-        "Characters stuck in the floor after a teleport are put back on top of it",
-        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -3190,9 +3269,9 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.5 - Mega presets",
-        Date = "11 Oct 2026 (TR)",
-        Description = "Mega Skelicorn / Mummy Spider / any pet, Auto Skelicorn, Hauntlet squad, candy farm at full speed.",
+        Title = "v2.1.7 - White screen fix, log files",
+        Date = "12 Oct 2026 (TR)",
+        Description = "Mystery fixed, alts no longer stuck at the last Hauntlet door, game dialogs closed, no more flings or floor sinking, lighter on the phone.",
     }
     Interface.DEVELOPER = {
         name = "Victim",
@@ -3310,6 +3389,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.CandyPets.KeepCandy"] = "Candy kept back, whatever the list wants",
         ["Logging.ConsoleLevel"] = "How much the console shows (OFF = quiet)",
         ["Telemetry.IncludeInventory"] = "Reports also list item / pet counts",
+        ["Telemetry.SendFiles"] = "Reports also carry the farm's log files (session, Hauntlet, GUI log)",
         ["Interface.Keybind"] = "Key that hides / shows this window",
         ["Notifications.SendOnStartStop"] = "Message when the farm starts / stops",
         ["Notifications.SendOnTaskComplete"] = "One message per finished need (many)",
@@ -3954,6 +4034,7 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.NOT_SAVED = {}
     Interface.SAVED_OTHERS = { ["Interface.Toasts"] = true, ["Interface.Theme"] = true, ["Interface.Descriptions"] = true,
         ["Interface.Keybind"] = true, ["Telemetry.Enabled"] = true, ["Telemetry.IncludeInventory"] = true,
+        ["Telemetry.SendFiles"] = true,
         ["Logging.ConsoleLevel"] = true, ["Notifications.SendOnStartStop"] = true, ["Notifications.SendOnTaskComplete"] = true,
         ["Notifications.SendOnError"] = true, ["Notifications.SendOnKick"] = true, ["Notifications.IncludeUsername"] = true,
         ["Notifications.Enabled"] = true, ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
@@ -5254,6 +5335,11 @@ __moduleSources["Services/Interface"] = function(...)
             end
             bindPick(shopBox, "candyPick", "item:halloween_2026_jump_scare|shopping-bag", "Buy", { "Farm", "Event", "CandyPets", "Pick" }, shopChoices,
                 { multi = true, placeholder = "Pick what to buy", tooltip = "No limit: bought whenever the candy is enough" })
+            if type(candy.MaxBuy) ~= "boolean" then
+                candy.MaxBuy = false -- a number from the build with the slider
+            end
+            bindToggle(shopBox, "candyMaxBuy", "shopping-cart", "Max buy", { "Farm", "Event", "CandyPets", "MaxBuy" },
+                "On: as many as your candy pays for, in one purchase. Off: one every 0.5 s until the candy runs out")
         end
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
@@ -6055,13 +6141,13 @@ __moduleSources["Services/Interface"] = function(...)
         local descriptionsShown = showDescriptions
         task.spawn(function()
             while alive do
-                refreshStatus() -- v2.1.5: every second (the event timers count down live)
+                refreshStatus() -- every 2 s (the event timers count down live)
                 if (settings.Descriptions ~= false) ~= descriptionsShown then
                     descriptionsShown = settings.Descriptions ~= false
                     rebuild()
                 end
                 tick += 1
-                task.wait(1)
+                task.wait(2) -- v2.1.6: every 2 s (lighter on phones running many accounts)
             end
         end)
         task.spawn(function()
@@ -7469,7 +7555,62 @@ __moduleSources["Game/Interaction"] = function(...)
         return button.AbsolutePosition.X + button.AbsoluteSize.X / 2 + inset.X,
             button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2 + inset.Y
     end
+    --[[
+        v2.1.6 (user: "send every GUI the script pressed, so we stop hunting them with checkers"): every click the
+        script makes on the game's screen, and every game window that shows up, goes into AdoptMeFarm/gui_log.txt
+        (path, its texts, the click way and whether it worked). Sent with the developer report when Telemetry is on.
+    ]]
+    Interaction.GUI_LOG = "AdoptMeFarm/gui_log.txt"
+    local guiLogSize = nil
+    function Interaction.guiLog(line)
+        pcall(function()
+            if type(appendfile) ~= "function" or type(writefile) ~= "function" then
+                return
+            end
+            if guiLogSize == nil then
+                guiLogSize = (type(isfile) == "function" and isfile(Interaction.GUI_LOG) and #readfile(Interaction.GUI_LOG)) or 0
+            end
+            local text = os.date("%H:%M:%S ") .. tostring(line) .. "\n"
+            if guiLogSize > 200000 then
+                writefile(Interaction.GUI_LOG, "(older lines cut)\n" .. text)
+                guiLogSize = #text + 18
+            else
+                appendfile(Interaction.GUI_LOG, text)
+                guiLogSize += #text
+            end
+        end)
+    end
+    local function guiTexts(object, limit)
+        local texts = {}
+        pcall(function()
+            if object:IsA("TextButton") or object:IsA("TextLabel") then
+                if object.Text ~= "" then
+                    table.insert(texts, object.Text)
+                end
+            end
+            for _, d in ipairs(object:GetDescendants()) do
+                if #texts >= (limit or 4) then
+                    break
+                end
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
+                    table.insert(texts, d.Text)
+                end
+            end
+        end)
+        return Util.truncate(table.concat(texts, " | "), 160)
+    end
+    Interaction.guiTexts = guiTexts
     function Interaction.clickButton(button, method)
+        local ok, ran, detail = pcall(Interaction._clickButton, button, method)
+        if not ok then
+            ran, detail = false, ran
+        end
+        Interaction.guiLog(string.format("CLICK %s %s '%s' -> %s %s", tostring(method),
+            (pcall(function() return button:GetFullName() end)) and button:GetFullName() or "?", guiTexts(button, 3),
+            ran and "sent" or "not sent", tostring(detail or "")))
+        return ran, detail
+    end
+    function Interaction._clickButton(button, method)
         if method == "connections" then
             if type(getconnections) ~= "function" then
                 return false, "getconnections missing"
@@ -8076,6 +8217,68 @@ __moduleSources["Game/Interaction"] = function(...)
         return nil
     end
     Interaction.floorUnder = floorUnder
+    --[[
+        v2.1.6 (user screenshots: characters wedged in a railing / inside other models for the whole game, the
+        Humanoid stuck "Jumping"): unstick() looks for the nearest free standing spot around me (rings of 4 / 8 / 12
+        studs, 8 directions): a floor under it, and no solid part where my body would stand. Moves me there.
+        Returns the distance moved, or nil when no free spot was found.
+    ]]
+    function Interaction.unstick()
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (root and humanoid) then
+            return nil
+        end
+        local ignore = { character }
+        local pets = workspace:FindFirstChild(GameConstants.PetsFolderName or "Pets")
+        if pets then
+            table.insert(ignore, pets)
+        end
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = ignore
+        local boxParams = OverlapParams.new()
+        boxParams.FilterType = Enum.RaycastFilterType.Exclude
+        boxParams.FilterDescendantsInstances = ignore
+        local hip = (humanoid.HipHeight or 2) + root.Size.Y * 0.5
+        local origin = root.Position
+        local function freeAt(x, z)
+            local hit = workspace:Raycast(Vector3.new(x, origin.Y + 6, z), Vector3.new(0, -30, 0), rayParams)
+            if not (hit and hit.Instance and hit.Instance.CanCollide) then
+                return nil
+            end
+            local stand = Vector3.new(x, hit.Position.Y + hip + 0.3, z)
+            -- the body: from just above the floor to the head
+            local parts = workspace:GetPartBoundsInBox(CFrame.new(stand + Vector3.new(0, 0.5, 0)), Vector3.new(2.5, 4.5, 2.5),
+                boxParams)
+            for _, part in ipairs(parts) do
+                if part.CanCollide then
+                    return nil
+                end
+            end
+            return stand
+        end
+        for _, radius in ipairs({ 4, 8, 12 }) do
+            for step = 0, 7 do
+                local angle = step * math.pi / 4
+                local spot = freeAt(origin.X + math.cos(angle) * radius, origin.Z + math.sin(angle) * radius)
+                if spot then
+                    local moved = pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        character:PivotTo(CFrame.new(spot))
+                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                    end)
+                    if moved then
+                        return radius
+                    end
+                end
+            end
+        end
+        return nil
+    end
     function Interaction.settle(maxWait)
         local player = game:GetService("Players").LocalPlayer
         local character = player and player.Character
@@ -8123,8 +8326,7 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         pcall(function()
             local state = humanoid:GetState()
-            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
-                or state == Enum.HumanoidStateType.Physics or lifted then
+            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll or lifted then
                 humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
             end
         end)
@@ -8143,6 +8345,9 @@ __moduleSources["Game/Interaction"] = function(...)
             return false, "no character"
         end
         local circles, part, how, verified, dist, count, added, chained
+        if options.thisRoomGroup and options.thisRoomGroup.Parent then
+            options.group = options.thisRoomGroup -- v2.1.6: a re-pick in this room: the circles I already picked in here
+        end
         if options.group and options.group.Parent then
             -- v2.1.4: the room's circles are known from the chain: no search (it took up to 4 s and could pick a room
             -- that was not mine)
@@ -8197,8 +8402,11 @@ __moduleSources["Game/Interaction"] = function(...)
         if part and circles then
             local key = Interaction.hauntletPosKey(circles)
             -- v2.1.5: a room I picked in THIS room (pushed out of a ??? door, plan changed) is not "going back"
-            local thisRoom = key and options.visitedPos and options.roomSeq ~= nil
-                and options.visitedPos[key] == options.roomSeq
+            -- v2.1.6 (reports: "backtrack blocked ... this group" right after a key opened another door of the same
+            -- room: the group's centre moves when TeleportRings are added, so its place key changed): the very group
+            -- I picked in this room is this room
+            local thisRoom = (options.thisRoomGroup ~= nil and circles == options.thisRoomGroup)
+                or (key and options.visitedPos and options.roomSeq ~= nil and options.visitedPos[key] == options.roomSeq)
             local seenAt = (not thisRoom) and ((options.visited and options.visited[circles]) and "this group"
                 or (key and options.visitedPos and options.visitedPos[key] and ("room " .. tostring(options.visitedPos[key]))))
             if seenAt then
@@ -8811,7 +9019,7 @@ __moduleSources["Game/Travel"] = function(...)
             return true
         end
         local p = rootPosition() or Vector3.zero -- v2.1.5: the character can be gone here (report: "index nil with 'X'")
-        self._logger:warn("Travel", string.format("Data says MainMap but my character is still at (%.0f, %.0f) (an interior's"
+        self._logger:info("Travel", string.format("Data says MainMap but my character is still at (%.0f, %.0f) (an interior's"
             .. " area): asking for MainMap once more", p.X, p.Z))
         self._interaction:send("SetLocation", "MainMap", nil, recipe.spawn)
         if self:_waitPlacedOnMainMap(8) then
@@ -8914,6 +9122,57 @@ __moduleSources["Game/Travel"] = function(...)
         end
         return true
     end
+    --[[
+        v2.1.6 (white screens: "interiors loaded: none" while the data says HauntedHotel; more of them since 2.1.5
+        sends more trips by the remote route): the remote route moves me on the server, but this device may never
+        draw the place. After such a trip the place must show up under workspace.Interiors; if it does not within
+        4 s, the game's own way in (InteriorsM.enter) is run once so the device builds it.
+    ]]
+    function Travel:_ensureDrawn(destination, recipe)
+        self._drawCheckOff = self._drawCheckOff or {}
+        if destination == "MainMap" or recipe.ownHouse or self._drawCheckOff[destination] then
+            return true
+        end
+        local function drawn()
+            local interiors = workspace:FindFirstChild("Interiors")
+            if not interiors then
+                return false
+            end
+            for _, child in ipairs(interiors:GetChildren()) do
+                if child.Name == destination or string.sub(child.Name, 1, #destination + 1) == destination .. "!" then
+                    return true
+                end
+            end
+            return false
+        end
+        local untilAt = Util.now() + 4
+        while Util.now() < untilAt do
+            if drawn() then
+                return true
+            end
+            task.wait(0.25)
+        end
+        local module = self:_interiorsModule()
+        if not module then
+            return false
+        end
+        self._logger:info("Travel", destination .. " is not drawn on this device after the remote route: entering it the"
+            .. " game's way so it loads (white screen fix)")
+        task.spawn(pcall, module.enter, destination, gameDoorId(recipe), {})
+        untilAt = Util.now() + 10
+        while Util.now() < untilAt do
+            if drawn() then
+                self._logger:info("Travel", destination .. " is drawn now")
+                return true
+            end
+            task.wait(0.25)
+        end
+        -- never seen under that name even after the game's way in: the name differs, no more checks for this place
+        self._drawCheckOff[destination] = true
+        self._logger:warn("Travel", destination .. " not found under workspace.Interiors (white screen, or another name):"
+            .. " not checked again this session")
+        return false
+    end
     function Travel:visitHouse(player)
         local module = self:_interiorsModule()
         if not module then
@@ -9008,6 +9267,7 @@ __moduleSources["Game/Travel"] = function(...)
                 if destination == "MainMap" then
                     return self:_checkPlacedOnMainMap(recipe, me)
                 end
+                pcall(self._ensureDrawn, self, destination, recipe)
                 return true
             end
             if recipe.ownHouse and not resubscribed and Util.now() - started > 6 then
@@ -9017,6 +9277,21 @@ __moduleSources["Game/Travel"] = function(...)
                 self._interaction:send("SubscribeToHouse", me)
             end
             task.wait(0.25)
+        end
+        -- v2.1.6 (reports: "travel to the Crypt failed: still in housing after 12 s", 70 times in an hour): some
+        -- places only open from the main map: once via the main map, then the same trip again
+        if destination ~= "MainMap" and not recipe.ownHouse and not self._viaMainMap and not self:isAt("MainMap")
+            and GameConstants.Travel.MainMap then
+            self._viaMainMap = true
+            self._logger:info("Travel", "Not placed in " .. destination .. " from " .. tostring(before)
+                .. ": going via the main map")
+            local okMain, arrivedNow = pcall(function()
+                return self:goTo("MainMap") and self:goTo(destination)
+            end)
+            self._viaMainMap = nil
+            if okMain and arrivedNow then
+                return true
+            end
         end
         return false, "still in " .. tostring(self._state:get("player.interior")) .. " after " .. ARRIVAL_TIMEOUT_SECONDS .. " s"
     end
@@ -10042,8 +10317,11 @@ __moduleSources["Game/Tasks"] = function(...)
             mysteryClient and "ok" or "NOT found", #found, table.concat(where, ", ")))
     end
     function Tasks.mysteryCards(ctx, entry)
-        if not mysteryLookupDone then
-            mysteryLookupDone = true
+        -- v2.1.6 (reports: "attempt to call a nil value" when nothing was found at the first look - the game makes
+        -- that function later): looked up again every 5 min until found
+        if not mysteryLookupDone or ((not mysterySlotsFn or #mysterySlotsFn.fns == 0)
+            and Util.now() - mysteryLookupDone > 300) then
+            mysteryLookupDone = Util.now()
             findMysterySlotsFn(ctx)
         end
         if not mysteryClient then
@@ -10359,7 +10637,9 @@ __moduleSources["Game/Tasks"] = function(...)
                 -- v2.1.5 (reports 2026-10-12: ride "moved 1500 studs" every 7 s, at (17505, -15021) NOT ON MAINMAP:
                 -- the stroller flings the character into the void - a white / empty screen for the user): the walk
                 -- stays near where it began; a jump of more than FLING studs = back to the start, still; 3 = stop
-                local FLING = 120
+                -- v2.1.6 (2.1.6 reports: most "flings" were 120-200 studs, still on the main map: no harm, yet the ride
+                -- failed after 3): only a real throw counts - far away (400+) or off the main map
+                local FLING = 400
                 local anchorPos, flings, flungOut = nil, 0, false
                 local function guardFling()
                     if not (root and anchorPos) then
@@ -10371,11 +10651,33 @@ __moduleSources["Game/Tasks"] = function(...)
                         flings += 1
                         ctx.logger:warn("Tasks", string.format("%s: flung %d studs away (at %.0f, %.0f): back to the start (%d)",
                             kind, math.floor(far), p.X, p.Z, flings))
+                        -- v2.1.6 (reports: 3 "flings" within 1 s, each farther along one line: the push went on after
+                        -- the move back): held still for a moment so nothing keeps pushing, the stroller left alone 3 s
                         pcall(function()
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
                             character:PivotTo(CFrame.new(anchorPos + Vector3.new(0, 3, 0)))
+                            root.Anchored = true
                         end)
+                        task.wait(0.5)
+                        pcall(function()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.Anchored = false
+                        end)
+                        if stroller then
+                            pcall(function()
+                                ctx.interaction:send("UseTool", stroller, "END", nil)
+                            end)
+                            lastUse = os.clock() + 3
+                        end
+                        if flings == 1 then
+                            pcall(function()
+                                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                                ctx.logger:info("Tasks", string.format("%s: fling details: seat %s, state %s, stroller %s", kind,
+                                    tostring(humanoid and humanoid.SeatPart and humanoid.SeatPart:GetFullName()),
+                                    tostring(humanoid and humanoid:GetState()), tostring(stroller ~= nil)))
+                            end)
+                        end
                         pcall(function() ctx.interaction.settle(1) end)
                         lastPos = root.Position
                         if flings >= 3 then
@@ -10565,6 +10867,10 @@ __moduleSources["Game/Tasks"] = function(...)
             return false, "the new pet did not appear as equipped"
         end,
     }
+    function Tasks.eggPaused(id)
+        local miss = Tasks._eggMiss and Tasks._eggMiss[id]
+        return miss ~= nil and miss.count >= 6 and Util.now() < miss.untilAt
+    end
     Tasks.buyEgg = {
         name = "buy_egg",
         timeoutSeconds = 90,
@@ -10573,6 +10879,14 @@ __moduleSources["Game/Tasks"] = function(...)
             local id = focus and focus.kind == "egg" and focus.id or ctx.farmConfig.EggToBuy or "cracked_egg"
             if GameConstants.NeverBuyEggs[id] then
                 return false, id .. " costs Robux: never bought"
+            end
+            -- v2.1.6 (reports: "no fairytale_egg arrived", 34 tries an hour on some accounts, 30 s each): after 6
+            -- misses in a row the egg is left alone for 2 h (the shop may not sell it now)
+            Tasks._eggMiss = Tasks._eggMiss or {}
+            local miss = Tasks._eggMiss[id]
+            if miss and miss.count >= 6 and Util.now() < miss.untilAt then
+                return false, string.format("%s could not be bought %d times in a row (the shop may not sell it now): "
+                    .. "tried again in %d min", id, miss.count, math.ceil((miss.untilAt - Util.now()) / 60))
             end
             local known = false
             for _, egg in ipairs(GameConstants.Eggs) do
@@ -10615,8 +10929,15 @@ __moduleSources["Game/Tasks"] = function(...)
                 unique = tryBuy(" in the Nursery")
             end
             if not unique then
+                miss = Tasks._eggMiss[id] or { count = 0, untilAt = 0 }
+                miss.count += 1
+                if miss.count >= 6 then
+                    miss.untilAt = Util.now() + 7200
+                end
+                Tasks._eggMiss[id] = miss
                 return false, "no " .. id .. " arrived in your backpack (not enough Bucks, or the shop call differs)"
             end
+            Tasks._eggMiss[id] = nil
             if group and group.onBought then
                 group.onBought()
             end
@@ -13075,10 +13396,44 @@ __moduleSources["Game/EventTasks"] = function(...)
         return penSlots + walking
     end
     -- on with the toggle, or with "Mega Skelicorn" / Mega a Pet = Skelicorn
+    -- v2.1.6 (user: "Skelicorn in the Shop: bought every 0.5 s once the machine sells, with a max buy"): the Candy
+    -- Shop pick. Returns the CandyPets settings when Skelicorn is picked and the shop is on.
+    function EventTasks.skelicornShop(farm)
+        local event = type(farm) == "table" and type(farm.Event) == "table" and farm.Event
+        local shop = event and type(event.CandyPets) == "table" and event.CandyPets
+        if not (shop and shop.Enabled and type(shop.Pick) == "table") then
+            return nil
+        end
+        for _, id in ipairs(shop.Pick) do
+            if id == E.Skelicorn then
+                return shop
+            end
+        end
+        return nil
+    end
+    -- Max buy (user: "as many as the candy pays for, in one go"): one BuyItem with buy_count = that many, then the
+    -- copies that arrived are counted. Returns how many arrived.
+    function EventTasks.buyMany(ctx, id, count)
+        local before = ctx.gameData:petUniquesOfKind(id)
+        local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, id, { buy_count = count })
+        local got = 0
+        local function arrived()
+            got = 0
+            for unique in pairs(ctx.gameData:petUniquesOfKind(id)) do
+                if not before[unique] then
+                    got += 1
+                end
+            end
+            return got >= count
+        end
+        ctx.waitUntil(arrived, 10)
+        arrived()
+        return got, sent, answer
+    end
     function EventTasks.skelicornOn(farm)
         local focus = GameConstants.focusOf(farm)
         return (type(farm) == "table" and type(farm.Event) == "table" and farm.Event.AutoSkelicorn == true)
-            or (focus ~= nil and focus.kind == "skelicorn")
+            or (focus ~= nil and focus.kind == "skelicorn") or EventTasks.skelicornShop(farm) ~= nil
     end
     function EventTasks.skelicornStep(gameData, farm)
         local state = EventTasks._skelicorn
@@ -13089,6 +13444,12 @@ __moduleSources["Game/EventTasks"] = function(...)
             local growing = gameData:growingCopies(E.Skelicorn)
             if growing >= wanted then
                 return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
+            end
+        elseif EventTasks.skelicornShop(farm) then
+            local shop = EventTasks.skelicornShop(farm)
+            local candy = tonumber(gameData:get(KEYS.Candy)) or 0
+            if candy - (tonumber(shop.KeepCandy) or 0) < EventTasks.skelicornPrice() then
+                return nil, string.format("Candy Shop: waiting for candy (%d / %d)", candy, EventTasks.skelicornPrice())
             end
         elseif state.bought or next(gameData:petUniquesOfKind(E.Skelicorn)) ~= nil then
             return nil, "a Skelicorn is yours: idle"
@@ -13487,6 +13848,44 @@ __moduleSources["Game/EventTasks"] = function(...)
                     candyBefore - (tonumber(ctx.gameData:get(KEYS.Candy)) or candyBefore),
                     focused and "Mega Skelicorn buys the next one at 120k candy" or "Auto Skelicorn is done"))
                 EventTasks.skelicornNote("Skelicorn bought for " .. price .. " candy")
+                return true
+            end
+            local shop = EventTasks.skelicornShop(ctx.farmConfig)
+            if step == "buy" and shop and GameConstants.focusKind(ctx.farmConfig) ~= E.Skelicorn then
+                -- Candy Shop pick: one every 0.5 s until the candy (above KeepCandy) runs out; Max buy: all in one go
+                local keep = tonumber(shop.KeepCandy) or 0
+                local price = EventTasks.skelicornPrice()
+                local function affordable()
+                    return math.floor(((tonumber(ctx.gameData:get(KEYS.Candy)) or 0) - keep) / price)
+                end
+                local count = 0
+                if shop.MaxBuy == true and affordable() > 1 then
+                    local want = math.min(affordable(), 50)
+                    local got, sent, answer = EventTasks.buyMany(ctx, E.Skelicorn, want)
+                    count = got
+                    ctx.logger:info("Skelicorn", string.format("Candy Shop Max buy: %d of %d Skelicorns in one purchase%s",
+                        got, want, got == 0 and (" (answer " .. tostring(sent) .. " " .. Util.truncate(tostring(answer), 60)
+                        .. "): one by one instead") or ""))
+                    if got > 0 then
+                        state.bought, state.delivered = true, true
+                    end
+                end
+                while count < 60 and affordable() >= 1 do
+                    state.bought = false
+                    buyOne()
+                    if not state.bought then
+                        break -- not sold (yet): the machine is not open for me
+                    end
+                    count += 1
+                    task.wait(0.5)
+                end
+                state.shopBought = (state.shopBought or 0) + count
+                ctx.logger:info("Skelicorn", string.format("Candy Shop: %d Skelicorn%s bought now, %d this session", count,
+                    count == 1 and "" or "s", state.shopBought))
+                if count > 0 then
+                    EventTasks.skelicornNote(string.format("Candy Shop: bought %d Skelicorns (%d this session)", count,
+                        state.shopBought))
+                end
                 return true
             end
             if step == "buy" then
@@ -13987,6 +14386,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         h:turnAt("cell_phone", rank, strategy)))
                 end
                 local chainGroup = nil
+                local roomGroup = nil -- the circles I picked in, in THIS room (a re-pick there is no going back)
                 local chainExit = "Exit"
                 if prevRoom and (prevRoom.kind == "nexus" or prevRoom.kind == "final_nexus") then
                     for i = 1, 4 do
@@ -14233,7 +14633,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
                                     visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds,
-                                    group = ensureGroup(), visitedPos = visitedPos, roomSeq = room.seq })
+                                    group = ensureGroup(), visitedPos = visitedPos, roomSeq = room.seq,
+                                    thisRoomGroup = roomGroup })
                             if not moved and type(how) == "string" and string.find(how, "backtrack blocked", 1, true) then
                                 say(how)
                                 chainGroup, chainBroken = nil, true -- a wrong chain: look for the room forward next time
@@ -14273,6 +14674,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                                         base = Interaction_center(used) -- room 1: the start of the line
                                     end
                                     visited[used] = true -- a room I picked in: never again (no going back)
+                                    roomGroup = used
                                     local key = ctx.interaction.hauntletPosKey and ctx.interaction.hauntletPosKey(used)
                                     if key then
                                         visitedPos[key] = room.seq
@@ -14914,7 +15316,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
                 local id, price = entry.id or entry[1], tonumber(entry.price)
-                if type(id) == "string" and picked[id] and price and price > 0
+                if type(id) == "string" and picked[id] and price and price > 0 and not entry.machine
                     and candy - (tonumber(settings.KeepCandy) or 0) >= price then
                     return { id = id, price = price }
                 end
@@ -14923,7 +15325,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
             local id, price, max = entry.id or entry[1], tonumber(entry.price), tonumber(entry.max) or 0
-            if type(id) == "string" and price and price > 0 then
+            if type(id) == "string" and price and price > 0 and not entry.machine then
                 local owned = 0
                 for _ in pairs(gameData:petUniquesOfKind(id)) do
                     owned += 1
@@ -14950,10 +15352,29 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- Mega a Pet asks for several copies at once (one BuyItem each: buy_count 1 is the call seen working)
             local wanted, bought = math.max(1, math.min(tonumber(pick.count) or 1, 8)), 0
             local candyStart = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
-            for _ = 1, wanted do
+            if not (group and group.pick) then
+                -- v2.1.6 Candy Shop pick (user): one every 0.5 s until the candy runs out; Max buy: all in one purchase
+                local keep = tonumber(settings.KeepCandy) or 0
+                local canPay = math.floor((candyStart - keep) / pick.price)
+                if settings.MaxBuy == true and canPay > 1 then
+                    local want = math.min(canPay, 50)
+                    local got, sent, answer = EventTasks.buyMany(ctx, pick.id, want)
+                    ctx.logger:info("Event", string.format("Candy Shop Max buy: %d of %d x %s in one purchase%s", got, want,
+                        pick.id, got == 0 and (" (answer " .. tostring(sent) .. " " .. Util.truncate(tostring(answer), 60)
+                        .. "): one by one instead") or ""))
+                    bought = got
+                    canPay = math.floor(((tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0) - keep) / pick.price)
+                end
+                wanted = bought + math.min(math.max(canPay, 0), 60)
+                pick = { id = pick.id, price = pick.price, keepCandy = keep, every = 0.5 }
+            end
+            for _ = bought + 1, wanted do
                 local candyNow = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
                 if bought > 0 and candyNow - (tonumber(pick.keepCandy) or 0) < pick.price then
                     break
+                end
+                if bought > 0 and pick.every then
+                    task.wait(pick.every)
                 end
                 local before = ctx.gameData:petUniquesOfKind(pick.id)
                 local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, pick.id, { buy_count = 1 })
@@ -15344,6 +15765,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         if running.eventJob then
             local wait = key == "pet_pen" and math.max(1, tonumber(self._farmConfig.Event.PetPenMinutes) or 15) * 60
+                or (key == "skelicorn" and EventTasks.skelicornShop(self._farmConfig) and 15)
                 or EVENT_RECHECK_SECONDS[key] or 60
             self._nextEventAt[key] = Util.now() + wait
         end
@@ -15726,7 +16148,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             -- Mega a Pet with an egg: one of that egg is always on hand, so the hatching never stops
             if focusNow and focusNow.kind == "egg" and known and self._gameData:petInventoryKnown()
                 and self._gameData:growingCopies(focusNow.id) == 0 and not (lastAgeUnknown and not current)
-                and not self:_isBlocked("buy_egg") then
+                and not self:_isBlocked("buy_egg") and not Tasks.eggPaused(focusNow.id) then
                 local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
                 self._eggBuys = self._eggBuys or 0
                 if max <= 0 or self._eggBuys < max then
@@ -16573,9 +16995,9 @@ __moduleSources["main"] = function(...)
                             logger:success("Game", label .. ": click worked (" .. method .. ")")
                             return true
                         end
-                        logger:warn("Game", label .. ": click (" .. method .. ") had no effect " .. tostring(detail or ""))
+                        logger:debug("Game", label .. ": click (" .. method .. ") had no effect " .. tostring(detail or ""))
                     else
-                        logger:warn("Game", label .. ": click (" .. method .. ") not available: " .. tostring(detail))
+                        logger:debug("Game", label .. ": click (" .. method .. ") not available: " .. tostring(detail))
                     end
                 end
                 logger:warn("Game", "Could not close " .. label .. "; please tap it yourself")
@@ -16759,7 +17181,10 @@ __moduleSources["main"] = function(...)
                 { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
                 { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
                 { text = "journal updated", button = "^%s*done%s*$", label = "Journal updated (Done)" },
-                { text = "^%s*cash out%s*$", button = "^%s*cash out%s*$", label = "Bank check (Cash out)" },
+                -- v2.1.6 (reports: "Cash out" alone also matched a button that is always there, 4 clicks every 2 min that
+                -- never closed anything): only the dialog that also has the "Do not show again" box
+                { text = "^%s*cash out%s*$", also = "do not show again", button = "^%s*cash out%s*$",
+                    label = "Bank check (Cash out)" },
             }
             local function buttonText(button)
                 local parts = {}
@@ -16830,27 +17255,107 @@ __moduleSources["main"] = function(...)
                 end
                 return false
             end
+            -- v2.1.6 optimisation (many accounts on one phone): ONE pass over the visible ScreenGuis every 3 s for all
+            -- the dialogs (was one full pass per dialog, every 2 s), and a quick closer: each click way is given 2 s
+            -- (was 8 s), its misses are debug lines, and a dialog that cannot be closed twice is left alone 30 min
+            local function quickClose(label, button, isOpen)
+                for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    local ran = Interaction.clickButton(button, method)
+                    if ran then
+                        local untilAt = os.clock() + 2
+                        while isOpen() and os.clock() < untilAt do
+                            task.wait(0.25)
+                        end
+                        if not isOpen() then
+                            logger:debug("Game", label .. ": closed (" .. method .. ")")
+                            return true
+                        end
+                    end
+                end
+                return false
+            end
             if playerGui and config.Farm.AutoCloseDialogs ~= false then
                 maid:Give(task.spawn(function()
-                    local misses = {}
+                    local misses, fails = {}, {}
+                    local shownBefore = nil -- the game windows open at the last pass (for gui_log.txt)
                     while true do
-                        task.wait(2)
+                        task.wait(3)
+                        -- what the game shows: a window (a visible frame of a ScreenGui) that was not there 3 s ago
+                        pcall(function()
+                            local now = {}
+                            for _, screen in ipairs(playerGui:GetChildren()) do
+                                if screen:IsA("ScreenGui") and screen.Enabled then
+                                    for _, frame in ipairs(screen:GetChildren()) do
+                                        if frame:IsA("GuiObject") and frame.Visible then
+                                            local key = screen.Name .. "/" .. frame.Name
+                                            now[key] = true
+                                            if shownBefore and not shownBefore[key] then
+                                                local texts = {}
+                                                for _, d in ipairs(frame:GetDescendants()) do
+                                                    if #texts >= 5 then
+                                                        break
+                                                    end
+                                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= ""
+                                                        and isOnScreen(d) then
+                                                        table.insert(texts, d.Text)
+                                                    end
+                                                end
+                                                if #texts > 0 then
+                                                    Interaction.guiLog("SHOWN " .. key .. ": "
+                                                        .. Util.truncate(table.concat(texts, " | "), 200))
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            shownBefore = now
+                        end)
                         if config.Farm.AutoCloseDialogs ~= false and config.Farm.Enabled ~= false then
                             pcall(function()
+                                -- 1) one pass: the first visible text of every dialog
+                                local hits, also = {}, {}
+                                for _, screen in ipairs(playerGui:GetChildren()) do
+                                    if screen:IsA("ScreenGui") and screen.Enabled then
+                                        for _, object in ipairs(screen:GetDescendants()) do
+                                            if (object:IsA("TextLabel") or object:IsA("TextButton")) and object.Text ~= "" then
+                                                local text = string.lower(object.Text)
+                                                if string.find(text, "do not show again", 1, true) then
+                                                    also[screen] = true
+                                                end
+                                                for _, rule in ipairs(DIALOGS) do
+                                                    if not hits[rule] and string.find(text, rule.text) and isOnScreen(object) then
+                                                        hits[rule] = object
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                                -- 2) answer what was found
                                 for _, rule in ipairs(DIALOGS) do
-                                    if Util.now() >= (misses[rule.label] or 0) then
-                                        local marker = findText(playerGui, rule.text)
-                                        local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
-                                        local button = dialogGui and findDialogButton(dialogGui, rule.button)
+                                    local marker = hits[rule]
+                                    local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
+                                    if dialogGui and Util.now() >= (misses[rule.label] or 0)
+                                        and (not rule.also or also[dialogGui]) then
+                                        local button = findDialogButton(dialogGui, rule.button)
                                         if button then
                                             tickDontShowAgain(dialogGui)
-                                            if not clickUntilClosed(rule.label, button, function()
+                                            if quickClose(rule.label, button, function()
                                                 return isOnScreen(marker)
                                             end) then
-                                                if hideDialog(marker, dialogGui) then
-                                                    logger:info("Game", rule.label .. ": hidden instead")
+                                                logger:info("Game", rule.label .. ": closed")
+                                                fails[rule.label] = 0
+                                            else
+                                                fails[rule.label] = (fails[rule.label] or 0) + 1
+                                                local hidden = hideDialog(marker, dialogGui)
+                                                if fails[rule.label] >= 2 then
+                                                    misses[rule.label] = Util.now() + 1800
+                                                    logger:warn("Game", rule.label .. ": could not be closed twice"
+                                                        .. (hidden and " (hidden)" or "") .. ": left alone for 30 min")
+                                                else
+                                                    misses[rule.label] = Util.now() + 60
                                                 end
-                                                misses[rule.label] = Util.now() + 120 -- not again for 2 min
                                             end
                                         end
                                     end
@@ -16864,7 +17369,7 @@ __moduleSources["main"] = function(...)
             -- that stands on nothing (FloorMaterial Air) yet does not fall, or lies (FallingDown / Ragdoll / Physics),
             -- for 3 s in a row is stuck in the map: put back on top of the floor and stood up
             maid:Give(task.spawn(function()
-                local stuckFor, lastLift = 0, 0
+                local stuckFor, lastLift, wedgedFor, lastPos, noSpotLogAt = 0, 0, 0, nil, nil
                 while true do
                     task.wait(1)
                     pcall(function()
@@ -16878,11 +17383,22 @@ __moduleSources["main"] = function(...)
                             return
                         end
                         local state = humanoid:GetState()
+                        -- (Physics is left out: the game itself sets it in minigames and vehicles; 2.1.6 reports)
                         local lying = state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
-                            or state == Enum.HumanoidStateType.Physics
                         local hanging = humanoid.FloorMaterial == Enum.Material.Air
                             and math.abs(root.AssemblyLinearVelocity.Y) < 2 and state ~= Enum.HumanoidStateType.Climbing
-                            and state ~= Enum.HumanoidStateType.Swimming
+                            and state ~= Enum.HumanoidStateType.Swimming and state ~= Enum.HumanoidStateType.Physics
+                        -- v2.1.6 (user: "the stuck ones stay in Jumping"): Jumping / Freefall that goes nowhere = wedged
+                        local airborne = state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall
+                        -- held in the air over nothing (a place still loading) is not wedged: only with a floor under me
+                        if airborne then
+                            local floor = Interaction.floorUnder(root, character)
+                            airborne = floor ~= nil and root.Position.Y - floor < 12
+                        end
+                        local here = root.Position
+                        local still = lastPos ~= nil and (here - lastPos).Magnitude < 1.5
+                        lastPos = here
+                        wedgedFor = (airborne and still) and wedgedFor + 1 or 0
                         stuckFor = (lying or hanging) and stuckFor + 1 or 0
                         if stuckFor >= 3 and Util.now() - lastLift > 5 then
                             stuckFor = 0
@@ -16890,6 +17406,20 @@ __moduleSources["main"] = function(...)
                             if result == "lifted" then
                                 lastLift = Util.now()
                                 logger:info("Game", "Character was stuck in the floor: put back on top of it")
+                            elseif lying or wedgedFor >= 3 then
+                                wedgedFor = 3 -- a lying character that stands right: try a free spot as well
+                            end
+                        end
+                        if wedgedFor >= 3 and Util.now() - lastLift > 5 then
+                            wedgedFor = 0
+                            lastLift = Util.now()
+                            local moved = Interaction.unstick()
+                            if moved or Util.now() - (noSpotLogAt or -1e9) > 600 then
+                                if not moved then
+                                    noSpotLogAt = Util.now()
+                                end
+                                logger:info("Game", string.format("Character was wedged (%s, not moving): %s", tostring(state.Name),
+                                    moved and ("moved to a free spot " .. moved .. " studs away") or "no free spot found nearby"))
                             end
                         end
                     end)
