@@ -52,6 +52,7 @@ local UserConfig = {
             Crypt = true,
             CryptOpen = { "ladder" },
             PigeonNest = false,
+            AutoLever = true, -- v2.1.32: put the Lightning Lever from your backpack into the machine (no Skelicorn buy)
             CandyPets = {
                 Enabled = false,
                 Pick = {}, -- what to buy (Skelicorn too): one every 0.5 s until the candy runs out
@@ -478,6 +479,7 @@ __moduleSources["Core/Config"] = function(...)
                 CryptOpen = { "ladder" },
                 Quests = false,
                 PigeonNest = false,
+                AutoLever = false,
                 AutoNest = false,
                 StrayCat = false,
                 PetPen = false,
@@ -594,6 +596,7 @@ __moduleSources["Core/Config"] = function(...)
         { "Farm", "Event", "Crypt" },
         { "Farm", "Event", "Quests" },
         { "Farm", "Event", "PigeonNest" },
+        { "Farm", "Event", "AutoLever" },
         { "Farm", "Event", "StrayCat" },
         { "Farm", "Event", "PetPen" },
         { "Farm", "Event", "CandyPets", "Enabled" },
@@ -704,6 +707,22 @@ __moduleSources["Core/Config"] = function(...)
         { { "Farm", "Event", "Hauntlet" }, true },
         { { "Farm", "Event", "GhostGallery" }, true },
     })
+    -- v2.1.32 (user: "a Potion Farm preset, potions at their peak"): friendship only grows on a full grown pet with
+    -- its needs, so every second goes to the pet's needs: the highest friendship pet stays equipped, baby needs,
+    -- minigames, eggs, neon fusing and the potions themselves (the harvest) stay off
+    local POTION_ON = {
+        { { "Farm", "AutoNeeds", "Enabled" }, true },
+        { { "Farm", "BabyMode" }, false },
+        { { "Farm", "KeepPetEquipped" }, true },
+        { { "Farm", "PetOrder" }, "potion" },
+        { { "Farm", "BuyEgg" }, false },
+        { { "Farm", "AutoPotions", "Enabled" }, false },
+        { { "Farm", "AutoNeon", "Enabled" }, false },
+        { { "Farm", "AutoNeon", "Mega" }, false },
+        { { "Farm", "CollectCashback" }, true },
+        { { "Farm", "AutoOpen", "Enabled" }, true },
+        { { "Farm", "Event", "Quests" }, true },
+    }
     Config.Presets = {
         { id = "Off", name = "Everything Off", icon = "power",
             about = "Every feature off (the defaults). Anti-AFK and the Play button stay on.",
@@ -719,6 +738,10 @@ __moduleSources["Core/Config"] = function(...)
             about = "Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every "
                 .. "120k candy (up to 5 growing), grown + neon + mega neon.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, Config.SKELICORN_CHANGES) },
+        { id = "PotionFarm", name = "Potion Farm", icon = "flask-conical",
+            about = "Age Potions at their peak: your full grown pet with the highest friendship stays equipped and gets "
+                .. "every pet need (each friendship level = 1 Age Potion). No baby needs, minigames, eggs, neon or potion use.",
+            set = POTION_ON },
         { id = "Focus", name = "Mega a Pet", icon = "crosshair", pick = true,
             about = "Pick one pet or egg below. Egg: bought and hatched on repeat. Candy pet: 5 bought (1 raised, 4 in "
                 .. "the Pet Pen). Any pet: grown, neon, mega neon on repeat, its copies in the Pet Pen.",
@@ -1297,7 +1320,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.24 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.32 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -2406,6 +2429,20 @@ __moduleSources["Services/Lang"] = function(...)
     add("Skip these needs", "Bu ihtiyaçları atla", "Saltar estas necesidades", "Pular estas necessidades")
     add("Keep growing pet equipped", "Büyüyen pet hep elde", "Mascota en crecimiento equipada", "Manter pet crescendo equipado")
     add("Farm first", "Önce bunları besle", "Primero estas", "Primeiro estes")
+    add("Pet Farm", "Pet Farm", "Granja de mascotas", "Farm de pets")
+    add("Auto Farm", "Auto Farm", "Auto Farm", "Auto Farm")
+    add("Claimables", "Toplananlar", "Recompensas", "Recompensas")
+    add("Eggs", "Yumurtalar", "Huevos", "Ovos")
+    add("Minigames", "Minigameler", "Minijuegos", "Minijogos")
+    add("Halloween world", "Halloween dünyası", "Mundo Halloween", "Mundo Halloween")
+    add("Auto pull lever", "Kolu otomatik çek", "Tirar la palanca", "Puxar a alavanca")
+    add("Close game pop-ups", "Oyun pencerelerini kapat", "Cerrar ventanas del juego", "Fechar janelas do jogo")
+    add("Potion Farm", "Potion Farm", "Granja de pociones", "Farm de poções")
+    add("Pet to farm", "Kasılacak pet", "Mascota a cultivar", "Pet para farmar")
+    add("On: the pet picked below is equipped and farmed (2 when your account can hold 2)",
+        "Açık: aşağıda seçilen pet takılır ve kasılır (hesabın 2 taşıyabiliyorsa 2)",
+        "Activado: la mascota elegida abajo se equipa y se cultiva (2 si tu cuenta puede)",
+        "Ligado: o pet escolhido abaixo é equipado e farmado (2 se a conta puder)")
     add("Buy an egg if none grows", "Büyüyen yoksa yumurta al", "Comprar huevo si nada crece", "Comprar ovo se nada cresce")
     add("Egg to buy", "Alınacak yumurta", "Huevo a comprar", "Ovo para comprar")
     add("Use potions", "İksir kullan", "Usar pociones", "Usar poções")
@@ -2506,7 +2543,9 @@ __moduleSources["Services/Lang"] = function(...)
     add("Stopped", "Durduruldu", "Detenido", "Parado")
     add("Last run ended badly", "Son çalışma kötü bitti", "La última sesión terminó mal", "A última sessão terminou mal")
     add("Neon pets", "Neon petler", "Mascotas neón", "Pets neon")
-    add("Oldest pets (closest to grown)", "En yaşlı petler (büyümeye yakın)", "Las más viejas (casi adultas)", "Os mais velhos (quase adultos)")
+    add("Growing pets (youngest first)", "Büyüyen petler (en küçük önce)", "Mascotas que crecen (la más joven primero)", "Pets crescendo (o mais novo primeiro)")
+    add("Neon pets first", "Önce neon petler", "Primero las neón", "Neon primeiro")
+    add("Potion farm (highest friendship pet)", "Potion farm (en yüksek friendship pet)", "Granja de pociones (mayor amistad)", "Farm de poções (maior amizade)")
     add("Teleport", "Işınlan", "Teletransporte", "Teleporte")
     add("Shop door", "Dükkan kapısı", "Puerta de la tienda", "Porta da loja")
     add("Nothing skipped: every need", "Hiçbiri atlanmıyor: her ihtiyaç", "Nada saltado: todas", "Nada pulado: todas")
@@ -3324,6 +3363,26 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.32 (14 Oct 2026)",
+        "Preset Potion Farm: the highest friendship pet gets every pet need; nothing else takes time",
+        "Event: Auto pull lever (the Lightning Lever into the machine, no Skelicorn bought)",
+        "Window regrouped: Auto Farm, Claimables, Eggs, Potions & neon, Pet Pen | Minigames, Halloween world, Candy Shop | Close game pop-ups in Settings",
+        "v2.1.31 (14 Oct 2026)",
+        "Pets: 'Keep a growing pet equipped' is now 'Pet Farm'; the 'Pet to farm' dropdown under it picks which pet",
+        "v2.1.30 (14 Oct 2026)",
+        "Farm first: one choice; 'Oldest pets' is now Potion farm: your full grown pet with the highest friendship stays equipped (never fused)",
+        "v2.1.29 (14 Oct 2026)",
+        "Minigame prompt: Yes is pressed once (a 2nd click hit the button while the game was already teleporting)",
+        "After the game's own teleport to the Hotel / Manor: no extra trip or 'load again' on top of it (runs that never took the device in)",
+        "v2.1.28 (14 Oct 2026)",
+        "In a minigame room (also when the game's prompt or you took me in): every other task waits until 20 s after it",
+        "v2.1.27 (14 Oct 2026)",
+        "Start: no screen tap on a window that already closed (it opened the Buy Candy Corn shop under it)",
+        "v2.1.26 (14 Oct 2026)",
+        "Join circles: back to the teleport that worked up to 2.1.20 (no more roof / under the ring); not moved at all when already in the circle",
+        "v2.1.25 (14 Oct 2026)",
+        "Hauntlet runs every 20 min (was counted every 10 min: every other 'Hauntlet' was the Ghost Gallery's time and never started)",
+        "In the queue = the game's own hint 'You are in the queue for ...': then the farm never moves me (it read only the start messages)",
         "v2.1.24 (14 Oct 2026)",
         "Hauntlet: already in the join circle (the game's prompt put me there) = not moved; no more teleport onto the roof beams (it left the queue)",
         "v2.1.23 (14 Oct 2026)",
@@ -3522,7 +3581,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.HomeByRespawn"] = "Goes home by respawn (fastest)",
         ["Farm.SpotTravel"] = "Route to camping / beach / playground",
         ["Farm.FoodBowlTrip"] = "Goes home for the free bowl even with food",
-        ["Farm.PetOrder"] = "Which growing pet first: youngest / oldest",
+        ["Farm.PetOrder"] = "youngest = growing pets, youngest first; potion = Potion farm (full grown pet with the highest friendship)",
         ["Farm.EggToBuy"] = "Egg bought with Bucks (never Robux)",
         ["Farm.FarmPetKinds"] = "Pet kinds farmed first, comma separated",
         ["Farm.AutoPotions.PetKinds"] = "Potions only on these kinds (empty = any)",
@@ -5568,23 +5627,28 @@ __moduleSources["Services/Interface"] = function(...)
                     end)
             end,
         }, "stop")
-        local needsBox = mainTab:CreateGroupbox({ Name = "Auto needs", Icon = I("list-checks"), Column = 1 }, "needs")
+        -- v2.1.32 (user: "group everything professionally"): Auto Farm (needs + the pet), Claimables, Eggs, Potions &
+        -- neon, Pet Pen; Event tab: Minigames, Halloween world, Candy Shop; Settings: the game windows
+        local needsBox = mainTab:CreateGroupbox({ Name = "Auto Farm", Icon = I("list-checks"), Column = 1 }, "needs")
         bindToggle(needsBox, "autoNeeds", "list-checks", "Auto needs", { "Farm", "AutoNeeds", "Enabled" },
             "Does your pet's needs (food, drink, bed, shower, places...). Buys 1 food / water only when you have none")
         bindToggle(needsBox, "babyMode", "baby", "Baby needs too", { "Farm", "BabyMode" })
         bindPick(needsBox, "needSkip", "octagon-x", "Skip these needs", { "Farm", "AutoNeeds", "Skip" }, Interface.NEED_NAMES,
             { multi = true, placeholder = "Nothing skipped: every need", tooltip = "Needs picked here are NOT done" })
-        local tasksBox = mainTab:CreateGroupbox({ Name = "Collect", Icon = I("gift"), Column = 1 }, "tasks")
+        local tasksBox = mainTab:CreateGroupbox({ Name = "Claimables", Icon = I("gift"), Column = 1 }, "tasks")
         bindToggle(tasksBox, "autoOpen", "gift", "Open gifts & boxes", { "Farm", "AutoOpen", "Enabled" },
             "Equips and opens every gift, chest and box in your backpack (Poltergeist Box too), next to the other tasks")
         bindToggle(tasksBox, "quests", "scroll-text", "Claim quests", { "Farm", "Event", "Quests" },
             "Claims finished quests and board rewards; visits homes when a quest asks for it")
         bindToggle(tasksBox, "cashback", "game:bucks", "Collect cashback", { "Farm", "CollectCashback" },
             "Collects your cashback Bucks every 10 minutes")
-        local petsBox = mainTab:CreateGroupbox({ Name = "Pets", Icon = I("paw-print"), Column = col(2) }, "pets")
-        bindToggle(petsBox, "autoPet", "link", "Keep a growing pet equipped", { "Farm", "KeepPetEquipped" },
-            "Keeps a pet that still grows out (2 when your account can hold 2); a full grown one is swapped")
-        local firstChoices = { { "@neon", "Neon pets" }, { "@oldest", "Oldest pets (closest to grown)" } }
+        local petsBox = mainTab:CreateGroupbox({ Name = "Eggs", Icon = I("paw-print"), Column = col(2) }, "pets")
+        -- v2.1.31 (user): one switch "Pet Farm" + the dropdown under it says WHICH pet (v2.1.32: in Auto Farm)
+        bindToggle(needsBox, "autoPet", "paw-print", "Pet Farm", { "Farm", "KeepPetEquipped" },
+            "On: the pet picked below is equipped and farmed (2 when your account can hold 2)")
+        -- v2.1.30 (user): one choice; "oldest" became the Potion farm (highest friendship full grown pet)
+        local firstChoices = { { "@any", "Growing pets (youngest first)" }, { "@neon", "Neon pets first" },
+            { "@potion", "Potion farm (highest friendship pet)" } }
         local kindsShown = {}
         for _, kind in ipairs(type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}) do
             if not kindsShown[kind] then
@@ -5598,34 +5662,26 @@ __moduleSources["Services/Interface"] = function(...)
                 table.insert(firstChoices, { kind, prettyKind(kind) })
             end
         end
-        bindPick(petsBox, "farmFirst", "list-ordered", "Farm first", nil, firstChoices, {
-            multi = true,
-            placeholder = "Any growing pet (youngest first)",
-            tooltip = "These pets get the needs, potions and Pet Pen first",
+        bindPick(needsBox, "farmFirst", "list-ordered", "Pet to farm", nil, firstChoices, {
+            tooltip = "Which pet gets the needs: growing pets, neon first, one pet kind, or the Potion farm (your full grown"
+                .. " pet with the highest friendship stays equipped: its friendship level-ups give Age Potions)",
             keys = { "Farm.PreferNeon", "Farm.PetOrder", "Farm.FarmPetKinds" },
             get = function()
-                local values = {}
-                if farm.PreferNeon then
-                    table.insert(values, "@neon")
+                local kinds = type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}
+                if farm.PetOrder == "potion" then
+                    return "@potion"
+                elseif type(kinds[1]) == "string" then
+                    return kinds[1]
+                elseif farm.PreferNeon then
+                    return "@neon"
                 end
-                if farm.PetOrder == "oldest" then
-                    table.insert(values, "@oldest")
-                end
-                for _, kind in ipairs(type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}) do
-                    table.insert(values, kind)
-                end
-                return values
+                return "@any"
             end,
-            set = function(values)
-                local kinds = {}
-                for _, value in ipairs(values) do
-                    if string.sub(value, 1, 1) ~= "@" then
-                        table.insert(kinds, value)
-                    end
-                end
-                write({ "Farm", "PreferNeon" }, table.find(values, "@neon") ~= nil)
-                write({ "Farm", "PetOrder" }, table.find(values, "@oldest") and "oldest" or "youngest")
-                write({ "Farm", "FarmPetKinds" }, kinds)
+            set = function(value)
+                local isKind = type(value) == "string" and string.sub(value, 1, 1) ~= "@"
+                write({ "Farm", "PreferNeon" }, value == "@neon" or isKind)
+                write({ "Farm", "PetOrder" }, value == "@potion" and "potion" or "youngest")
+                write({ "Farm", "FarmPetKinds" }, isKind and { value } or {})
             end,
         })
         local eggIcon = "item:" .. tostring(farm.EggToBuy or "cracked_egg") .. "|egg"
@@ -5655,21 +5711,23 @@ __moduleSources["Services/Interface"] = function(...)
                 return callApi("ClaimPetPen")
             end)
         local eventTab = track(farmSection:CreateTab({ Name = "Event", Icon = I("ghost"), Columns = columns }, "event"))
-        local halloweenBox = eventTab:CreateGroupbox({ Name = "Halloween 2026", Icon = I("ghost"), Column = 1 }, "halloween")
+        local halloweenBox = eventTab:CreateGroupbox({ Name = "Minigames", Icon = I("ghost"), Column = 1 }, "halloween")
         bindToggle(halloweenBox, "ghostOn", "crosshair", "Ghost Gallery", { "Farm", "Event", "GhostGallery" },
             "Joins every round and vacuums the ghosts (Rusty Keys)")
         bindToggle(halloweenBox, "hauntlet", "key-round", "Hauntlet", { "Farm", "Event", "Hauntlet" },
             "Joins every run and picks the safer doors (a run always comes before a Ghost Gallery round)")
-        bindToggle(halloweenBox, "cat", "cat", "Feed the Stray Cat", { "Farm", "Event", "StrayCat" },
+        local cryptBox = eventTab:CreateGroupbox({ Name = "Halloween world", Icon = I("item:halloween_2026_tomb_spider|skull"),
+            Column = 1 }, "crypt")
+        bindToggle(cryptBox, "cat", "cat", "Feed the Stray Cat", { "Farm", "Event", "StrayCat" },
             "1 water to the Stray Cat once a day (candy)")
-        local cryptBox = eventTab:CreateGroupbox({ Name = "Crypt", Icon = I("item:halloween_2026_tomb_spider|skull"), Column = 1 },
-            "crypt")
         bindToggle(cryptBox, "crypt", "item:halloween_2026_rusty_key|key-round", "Use Rusty Keys", { "Farm", "Event", "Crypt" },
             "Opens Crypt graves with your Rusty Keys; pick below what to open")
         bindPick(cryptBox, "cryptOpen", "item:halloween_2026_rusty_key|key-round", "Open", { "Farm", "Event", "CryptOpen" }, Interface.CRYPT_NAMES,
             { multi = true, placeholder = "Next floor (Mummy Spider)", tooltip = "What a Rusty Key opens, in this order" })
         bindToggle(cryptBox, "nest", "item:halloween_2026_twig|bird", "Give twigs to the nest", { "Farm", "Event", "PigeonNest" },
             "Has a Crypt Twig: takes it to the Hotel nest")
+        bindToggle(cryptBox, "lever", "zap", "Auto pull lever", { "Farm", "Event", "AutoLever" },
+            "Has the Lightning Lever (from the Crypt): puts it into the machine by the Manor (no Skelicorn is bought)")
         local candy = event.CandyPets
         if type(candy) == "table" then
             local shopBox = eventTab:CreateGroupbox({ Name = "Candy Shop", Icon = I("game:candy"), Column = col(2) }, "shop")
@@ -5960,6 +6018,8 @@ __moduleSources["Services/Interface"] = function(...)
         local look = configTab:CreateGroupbox({ Name = "Settings", Icon = I("settings"), Column = 1 }, "settings")
         bindToggle(look, "antiAfk", "shield-check", "Anti-AFK", { "Farm", "AntiAfk" }, "Clicks on Roblox's idle warning (no idle kick)")
         bindToggle(look, "autoMenu", "mouse-pointer-click", "Auto click Play (menu)", { "Farm", "AutoAcceptMenu" })
+        bindToggle(look, "autoDialogs", "octagon-x", "Close game pop-ups", { "Farm", "AutoCloseDialogs" },
+            "Answers the game's windows (Okay / Nice / Done, cash out; minigame teleport: Yes only for the minigame being played)")
         bindToggle(look, "cameraGuard", "camera", "Camera fix (fixcam + zoom)", { "Farm", "CameraGuard" },
             "fixcam + min = max zoom: 10 times at start, again whenever the zoom or the camera changes")
         bindSlider(look, "cameraZoom", "camera", "Camera distance", { "Farm", "CameraZoom" }, 5, 20, 1, " studs",
@@ -6950,6 +7010,10 @@ __moduleSources["Game/GameConstants"] = function(...)
         HauntletDebug = false, -- true: every door's reasons in the log + AdoptMeFarm/hauntlet_db.txt (the game's door lists)
         HauntletDBPath = { "SharedModules", "ContentPacks", "Halloween2026", "Game", "Hauntlet" },
         RoundSeconds = 600,
+        -- v2.1.25 (queue probe + user screenshot: "starts in 0:01" in the Hauntlet circle while the game's sign said
+        -- "NEXT GAME IN 18:56"; hauntlet_cycle_timestamp.identifier ~ timestamp / 1200): a Hauntlet run every 20 min,
+        -- the Ghost Gallery every 10 min. The 10 min grid made every other "Hauntlet" a run that did not exist.
+        HauntletRoundSeconds = 1200,
         GhostsFolder = "GhostClustersVisuals",
         GhostNamePattern = "^Ghost_%a+_([%x%-]+)$",
         BossSize = "Large",
@@ -7374,6 +7438,29 @@ __moduleSources["Game/GameData"] = function(...)
             return a.unique < b.unique
         end)
         return result
+    end
+    -- v2.1.30 Potion farm (user: "a full grown pet earns friendship; the higher it is, the better the rewards"): my
+    -- full grown pet with the highest friendship (then the most xp), not in the Pet Pen
+    function GameData:potionFarmPet()
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local inPen = self:petPenPets()
+        local best, bestLevel, bestXp = nil, -1, -1
+        for key, pet in pairs(type(pets) == "table" and pets or {}) do
+            local properties = type(pet) == "table" and type(pet.properties) == "table" and pet.properties or nil
+            local unique = type(pet) == "table" and tostring(pet.unique or key) or nil
+            local kind = type(pet) == "table" and tostring(pet.kind or pet.id or "?") or "?"
+            local age = properties and tonumber(properties.age)
+            if properties and age and age >= GameConstants.FullGrownAge and not inPen[unique]
+                and not GameConstants.NotFarmablePets[kind] then
+                local level = tonumber(properties.friendship_level) or 0
+                local xp = tonumber(properties.xp) or 0
+                if level > bestLevel or (level == bestLevel and (xp > bestXp or (xp == bestXp and unique < best))) then
+                    best, bestLevel, bestXp = unique, level, xp
+                end
+            end
+        end
+        return best, best and bestLevel or nil
     end
     function GameData:neonFusionGroups(exclude, mega)
         local inventory = self._data[GameConstants.DataKeys.Inventory]
@@ -8334,20 +8421,26 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        -- v2.1.21: on the floor found there, held still while it loads (was: 1.5 studs over the spot, falling through
-        -- a floor that was still loading)
-        local stood, standWhy = self:standOnCircle(spot.Position + Vector3.new(0, 1.5, 0), 8)
-        character = game:GetService("Players").LocalPlayer.Character
-        root = character and character:FindFirstChild("HumanoidRootPart") or root
+        -- v2.1.26: already standing in the circle (the game's prompt put me there) = not moved
+        local here = root.Position
+        local hx, hz = here.X - spot.Position.X, here.Z - spot.Position.Z
+        local humanoidHere = character:FindFirstChildOfClass("Humanoid")
+        if math.sqrt(hx * hx + hz * hz) <= E.JoinZoneRadius - 3 and math.abs(here.Y - spot.Position.Y) <= 8
+            and humanoidHere and humanoidHere.FloorMaterial ~= Enum.Material.Air then
+            return true, "already standing in it"
+        end
+        -- v2.1.26: the teleport that worked up to 2.1.20 (1.5 studs over the game's own spot) + settle
+        local ok, err = pcall(function()
+            local p = spot.Position
+            character:PivotTo(CFrame.new(p.X, p.Y + 1.5, p.Z))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        pcall(Interaction.settle, 2)
         local now = root.Position
         local dx, dz = now.X - spot.Position.X, now.Z - spot.Position.Z
-        if math.sqrt(dx * dx + dz * dz) > E.JoinZoneRadius then
-            return false, "not in the circle after the teleport"
-        end
-        if not stood then
-            return false, tostring(standWhy)
-        end
-        return true, "on the floor"
+        return math.sqrt(dx * dx + dz * dz) <= E.JoinZoneRadius, "not in the circle after the teleport"
     end
     function Interaction:teleportToHauntletJoinZone()
         local Players = game:GetService("Players")
@@ -8424,15 +8517,18 @@ __moduleSources["Game/Interaction"] = function(...)
             and humanoidHere and humanoidHere.FloorMaterial ~= Enum.Material.Air then
             return true, target:GetFullName() .. " (already standing in it)"
         end
-        -- v2.1.24: the floor is looked for from the BOTTOM of the circle's part (from its top + 2.5 the ray found the
-        -- roof beams over a tall zone part and I was put up there)
-        local destination = target.Position + Vector3.new(0, -halfHeight + 3, 0)
-        -- v2.1.21: on the floor found there, held still up to 8 s while it loads (was: a fixed height, 2 s held by
-        -- settle, then a fall through a floor that was not there yet = "pushed out of the join circle", never queued)
-        local stood, standWhy = self:standOnCircle(destination, 8)
+        -- v2.1.26 (user screenshots: 2.1.21-2.1.25 put me on the roof beams, then under the ring): back to the teleport
+        -- that worked up to 2.1.20 (over the ring, settle holds me while the floor loads)
+        local destination = target.Position + Vector3.new(0, halfHeight + 2.5, 0)
+        local ok, err = pcall(function()
+            character:PivotTo(CFrame.new(destination) * CFrame.Angles(0, math.rad(root.Orientation.Y), 0))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        pcall(Interaction.settle, 0) -- v2.1.6: never left inside the lobby floor
+        pcall(Interaction.settle, 2) -- v2.1.6: never left inside the lobby floor
         task.wait(0.6)
         character = player.Character
         root = character and character:FindFirstChild("HumanoidRootPart") or root
@@ -8441,9 +8537,6 @@ __moduleSources["Game/Interaction"] = function(...)
         local dist = math.sqrt(dx * dx + dz * dz)
         if dist > 18 then
             return false, "not in the join circle after teleport (dist " .. string.format("%.1f", dist) .. ")"
-        end
-        if not stood then
-            return false, "join circle: " .. tostring(standWhy)
         end
         return true, target:GetFullName()
     end
@@ -13354,6 +13447,47 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
     end
     EventTasks.phase = phase
+    -- v2.1.25 (queue probe, user: "check the queue from the game"): stepping into a join circle sends NO message and
+    -- changes no data (data "queue" stayed []); the only sign is the game's hint PlayerGui.HintApp.TextLabel: "You are
+    -- in the queue for the Hauntlet 2 Minigame." / "You have left the queue for ..." (join_accepted only comes at the
+    -- start). The latest such hint per minigame is kept here.
+    local queueHint, hintLabel = {}, nil
+    local function wireQueueHint()
+        if hintLabel and hintLabel:IsDescendantOf(game) then
+            return
+        end
+        hintLabel = nil
+        pcall(function()
+            local gui = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+            local app = gui and gui:FindFirstChild("HintApp")
+            local label = app and app:FindFirstChild("TextLabel")
+            if not (label and label:IsA("TextLabel")) then
+                return
+            end
+            local function read()
+                local text = string.lower(tostring(label.Text))
+                if not string.find(text, "queue", 1, true) then
+                    return
+                end
+                local kind = string.find(text, "hauntlet", 1, true) and "hauntlet"
+                    or (string.find(text, "ghost", 1, true) and "ghost") or nil
+                if kind then
+                    queueHint[kind] = { inQueue = string.find(text, "left the queue", 1, true) == nil, at = Util.now() }
+                end
+            end
+            label:GetPropertyChangedSignal("Text"):Connect(function()
+                pcall(read)
+            end)
+            pcall(read)
+            hintLabel = label
+        end)
+    end
+    -- true = the game's last hint (after `since`) says I am in that minigame's queue
+    function EventTasks.inQueueByHint(kind, since)
+        wireQueueHint()
+        local q = queueHint[kind]
+        return q ~= nil and q.inQueue == true and q.at >= (tonumber(since) or 0)
+    end
     local function count(map)
         local n = 0
         for _ in pairs(map) do
@@ -13581,13 +13715,14 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         return #parts > 0 and table.concat(parts, " | ") or "no Halloween / normal board"
     end
-    function EventTasks.nextRoundStart(cycle, now)
+    function EventTasks.nextRoundStart(cycle, now, period)
         local start = type(cycle) == "table" and tonumber(cycle.timestamp)
         if not start or type(now) ~= "number" then
             return nil
         end
+        period = tonumber(period) or E.RoundSeconds
         while start + 20 < now do
-            start += E.RoundSeconds
+            start += period
         end
         return start
     end
@@ -14179,6 +14314,13 @@ __moduleSources["Game/EventTasks"] = function(...)
     function EventTasks.skelicornOn(farm)
         local focus = GameConstants.focusOf(farm)
         return (focus ~= nil and focus.kind == "skelicorn") or EventTasks.skelicornShop(farm) ~= nil
+            or EventTasks.leverOnly(farm)
+    end
+    -- v2.1.32 Auto pull lever (user): only the lever goes into the machine; no Skelicorn is bought for it
+    function EventTasks.leverOnly(farm)
+        local focus = GameConstants.focusOf(farm)
+        return type(farm) == "table" and type(farm.Event) == "table" and farm.Event.AutoLever == true
+            and not (focus ~= nil and focus.kind == "skelicorn") and EventTasks.skelicornShop(farm) == nil
     end
     function EventTasks.skelicornStep(gameData, farm)
         local state = EventTasks._skelicorn
@@ -14190,6 +14332,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             if growing >= wanted then
                 return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
             end
+        elseif EventTasks.leverOnly(farm) then
+            local installed = EventTasks.leverState(gameData:get(KEYS.LightningLever)) or state.delivered
+            if installed then
+                return nil, "Auto pull lever: the lever is in the machine"
+            elseif EventTasks.findLever(gameData) then
+                return "install"
+            end
+            return nil, "Auto pull lever: no lever in the backpack yet (the Crypt gives it)"
         elseif EventTasks.skelicornShop(farm) then
             local shop = EventTasks.skelicornShop(farm)
             local candy = tonumber(gameData:get(KEYS.Candy)) or 0
@@ -14710,7 +14860,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                     -- user 2026-10-11: "Pull -> Buy -> failed -> the Crypt for the lever -> 120k candy -> again": the game
                     -- confirms a working pull with its own events, not always in my data, so the buy decides
                     state.leverRequired = false
-                    if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                    if not EventTasks.leverOnly(ctx.farmConfig)
+                        and (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
                         task.wait(1)
                         local bought = buyOne()
                         if EventTasks._skelicorn.bought then
@@ -14722,7 +14873,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 state.leverRequired = false
                 state.delivered = true
-                if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                if not EventTasks.leverOnly(ctx.farmConfig)
+                    and (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
                     -- (user: "one of them pulled but did not buy"): the buy right away, not at the next check
                     task.wait(1)
                     ctx.logger:success("Skelicorn", "Lightning Lever pulled: buying the Skelicorn now")
@@ -14762,11 +14914,16 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- v2.1.20: the last round's state is cleared BEFORE the trip (the game's prompt puts me in the join circle
             -- and can queue me while the farm is still on its way: that join used to be thrown away by a reset after it)
             mg:reset()
+            local queueSince = Util.now()
+            EventTasks.inQueueByHint("ghost", queueSince) -- starts watching the game's hint
             local function queued()
-                return mg.joinAcceptedAt ~= nil or mg.join ~= nil
+                return mg.joinAcceptedAt ~= nil or mg.join ~= nil or EventTasks.inQueueByHint("ghost", queueSince)
             end
-            pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
-            if not queued() then
+            local okPrompt, byPrompt = pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
+            byPrompt = okPrompt and byPrompt == true
+            -- v2.1.29 (hauntlet_debug: the run took me on the server, the device stayed in the lobby): the game's own
+            -- teleport brought me = no trip / "draw again" of mine on top of it (it can break the game's next move)
+            if not queued() and not byPrompt then
                 phase(ctx, "going to the Manor", tonumber(start))
                 local arrived, why = ctx.travel:goTo("HauntedManor")
                 if not arrived and not queued() then
@@ -15061,13 +15218,19 @@ __moduleSources["Game/EventTasks"] = function(...)
                 -- BEFORE the trip. It was cleared after it: the game's teleport prompt puts me in the join circle and can
                 -- queue me while the farm is still on its way, and that join was thrown away (the run went on alone).
                 h:reset()
+                local queueSince = Util.now()
+                EventTasks.inQueueByHint("hauntlet", queueSince) -- starts watching the game's hint
                 local function queued()
-                    return h.joinAcceptedAt ~= nil or h.join ~= nil
+                    return h.joinAcceptedAt ~= nil or h.join ~= nil or EventTasks.inQueueByHint("hauntlet", queueSince)
                 end
                 local startGuess = (group and tonumber(group.start))
-                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow())
-                pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
-                if not queued() then
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow(), E.HauntletRoundSeconds)
+                local okPrompt, byPrompt = pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
+                byPrompt = okPrompt and byPrompt == true
+                -- v2.1.29 (hauntlet_debug 23:23: "the run is on for the server (hearts), but the game did not take me
+                -- into it", still in HauntedHotel): after the game's own teleport no trip / "draw again" of mine on top
+                -- of it (InteriorsM.enter for the place I am already in can leave the game's next move undone)
+                if not queued() and not byPrompt then
                     phase(ctx, "going to the Hotel", startGuess)
                     local arrived, why = ctx.travel:goTo(E.HauntletLobby)
                     if not arrived and not queued() then
@@ -15078,7 +15241,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 local HAUNTLET_JOIN_LEAD = 30
                 local serverNow = Minigame.serverNow()
                 local startAt = (group and tonumber(group.start))
-                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow)
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow, E.HauntletRoundSeconds)
                 if startAt and startAt - serverNow > HAUNTLET_JOIN_LEAD and not queued() then
                     local waitSec = math.floor(startAt - serverNow - HAUNTLET_JOIN_LEAD)
                     ctx.logger:info("Event", string.format(
@@ -16180,6 +16343,15 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         local bestKind, bestList
         local groups = gameData:neonFusionGroups(exclude, mega)
+        if farm.PetOrder == "potion" then -- v2.1.30: the potion farm pet is never fused
+            local keep = gameData:potionFarmPet()
+            for _, list in pairs(groups) do
+                local at = keep and table.find(list, keep)
+                if at then
+                    table.remove(list, at)
+                end
+            end
+        end
         local focus = GameConstants.focusKind(farm)
         if focus and type(groups[focus]) == "table" and #groups[focus] >= 4 then -- Mega a Pet: the focus pet first
             local list = groups[focus]
@@ -17458,7 +17630,28 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- v2.1.12 (user: "each switch does what its name says"): "Buy eggs" works on its own; equipping / swapping pets
         -- is only done by "Keep a growing pet equipped"
         local keepPet = self._farmConfig.KeepPetEquipped == true
-        if self._gameData and (keepPet or self._farmConfig.BuyEgg or GameConstants.focusOf(self._farmConfig)) and not petHold then
+        if self._gameData and keepPet and self._farmConfig.PetOrder == "potion" and not petHold then
+            -- v2.1.30 Potion farm: the full grown pet with the highest friendship stays equipped (no growing-pet swaps,
+            -- no egg buying for it); friendship level-ups give the Age Potions
+            self._badPets = self._badPets or {}
+            local best, level = nil, nil
+            if self._gameData:petInventoryKnown() then
+                best, level = self._gameData:potionFarmPet()
+            end
+            if best and (self._badPets[best] or 0) < 2 and not self._gameData:isPetEquipped(best)
+                and not self:_isBlocked("keep_pet") then
+                self._logger:info("Tasks", string.format("Potion farm: equipping %s (friendship %s)",
+                    tostring(self._gameData:getPetKind(best)), tostring(level)))
+                self:_start("keep_pet", "potion farm: equip the highest friendship pet", Tasks.equipPet, { petUnique = best,
+                    onFail = function()
+                        self._badPets[best] = (self._badPets[best] or 0) + 1
+                    end })
+                return
+            elseif not best and not self._announcedNoPotionPet and self._gameData:petInventoryKnown() then
+                self._announcedNoPotionPet = true
+                self._logger:warn("Tasks", "Potion farm: no full grown pet in your backpack: farming the equipped one")
+            end
+        elseif self._gameData and (keepPet or self._farmConfig.BuyEgg or GameConstants.focusOf(self._farmConfig)) and not petHold then
             local current = self._gameData:firstEquippedPet()
             local count, known = self._gameData:equippedPetCount()
             local skipGrown = self._farmConfig.SkipFullGrown
@@ -17669,6 +17862,20 @@ __moduleSources["Game/TaskManager"] = function(...)
     function TaskManager:_minigameFreeze()
         if self._running and MINIGAME_TASKS[self._running.key] then
             return "a minigame is running (" .. self._running.label .. ")"
+        end
+        -- v2.1.28 (user screenshot: in a Ghost Gallery round, "doing: feed the Stray Cat"): I am in a minigame room
+        -- (the game's prompt or a manual join took me in, no minigame task of the farm) = nothing else runs either;
+        -- the 20 s after it count from when I left the room
+        local place = self._state:get("player.interior")
+        local E = GameConstants.Event
+        local inRoom = type(place) == "string" and (string.sub(place, 1, #E.MinigameInteriorPrefix) == E.MinigameInteriorPrefix
+            or string.sub(place, 1, #E.HauntletInteriorPrefix) == E.HauntletInteriorPrefix)
+        if inRoom then
+            self._inMinigameRoom = true
+            return "in a minigame room (" .. place .. ")"
+        elseif self._inMinigameRoom then
+            self._inMinigameRoom = false
+            self._minigameEndedAt = Util.now()
         end
         local endedAgo = Util.now() - (self._minigameEndedAt or -math.huge)
         if endedAgo < MINIGAME_RESUME_AFTER_SECONDS then
@@ -17915,10 +18122,11 @@ __moduleSources["Game/TaskManager"] = function(...)
             return nil
         end
         local serverNow = Minigame.serverNow()
-        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow)
+        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow,
+            GameConstants.Event.HauntletRoundSeconds)
         if start and self._hauntlet.lastRunStart and start - self._hauntlet.lastRunStart < 900 then
-            -- the round right after a run never takes me in (reports, v2.1.3): skip it
-            start = start + GameConstants.Event.RoundSeconds
+            -- the run just played: the next one (v2.1.25: 20 min later)
+            start = start + GameConstants.Event.HauntletRoundSeconds
         end
         if start and start - serverNow <= lead and start - serverNow > -15 then
             return start
@@ -18217,9 +18425,10 @@ __moduleSources["Game/TaskManager"] = function(...)
         elseif current == "hauntlet" then
             out.haunt = "joining"
         else
-            hauntStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), now)
+            hauntStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), now,
+                GameConstants.Event.HauntletRoundSeconds)
             if hauntStart and h and h.lastRunStart and hauntStart - h.lastRunStart < 900 then
-                hauntStart += GameConstants.Event.RoundSeconds
+                hauntStart += GameConstants.Event.HauntletRoundSeconds
                 out.hauntSkipped = true
             end
             out.haunt = hauntStart and "next" or "unknown"
@@ -18511,9 +18720,36 @@ __moduleSources["main"] = function(...)
                 end)
                 return ok and open == true
             end
+            -- v2.1.27: the button is still drawn (its ScreenGui on, it and its parents visible)
+            local function visibleNow(object)
+                local ok, visible = pcall(function()
+                    local screenGui = object:FindFirstAncestorOfClass("ScreenGui")
+                    if not screenGui or not screenGui.Enabled then
+                        return false
+                    end
+                    local node = object
+                    while node and node ~= screenGui do
+                        if node:IsA("GuiObject") and node.Visible == false then
+                            return false
+                        end
+                        node = node.Parent
+                    end
+                    return true
+                end)
+                return ok and visible == true
+            end
             local function clickUntilClosed(label, button, isOpen)
                 logger:info("Game", label .. " is open: clicking")
                 for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    -- v2.1.27 (user: at game start the Buy Candy Corn shop opened by itself): closed late by the last
+                    -- way = done; a screen tap on a closed window hit what was under it (the candy counter)
+                    if not isOpen() then
+                        logger:success("Game", label .. ": closed")
+                        return true
+                    end
+                    if (method == "touch" or method == "mouse") and not (button.Parent and visibleNow(button)) then
+                        break
+                    end
                     local ran, detail = Interaction.clickButton(button, method)
                     if ran then
                         local waited = 0
@@ -18790,8 +19026,14 @@ __moduleSources["main"] = function(...)
             -- v2.1.6 optimisation (many accounts on one phone): ONE pass over the visible ScreenGuis every 3 s for all
             -- the dialogs (was one full pass per dialog, every 2 s), and a quick closer: each click way is given 2 s
             -- (was 8 s), its misses are debug lines, and a dialog that cannot be closed twice is left alone 30 min
-            local function quickClose(label, button, isOpen)
+            local function quickClose(label, button, isOpen, once)
                 for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    if not isOpen() then -- v2.1.27: closed late = no screen tap on what is under it
+                        return true
+                    end
+                    if (method == "touch" or method == "mouse") and not (button.Parent and visibleNow(button)) then
+                        return false
+                    end
                     local ran = Interaction.clickButton(button, method)
                     if ran then
                         local untilAt = os.clock() + 2
@@ -18801,6 +19043,16 @@ __moduleSources["main"] = function(...)
                         if not isOpen() then
                             logger:debug("Game", label .. ": closed (" .. method .. ")")
                             return true
+                        end
+                        -- v2.1.29 (gui_log: "Yes" by firesignal, then 3 s later a 2nd click by connections on the same
+                        -- button while the game was already teleporting): a teleport Yes is pressed ONCE; it counts
+                        -- when the prompt is gone within 6 s
+                        if once then
+                            local closeBy = os.clock() + 4
+                            while isOpen() and os.clock() < closeBy do
+                                task.wait(0.25)
+                            end
+                            return not isOpen()
                         end
                     end
                 end
@@ -18971,7 +19223,7 @@ __moduleSources["main"] = function(...)
                                             end
                                             if quickClose(label, button, function()
                                                 return isOnScreen(marker)
-                                            end) then
+                                            end, promptKind ~= nil) then
                                                 -- v2.1.22 (2.1.20 reports: "Minigame starting soon: could not be closed
                                                 -- twice (hidden)"): a Yes counts only when the click really closed the
                                                 -- prompt (it was noted before the click: the farm then waited for a game
