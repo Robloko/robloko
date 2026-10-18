@@ -2,67 +2,76 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+local function clickButton(button)
+    if button and button.Visible and button.Active and button:IsA("GuiButton") then
+        if firesignal then
+            firesignal(button.MouseButton1Down)
+            task.wait(0.05)
+            firesignal(button.MouseButton1Up)
+            firesignal(button.MouseButton1Click)
+        else
+            button.MouseButton1Click:Fire()
+        end
+        print("Clicked: " .. button:GetFullName())
+        return true
+    end
+    return false
+end
+
 local function getButtons()
+    local dialog = PlayerGui:FindFirstChild("DialogApp")
+        and PlayerGui.DialogApp:FindFirstChild("Dialog")
+    if not dialog then return {} end
+
     local buttons = {}
 
-    -- 1. ArachnophobiaModeDialog "Off"
-    local b1 = PlayerGui:FindFirstChild("DialogApp")
-        and PlayerGui.DialogApp:FindFirstChild("Dialog")
-        and PlayerGui.DialogApp.Dialog:FindFirstChild("ArachnophobiaModeDialog")
-        and PlayerGui.DialogApp.Dialog.ArachnophobiaModeDialog:FindFirstChild("Buttons")
-        and PlayerGui.DialogApp.Dialog.ArachnophobiaModeDialog.Buttons:FindFirstChild("Off")
-    if b1 then table.insert(buttons, b1) end
+    -- 1. ArachnophobiaModeDialog.Off
+    local arach = dialog:FindFirstChild("ArachnophobiaModeDialog")
+    if arach then
+        local btns = arach:FindFirstChild("Buttons")
+        if btns then table.insert(buttons, btns:FindFirstChild("Off")) end
+    end
 
     -- 2. SpawnChooserDialog Home button
-    local b2 = PlayerGui:FindFirstChild("DialogApp")
-        and PlayerGui.DialogApp.Dialog:FindFirstChild("SpawnChooserDialog")
-        and PlayerGui.DialogApp.Dialog.SpawnChooserDialog:FindFirstChild("UpperCardContainer")
-        and PlayerGui.DialogApp.Dialog.SpawnChooserDialog.UpperCardContainer:FindFirstChild("ChoicesContent")
-        and PlayerGui.DialogApp.Dialog.SpawnChooserDialog.UpperCardContainer.ChoicesContent:FindFirstChild("Choices")
-        and PlayerGui.DialogApp.Dialog.SpawnChooserDialog.UpperCardContainer.ChoicesContent.Choices:FindFirstChild("Home")
-        and PlayerGui.DialogApp.Dialog.SpawnChooserDialog.UpperCardContainer.ChoicesContent.Choices.Home:FindFirstChild("Button")
-    if b2 then table.insert(buttons, b2) end
-
-    -- 3. ThemeColorDialog Response child #8
-    local b3 = PlayerGui:FindFirstChild("DialogApp")
-        and PlayerGui.DialogApp.Dialog:FindFirstChild("ThemeColorDialog")
-        and PlayerGui.DialogApp.Dialog.ThemeColorDialog:FindFirstChild("Info")
-        and PlayerGui.DialogApp.Dialog.ThemeColorDialog.Info:FindFirstChild("Response")
-    if b3 then
-        local children = b3:GetChildren()
-        if #children >= 8 then
-            table.insert(buttons, children[8])
+    local spawn = dialog:FindFirstChild("SpawnChooserDialog")
+    if spawn then
+        local upper = spawn:FindFirstChild("UpperCardContainer")
+        if upper then
+            local choices = upper:FindFirstChild("ChoicesContent")
+            if choices then
+                local home = choices:FindFirstChild("Choices")
+                if home then table.insert(buttons, home:FindFirstChild("Button")) end
+            end
         end
     end
 
-    -- 4. ExitButton
-    local b4 = PlayerGui:FindFirstChild("DialogApp")
-        and PlayerGui.DialogApp:FindFirstChild("ExitButton")
-    if b4 then table.insert(buttons, b4) end
+    -- 3. ThemeColorDialog Response child #8
+    local theme = dialog:FindFirstChild("ThemeColorDialog")
+    if theme then
+        local info = theme:FindFirstChild("Info")
+        if info then
+            local response = info:FindFirstChild("Response")
+            if response then
+                local kids = response:GetChildren()
+                if kids[8] then table.insert(buttons, kids[8]) end
+            end
+        end
+        -- 4. ThemeColorDialog ButtonTemplate
+        local btns = theme:FindFirstChild("Buttons")
+        if btns then table.insert(buttons, btns:FindFirstChild("ButtonTemplate")) end
+    end
+
+    -- 5. ExitButton
+    table.insert(buttons, dialog:FindFirstChild("ExitButton"))
 
     return buttons
 end
 
-local function clickButton(button)
-    if firesignal then
-        firesignal(button.Activated)
-        firesignal(button.MouseButton1Down)
-        task.wait(0.05)
-        firesignal(button.MouseButton1Up)
-        firesignal(button.MouseButton1Click)
-    else
-        button.MouseButton1Click:Fire()
-        button.Activated:Fire()
-    end
-    print("Clicked: " .. button:GetFullName())
-end
-
-while task.wait(0.5) do
+while task.wait(2) do
     pcall(function()
-        for _, button in ipairs(getButtons()) do
-            if button:IsA("GuiButton") and button.Visible and button.Active then
-                clickButton(button)
-                task.wait(1)
+        for _, b in ipairs(getButtons()) do
+            if clickButton(b) then
+                task.wait(2) -- small pause after a click
             end
         end
     end)
