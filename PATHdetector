@@ -1,0 +1,66 @@
+-- // POPUP PATH DETECTOR (working version)
+
+-- Safe LocalPlayer wait (fixes "attempt to index nil with 'LocalPlayer'")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local function describe(inst)
+    local extra = ""
+    if inst:IsA("GuiObject") then
+        extra = string.format(" | Visible=%s Active=%s Pos=%s Size=%s",
+            tostring(inst.Visible), tostring(inst.Active),
+            tostring(inst.Position), tostring(inst.Size))
+    elseif inst:IsA("ScreenGui") then
+        extra = " | Enabled=" .. tostring(inst.Enabled)
+    end
+    print(string.format("[POPUP][%s] %s%s", inst.ClassName, inst:GetFullName(), extra))
+end
+
+-- ====== 1. Dump current PlayerGui tree ======
+print("[POPUP] ==== Current PlayerGui structure ====")
+for _, gui in ipairs(PlayerGui:GetChildren()) do
+    print("[POPUP][App] " .. gui:GetFullName())
+    for _, d in ipairs(gui:GetDescendants()) do
+        if d:IsA("Frame") or d:IsA("GuiButton") or d:IsA("TextLabel") then
+            local text = d:IsA("TextLabel") and (" TEXT=" .. tostring(d.Text)) or ""
+            print("   - " .. d:GetFullName() .. " (" .. d.ClassName .. ")" .. text)
+        end
+    end
+end
+
+-- ====== 2. Watch for NEW popups ======
+print("[POPUP] ==== Watching for popups... trigger them in-game ====")
+
+local function watchGui(gui)
+    gui.DescendantAdded:Connect(function(d)
+        if d:IsA("GuiObject") then
+            describe(d)
+            d:GetPropertyChangedSignal("Visible"):Connect(function()
+                if d.Visible then describe(d) end
+            end)
+        end
+    end)
+    for _, d in ipairs(gui:GetDescendants()) do
+        if d:IsA("GuiObject") then
+            d:GetPropertyChangedSignal("Visible"):Connect(function()
+                if d.Visible then describe(d) end
+            end)
+        end
+    end
+end
+
+-- Watch existing GUIs + ones added later
+for _, gui in ipairs(PlayerGui:GetChildren()) do
+    watchGui(gui)
+end
+PlayerGui.ChildAdded:Connect(function(child)
+    print("[POPUP][NEW GUI] " .. child:GetFullName() .. " (" .. child.ClassName .. ")")
+    watchGui(child)
+end)
+
+print("[POPUP] Detector running. Open any popup in-game and its path will print here.")
