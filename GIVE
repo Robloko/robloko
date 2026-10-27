@@ -1,0 +1,287 @@
+-- ==================================================================
+-- SIMPLE 2-BUTTON AUTO GIVER (Eggs + Pets)
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+-- ================= CONFIG =================
+local TARGET_PLAYER_NAMES = {"Royohongo", "Veronnau"}
+
+local TARGET_EGGS = {
+    "halloween_2026_stray_cat_dragon",
+    "halloween_2026_poltergeist_box",
+    "halloween_2026_skelicorn",
+    "fairytale_egg_2026_fairytale_egg",
+    "pet_progression_2026_purrowl",
+    "admin_abuse_egg_2026_egg",
+    "winter_2024_frostclaw",
+    "halloween_2024_scarebear",
+    "endangered_2026_endangered_egg",
+    "lny_2026_fire_foal",
+    "lny_2026_fire_mare",
+    "lny_2026_fire_stallion",
+    "aztec_egg_2025_aztec_egg",
+    "winter_2025_angus_cow",
+    "winter_2025_angus_calf",
+    "winter_2025_angus_bull",
+    "halloween_2025_bat_cat",
+    "basic_egg_2022_alicorn",
+    "basic_egg_2022_ancient_dragon",
+    "basic_egg_2022_dragonfly",
+    "pet_recycler_2025_basic_egg",
+    "pet_recycler_2025_crystal_egg",
+    "summer_2026_acorn_box"
+}
+
+local TARGET_PETS = {
+    "halloween_2026_stitches",
+    "halloween_2026_tomb_spider",
+    "halloween_2026_jump_scare",
+    "roblox_anniversary_2026_blue_cat",
+    "roblox_anniversary_2026_pink_dog",
+    "birthday_2026_birthday_butterfly",
+    "summer_2026_sheepdog",
+    "summer_2026_river_otter",
+    "summer_2026_snake_tail_dragonfly",
+    "journey_2026_sheepdog_duck",
+    "journey_2026_pilot_gull",
+    "summerfest_2024_cow_calf",
+    "halloween_2023_slime",
+    "sugarfest_2026_jiggly_jerboa",
+    "sugarfest_2026_waffle_wyrm",
+    "sugarfest_2026_cocoadile",
+    "egg_teaser_2026_dire_wolf",
+    "lny_2026_fire_foal",
+    "valentines_2026_cherub_chipmunk",
+    "inspector_shepherd_2026_magpie",
+    "winter_2024_frostbite_cub",
+    "winter_2025_angus_cow",
+    "winter_2025_angus_calf",
+    "winter_2025_maine_coon",
+    "winter_2025_turtle_doves",
+    "winter_2025_xmas_tree_sasquatch",
+    "winter_2025_humbug",
+    "basic_egg_2022_ant",
+    "basic_egg_2022_mouse",
+    "basic_egg_2022_camel",
+    "basic_egg_2022_poodle",
+    "basic_egg_2022_donkey",
+    "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan",
+    "basic_egg_2022_parakeet",
+    "basic_egg_2022_swordfish",
+    "basic_egg_2022_robot",
+    "basic_egg_2022_corgi"
+}
+
+-- ================= MODES =================
+local EggMode = false
+local PetMode = false
+
+-- ================= HELPERS =================
+local function debugPrint(msg)
+    print("[AutoGiver] " .. msg)
+end
+
+local function findFirstAvailablePlayer()
+    for _, name in ipairs(TARGET_PLAYER_NAMES) do
+        local p = Players:FindFirstChild(name)
+        if p then return p end
+    end
+    return nil
+end
+
+local function getPlayerData()
+    local ok, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
+    if not ok then return nil end
+    local ok2, data = pcall(clientData.get_data, clientData)
+    if not ok2 then return nil end
+    return data and data[player.Name] or nil
+end
+
+-- Find items (searches pets AND gifts inventories) matching target list
+local function findTargetItems(targetList)
+    local found = {}
+    local data = getPlayerData()
+    if not data or not data.inventory then return found end
+
+    for _, invType in ipairs({"pets", "gifts"}) do
+        if data.inventory[invType] then
+            for uid, itemData in pairs(data.inventory[invType]) do
+                if itemData.id then
+                    local id = string.lower(itemData.id)
+                    for _, target in ipairs(targetList) do
+                        if id == target then
+                            table.insert(found, {uid = uid, name = itemData.id})
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+local function giveItem(targetPlayer, uid)
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(targetPlayer, uid)
+    end)
+    if success then
+        debugPrint("Gave item to " .. targetPlayer.Name)
+        return true
+    else
+        debugPrint("Failed to give item: " .. tostring(result))
+        return false
+    end
+end
+
+-- ================= LOOPS =================
+local function startEggGiver()
+    while EggMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            debugPrint("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+
+        local eggs = findTargetItems(TARGET_EGGS)
+        if #eggs == 0 then
+            debugPrint("No eggs left! Stopping.")
+            EggMode = false
+            break
+        end
+
+        if giveItem(target, eggs[1].uid) then
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+local function startPetGiver()
+    while PetMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            debugPrint("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+
+        local pets = findTargetItems(TARGET_PETS)
+        if #pets == 0 then
+            debugPrint("No target pets left! Stopping.")
+            PetMode = false
+            break
+        end
+
+        if giveItem(target, pets[1].uid) then
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+-- ================= UI =================
+local function createUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "SimpleAutoGiverUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 180, 0, 105)
+    frame.Position = UDim2.new(0, 10, 1, -115)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = frame
+
+    -- Draggable
+    local dragging, dragStart, startPos = false, nil, nil
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 22)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "Auto Giver"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 14
+    title.Parent = frame
+
+    -- Egg button
+    local eggButton = Instance.new("TextButton")
+    eggButton.Size = UDim2.new(0.85, 0, 0, 28)
+    eggButton.Position = UDim2.new(0.075, 0, 0, 28)
+    eggButton.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+    eggButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    eggButton.Text = "GIVE EGGS [OFF]"
+    eggButton.Font = Enum.Font.SourceSansBold
+    eggButton.TextSize = 13
+    eggButton.Parent = frame
+    Instance.new("UICorner", eggButton).CornerRadius = UDim.new(0, 4)
+
+    -- Pet button
+    local petButton = Instance.new("TextButton")
+    petButton.Size = UDim2.new(0.85, 0, 0, 28)
+    petButton.Position = UDim2.new(0.075, 0, 0, 64)
+    petButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+    petButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    petButton.Text = "GIVE PETS [OFF]"
+    petButton.Font = Enum.Font.SourceSansBold
+    petButton.TextSize = 13
+    petButton.Parent = frame
+    Instance.new("UICorner", petButton).CornerRadius = UDim.new(0, 4)
+
+    eggButton.MouseButton1Click:Connect(function()
+        EggMode = not EggMode
+        eggButton.Text = EggMode and "GIVE EGGS [ON]" or "GIVE EGGS [OFF]"
+        eggButton.BackgroundColor3 = EggMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(200, 150, 0)
+        if EggMode then
+            coroutine.wrap(startEggGiver)()
+            debugPrint("Egg giver started")
+        else
+            debugPrint("Egg giver stopped")
+        end
+    end)
+
+    petButton.MouseButton1Click:Connect(function()
+        PetMode = not PetMode
+        petButton.Text = PetMode and "GIVE PETS [ON]" or "GIVE PETS [OFF]"
+        petButton.BackgroundColor3 = PetMode and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(0, 120, 200)
+        if PetMode then
+            coroutine.wrap(startPetGiver)()
+            debugPrint("Pet giver started")
+        else
+            debugPrint("Pet giver stopped")
+        end
+    end)
+end
+
+createUI()
+debugPrint("Simple 2-button Auto Giver loaded!")
+debugPrint("Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "))
