@@ -2691,34 +2691,40 @@ local farmStart = nil
 local show
 local onFinished
 local function runFarm()
-	if not UserConfig.Farm.Enabled or not UserConfig.Farm.AutoNeeds.Enabled then
+	if not UserConfig.Farm.Enabled then
 		return
 	end
 	farmStart = os.clock()
 	say("Guide done — farm mode is on", "ok")
 	setGoal("Farming: needs, pen, neon, transfer", {})
-	while running do
+	while running and UserConfig.Farm.Enabled do
 		local minutes = (UserConfig.Farm.DisableMinutes or 0)
 		if minutes > 0 and os.clock() - farmStart > minutes * 60 then
 			say("Farm time is up (" .. minutes .. " min): stopping", "warn")
 			break
 		end
-		if not UserConfig.Farm.KeepPetEquipped then
-			local ok, target, why = pcall(grindTarget, { farm = true })
-			if ok and target then
-				pcall(switchPet, target, why)
-			end
+		if not UserConfig.Farm.AutoNeeds.Enabled then
+			-- toggled off from the window: wait until it is back on
+			setNow("Farm paused (Auto needs off)")
+			task.wait(1)
 		else
-			firstPet()
+			if not UserConfig.Farm.KeepPetEquipped then
+				local ok, target, why = pcall(grindTarget, { farm = true })
+				if ok and target then
+					pcall(switchPet, target, why)
+				end
+			else
+				firstPet()
+			end
+			transferTick()
+			farmPenTick()
+			lureTick()
+			farmNeonTick()
+			farmPotionTick()
+			farmEggTick()
+			careStep()
+			flushCalls()
 		end
-		transferTick()
-		farmPenTick()
-		lureTick()
-		farmNeonTick()
-		farmPotionTick()
-		farmEggTick()
-		careStep()
-		flushCalls()
 	end
 	if running then
 		say("Farm stopped. " .. needsDone .. " needs done this session", "warn")
@@ -3183,7 +3189,7 @@ local function runGuide()
 end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 236, function()
+	local frame = window(width, 428, function()
 		running = false
 		uiLog = nil
 		ui.now = nil
@@ -3213,9 +3219,46 @@ local function mainWindow()
 		end
 		logBox.Text = table.concat(shown, "\n")
 	end
+	-- ===== Farm / Transfer feature switches (read/write UserConfig live) =====
+	create("Frame", { Position = UDim2.fromOffset(10, 180), Size = UDim2.new(1, -20, 0, 1),
+		BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+	text(frame, 10, 184, 200, 14, "FARM", 11, THEME.accent, true)
+	text(frame, 138, 184, 200, 14, "TRANSFER (Thingy)", 11, THEME.accent, true)
+	local function featureToggle(x, y, label, get, set)
+		local b
+		local function refresh()
+			local on = get() == true
+			b.Text = (on and "[ON] " or "[off] ") .. label
+			b.TextColor3 = on and THEME.ok or THEME.dim
+		end
+		b = button(frame, x, y, 124, "", THEME.text, function()
+			set(not (get() == true))
+			refresh()
+			say((get() and "On: " or "Off: ") .. label, get() and "ok" or "warn")
+		end)
+		refresh()
+		return b
+	end
+	local Farm = UserConfig.Farm
+	featureToggle(10, 200, "Farm loop", function() return Farm.Enabled end, function(v) Farm.Enabled = v end)
+	featureToggle(138, 200, "Auto needs", function() return Farm.AutoNeeds.Enabled end, function(v) Farm.AutoNeeds.Enabled = v end)
+	featureToggle(10, 226, "Buy eggs", function() return Farm.BuyEgg end, function(v) Farm.BuyEgg = v end)
+	featureToggle(138, 226, "Keep 1 pet", function() return Farm.KeepPetEquipped end, function(v) Farm.KeepPetEquipped = v end)
+	featureToggle(10, 252, "Auto neon", function() return Farm.AutoNeon.Enabled end, function(v) Farm.AutoNeon.Enabled = v end)
+	featureToggle(138, 252, "Mega neons", function() return Farm.AutoNeon.Mega end, function(v) Farm.AutoNeon.Mega = v end)
+	featureToggle(10, 278, "Age potions", function() return Farm.AutoPotions.Enabled end, function(v) Farm.AutoPotions.Enabled = v end)
+	featureToggle(138, 278, "Pet Pen", function() return Farm.PetPen.Enabled end, function(v) Farm.PetPen.Enabled = v end)
+	featureToggle(10, 304, "Lure box", function() return Farm.LureBox.Enabled end, function(v) Farm.LureBox.Enabled = v end)
+	featureToggle(138, 304, "Mannequin (main)", function() return Farm.Transfer.Mannequin end, function(v) Farm.Transfer.Mannequin = v end)
+	featureToggle(10, 330, "Buy outfits (alt)", function() return Farm.Transfer.BuyMannequin end, function(v) Farm.Transfer.BuyMannequin = v end)
+	featureToggle(138, 330, "Auto pay (alt)", function() return Farm.Transfer.AutoPay end, function(v) Farm.Transfer.AutoPay = v end)
+	local roleLine = text(frame, 10, 356, width - 20, 14, "", 11, THEME.dim)
+	pcall(function()
+		roleLine.Text = "Transfer role: " .. transferRole() .. "  (Main: " .. (Farm.Transfer.MainName ~= "" and Farm.Transfer.MainName or tostring(Farm.Transfer.MainUserId)) .. ")"
+	end)
 	local third = (width - 32) / 3
 	local startButton
-	startButton = button(frame, 10, 184, third, "Start", THEME.ok, function()
+	startButton = button(frame, 10, 376, third, "Start", THEME.ok, function()
 		if running then
 			return
 		end
@@ -3233,14 +3276,14 @@ local function mainWindow()
 			end
 		end)
 	end)
-	button(frame, 16 + third, 184, third, "Skip", THEME.text, function()
+	button(frame, 16 + third, 376, third, "Skip", THEME.text, function()
 		skipPressed = true
 	end)
-	button(frame, 22 + third * 2, 184, third, "Stop", THEME.bad, function()
+	button(frame, 22 + third * 2, 376, third, "Stop", THEME.bad, function()
 		running = false
 		show("Stopped", "", "")
 	end)
-	footer(frame, width, 214)
+	footer(frame, width, 406)
 end
 env.AutoAchievements = {
 	Stop = function() running = false end,
