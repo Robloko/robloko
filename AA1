@@ -8,94 +8,6 @@ local env = getgenv and getgenv() or {}
 if env.AutoAchievements and env.AutoAchievements.Stop then
 	pcall(env.AutoAchievements.Stop)
 end
--- boot marker: a tiny always-on label so you can SEE the chunk executed. Without it a
--- silently aborted load looks exactly like "not loading", and some executors strip line
--- info from errors so nothing else tells you what happened.
-local bootFrame
-pcall(function()
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "AutoAchievementsBoot"
-	gui.ResetOnSpawn = false
-	gui.DisplayOrder = 1000
-	local parent
-	pcall(function()
-		parent = gethui and gethui() or game:GetService("CoreGui")
-	end)
-	if not parent then
-		parent = LocalPlayer:WaitForChild("PlayerGui", 5)
-	end
-	gui.Parent = parent
-	local mark = Instance.new("TextLabel")
-	mark.Size = UDim2.fromOffset(260, 24)
-	mark.Position = UDim2.new(1, -270, 0, 10)
-	mark.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-	mark.TextColor3 = Color3.fromRGB(150, 120, 255)
-	mark.Text = "AutoAchievements: starting..."
-	mark.Font = Enum.Font.Gotham
-	mark.TextSize = 12
-	mark.Parent = gui
-	bootFrame = mark
-end)
-local function bootSay(text, keep)
-	pcall(function()
-		if bootFrame then
-			bootFrame.Text = tostring(text)
-			if not keep then
-				task.delay(keep == false and 15 or 15, function()
-					pcall(function()
-						if bootFrame and bootFrame.Parent then
-							bootFrame.Parent:Destroy()
-						end
-					end)
-				end)
-			end
-		end
-	end)
-end
--- boot marker: a tiny always-on label so you can SEE the chunk executed. Without it a
--- silently aborted load looks exactly like "not loading", and some executors strip line
--- info from errors so nothing else tells you what happened.
-local bootFrame
-pcall(function()
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "AutoAchievementsBoot"
-	gui.ResetOnSpawn = false
-	gui.DisplayOrder = 1000
-	local parent
-	pcall(function()
-		parent = gethui and gethui() or game:GetService("CoreGui")
-	end)
-	if not parent then
-		parent = LocalPlayer:WaitForChild("PlayerGui", 5)
-	end
-	gui.Parent = parent
-	local mark = Instance.new("TextLabel")
-	mark.Size = UDim2.fromOffset(260, 24)
-	mark.Position = UDim2.new(1, -270, 0, 10)
-	mark.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-	mark.TextColor3 = Color3.fromRGB(150, 120, 255)
-	mark.Text = "AutoAchievements: starting..."
-	mark.Font = Enum.Font.Gotham
-	mark.TextSize = 12
-	mark.Parent = gui
-	bootFrame = mark
-end)
-local function bootSay(text, keep)
-	pcall(function()
-		if bootFrame then
-			bootFrame.Text = tostring(text)
-			if not keep then
-				task.delay(keep == false and 15 or 15, function()
-					pcall(function()
-						if bootFrame and bootFrame.Parent then
-							bootFrame.Parent:Destroy()
-						end
-					end)
-				end)
-			end
-		end
-	end)
-end
 
 -- ============================================================================
 -- UserConfig (integrated from AdoptMeFarm_public.lua "Adopt Victims v3")
@@ -108,12 +20,9 @@ local UserConfig = {
 			Enabled = true,
 			Skip = {}, -- e.g. { "walk", "ride" }
 		},
-		BabyMode = false, -- you are the baby: the farm also takes care of YOUR needs (eat, drink, shower, sleep, toilet)
-		BabyNeeds = { -- done while BabyMode is on
-			Enabled = true,
-			Skip = {}, -- e.g. { "sick" }
-		},
 		KeepPetEquipped = true, -- farm sticks to one session pet instead of switching
+		BabyMode = false, -- become a baby: YOUR needs get cared for (parents feed / carry you = Bucks)
+		AutoAcceptMenu = true, -- baby mode: auto-accept pick-up / care menus from parents
 		PreferNeon = true, -- neon/mega copies are picked as the fusion goal first
 		BuyEgg = true, -- no pet/egg left -> buy EggToBuy and hatch it on repeat
 		EggToBuy = "cracked_egg",
@@ -234,25 +143,14 @@ end
 GC.Skip = {}
 local clientData
 do
-	local loaded = false
-	-- executed too early (loading screen / teleport): retry for up to ~2 minutes instead
-	-- of silently aborting (a bare return here was why the UI "did not load")
-	for _ = 1, 12 do
-		local ok, result = pcall(function()
-			return require(ReplicatedStorage:WaitForChild("ClientModules", 10):WaitForChild("Core", 10):WaitForChild("ClientData", 10))
-		end)
-		if ok and type(result) == "table" and type(result.get_data) == "function" then
-			clientData = result
-			loaded = true
-			break
-		end
-		bootSay("AutoAchievements: waiting for the game to load...")
-		task.wait(5)
-	end
-	if not loaded then
-		bootSay("Game data not reachable: rejoin and run again from the menu")
+	local ok, result = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("ClientModules", 15):WaitForChild("Core", 15):WaitForChild("ClientData", 15))
+	end)
+	if not ok or type(result) ~= "table" or type(result.get_data) ~= "function" then
+		log("ERROR", "ClientData not usable: " .. tostring(result))
 		return
 	end
+	clientData = result
 end
 local function getKey(key)
 	local ok, all = pcall(clientData.get_data)
@@ -2292,58 +2190,29 @@ local function runWithTimeout(limit, fn, ...)
 	end
 	return ok, why
 end
--- RecordCalls is OFF by default: on some executors hookmetamethod does not return the
--- original __namecall, which silently breaks EVERY namecall in the game (the script stops
--- loading and game LocalScripts error with "attempt to call a nil value" in hashed chunks).
--- Turn it on only if you know your executor's hook works (Synapse/Krnl-style).
-GC.RecordCalls = false
+GC.RecordCalls = true
 GC.CallWindowSeconds = 20
 local recent, queue = {}, {}
 local assistCalls = {}
 local recording = false
-local function namecallWorks()
-	-- a real namecall must still come back: if the hook swallows it, the game is poisoned
-	local ok, service = pcall(function()
-		return game:GetService("Players")
-	end)
-	return ok and service ~= nil
-end
 do
 	if GC.RecordCalls and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
-		if not namecallWorks() then
-			GC.RecordCalls = false
-			log("WARN", "namecalls already broken before the hook: skipping the recorder, rejoin the game")
-		else
-			local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
-			local isExecutor = type(checkcaller) == "function" and checkcaller or function() return false end
-			local old
-			local ok, err = pcall(function()
-				old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-					if type(old) ~= "function" then
-						return
+		local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
+		local isExecutor = type(checkcaller) == "function" and checkcaller or function() return false end
+		local old
+		local ok, err = pcall(function()
+			old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+				if recording and GC.RecordCalls and not isExecutor() then
+					local method = getnamecallmethod()
+					if method == "FireServer" or method == "InvokeServer" then
+						table.insert(queue, { at = os.clock(), remote = self, method = method, args = table.pack(...) })
 					end
-					if recording and GC.RecordCalls and not isExecutor() then
-						local method = getnamecallmethod()
-						if method == "FireServer" or method == "InvokeServer" then
-							table.insert(queue, { at = os.clock(), remote = self, method = method, args = table.pack(...) })
-						end
-					end
-					return old(self, ...)
-				end))
-			end)
-			-- verify with a REAL namecall: the hook must forward calls, not swallow them
-			if not ok or type(old) ~= "function" or not namecallWorks() then
-				pcall(hookmetamethod, game, "__namecall", nil)
-				if type(old) == "function" then
-					pcall(hookmetamethod, game, "__namecall", old)
 				end
-				if not namecallWorks() then
-					log("ERROR", "namecall recorder broke namecalls and could not be undone: REJOIN the game")
-				end
-				recording = false
-				GC.RecordCalls = false
-				log("WARN", "namecall recorder disabled on this executor: assist logs data only")
-			end
+				return old(self, ...)
+			end))
+		end)
+		if not ok then
+			log("WARN", "remote hook failed: " .. tostring(err))
 		end
 	else
 		log("WARN", "hookmetamethod not available: assist logs data only")
@@ -2601,7 +2470,6 @@ local function switchPet(target, why)
 	sessionPet = { unique = target.unique, kind = target.id }
 	firstPet()
 end
-local babyTick -- (Farm integration) forward declaration: BabyMode care, defined with the Farm code below
 local function grindStep(waiting, firstPage)
 	local pending = { first = firstPage == true }
 	for _, id in ipairs(waiting) do
@@ -2628,9 +2496,6 @@ local function grindStep(waiting, firstPage)
 		end
 	end
 	penClaim()
-	if babyTick then
-		pcall(babyTick)
-	end
 	careStep()
 end
 
@@ -2647,132 +2512,11 @@ local function farmApplyConfig()
 	for _, kind in ipairs(type(Farm.AutoPotions.Skip) == "table" and Farm.AutoPotions.Skip or {}) do
 		GC.NEED_SKIP[tostring(kind)] = true
 	end
-	for _, kind in ipairs(type(Farm.BabyNeeds.Skip) == "table" and Farm.BabyNeeds.Skip or {}) do
-		GC.NEED_SKIP[tostring(kind)] = true
-	end
 	if Farm.Focus ~= "" then
 		GC.ReleasePetKind = Farm.Focus
 	end
 end
 farmApplyConfig()
--- ============================================================================
--- (Farm integration) BABY NEEDS (AdoptMeFarm_public.lua "BabyMode"):
--- while BabyMode is on, the player is the baby. The player's own ailments live in
--- the same ailments_manager, keyed by the player's char wrapper, and are fixed by
--- the same remotes: eat/drink (buy + equip + use tool), shower/bed/toilet at home,
--- doctor at the Hospital.
--- ============================================================================
-local function babyUnique()
-	local wrapper = getKey("char_wrapper_raw")
-	if type(wrapper) ~= "table" then
-		return nil
-	end
-	return wrapper.unique or wrapper.id or wrapper.char
-end
-local function babyNeeds()
-	local manager = getKey("ailments_manager")
-	local ailments = type(manager) == "table" and type(manager.ailments) == "table" and manager.ailments[babyUnique()]
-	local list = {}
-	for key, raw in pairs(type(ailments) == "table" and ailments or {}) do
-		list[tostring(type(raw) == "table" and raw.kind or key)] = true
-	end
-	return list
-end
-GC.BABY_NEED_LINES = {
-	hungry = "You are hungry: eating something", thirsty = "You are thirsty: drinking something",
-	sleepy = "You are sleepy: off to bed", dirty = "You are dirty: taking a shower",
-	toilet = "You need the toilet", sick = "You are sick: off to the doctor",
-}
-local function babyFeed(kind)
-	local item = firstOf("food", GC.NEED_ITEMS[kind])
-	if not item and GC.BuyFood then
-		local buy = GC.NEED_BUY[kind]
-		say("Buying " .. buy.id .. " for the baby")
-		send("ShopAPI/BuyItem", "food", buy.id, buy.options)
-		waitUntil(function()
-			item = firstOf("food", { buy.id })
-			return item ~= nil
-		end, 6)
-	end
-	if not item then
-		return false, "nothing to eat or drink in your backpack"
-	end
-	local done = function()
-		return babyNeeds()[kind] == nil
-	end
-	send("ToolAPI/Equip", item.unique, { equip_as_last = false, use_sound_delay = true })
-	task.wait(0.5)
-	send("ToolAPI/ServerUseTool", item.unique, "START")
-	task.wait(1)
-	send("ToolAPI/ServerUseTool", item.unique, "END", nil)
-	send("ToolAPI/Unequip", item.unique, nil)
-	if waitUntil(done, 8) then
-		return true
-	end
-	return false, "eating did not clear " .. kind
-end
-local function babyFurniture(kind)
-	standUp()
-	local ok, why = goTo("housing")
-	if not ok then
-		return false, why
-	end
-	local spots
-	waitUntil(function()
-		spots = (furnitureSpots(GC.NEED_FURNITURE[kind]))
-		return #spots > 0
-	end, 10)
-	for _, spot in ipairs(spots or {}) do
-		sendNoWait("HousingAPI/ActivateFurniture", LocalPlayer, spot.key, spot.useName, { cframe = spot.cframe }, character())
-		if waitUntil(function()
-			return babyNeeds()[kind] == nil
-		end, 25) then
-			standUp()
-			return true
-		end
-		standUp()
-	end
-	return false, "no furniture fixed your " .. kind .. " need"
-end
-local function babySick()
-	standUp()
-	local ok, why = goTo("Hospital")
-	if not ok then
-		return false, why
-	end
-	if talkToDoctor() then
-		return waitUntil(function()
-			return babyNeeds().sick == nil
-		end, 30)
-	end
-	return false, "no doctor found"
-end
-local BABY_NEED_DO = { hungry = babyFeed, thirsty = babyFeed, sleepy = babyFurniture, dirty = babyFurniture,
-	toilet = babyFurniture, sick = babySick }
-local lastBabyTry = {}
-babyTick = function()
-	local Farm = UserConfig.Farm
-	if not (Farm.BabyMode and Farm.BabyNeeds.Enabled) then
-		return
-	end
-	local needs = babyNeeds()
-	for _, kind in ipairs({ "hungry", "thirsty", "sleepy", "dirty", "toilet", "sick" }) do
-		if needs[kind] and not GC.NEED_SKIP[kind] and BABY_NEED_DO[kind]
-			and os.clock() - (lastBabyTry[kind] or -1000) > 60 then
-			lastBabyTry[kind] = os.clock()
-			say(GC.BABY_NEED_LINES[kind] or ("Baby need: " .. kind))
-			log("BABY", kind .. " at " .. tostring(currentPlace()) .. " bucks=" .. money())
-			local ok, why = runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, BABY_NEED_DO[kind], kind)
-			if ok then
-				say("Baby need done: " .. kind, "ok")
-				lastBabyTry[kind] = 0
-			else
-				say("Couldn't fix that: " .. tostring(why), "bad")
-			end
-			return -- one baby need per tick; the loop comes back for the rest
-		end
-	end
-end
 local function transferRole()
 	local T = UserConfig.Farm.Transfer
 	if T.Role == "main" then
@@ -2944,6 +2688,111 @@ local function farmEggTick()
 		runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, buyEgg)
 	end
 end
+-- (Baby integration) BABY MODE + BABY NEEDS + AUTO-ACCEPT MENUS
+-- from AdoptMeFarm: Farm.BabyMode / Farm.AutoAcceptMenu, rebuilt on this core.
+-- In baby mode YOUR needs get cared for (parents pick you up / feed you = Bucks).
+-- The baby-mode remotes follow the game's usual API naming; every call goes through
+-- send() (pcall + log), so a wrong guess only logs an ERROR and never crashes.
+-- If baby mode does not turn on: become a baby once by hand with the recorder
+-- (assist mode) on, then copy the exact remote call from the CALL log below.
+local babyTried = false
+local function isBaby()
+	local wrapper = getKey("char_wrapper_raw")
+	if type(wrapper) == "table" then
+		if wrapper.is_baby == true or wrapper.baby == true then
+			return true
+		end
+		if type(wrapper.roleplay) == "string" and string.lower(wrapper.roleplay) == "baby" then
+			return true
+		end
+	end
+	local settings = getKey("settings_2021")
+	return type(settings) == "table" and settings.baby_mode == true
+end
+local function ensureBaby()
+	if isBaby() or babyTried then
+		return
+	end
+	babyTried = true
+	say("Baby mode: becoming a baby")
+	send("AvatarAPI/BecomeBaby")
+	send("SettingsAPI/SetSetting", "baby_mode", true)
+end
+local MENU_WORDS = { yes = true, okay = true, ok = true, adopt = true, accept = true,
+	["pick up"] = true, hold = true, feed = true, care = true }
+local function acceptMenus()
+	local buttons = {}
+	local function scan(parent)
+		for _, child in ipairs(parent and parent:GetChildren() or {}) do
+			if child:IsA("TextButton") and child.Visible and child.Active then
+				local label = string.lower((string.gsub(child.Text or "", "^%s*(.-)%s*$", "%1")))
+				if label ~= "" and MENU_WORDS[label] then
+					table.insert(buttons, child)
+				end
+			end
+			if #buttons < 8 and (child:IsA("GuiObject") or child:IsA("ScreenGui")) then
+				scan(child)
+			end
+		end
+	end
+	pcall(scan, LocalPlayer:FindFirstChild("PlayerGui"))
+	for _, b in ipairs(buttons) do
+		say("Menu accepted: " .. b.Text)
+		if type(firesignal) == "function" then
+			pcall(firesignal, b.MouseButton1Click)
+		elseif type(getconnections) == "function" then
+			pcall(function()
+				for _, connection in ipairs(getconnections(b.MouseButton1Click)) do
+					connection:Fire()
+				end
+			end)
+		end
+	end
+end
+local lastBabyEat = 0
+local function babyEatTick()
+	-- baby needs live in the same ailments manager, but not on a pet wrapper:
+	-- any hungry/thirsty entry whose unique is NOT a pet is the baby's own need
+	if os.clock() - lastBabyEat < 20 then
+		return
+	end
+	local manager = getKey("ailments_manager")
+	local ailments = type(manager) == "table" and type(manager.ailments) == "table" and manager.ailments or {}
+	for unique, ail in pairs(ailments) do
+		if not petWrapper(tostring(unique)) then
+			local kind = tostring(type(ail) == "table" and ail.kind or unique)
+			if kind == "hungry" or kind == "thirsty" then
+				local item = firstOf("food", GC.NEED_ITEMS[kind])
+				if item then
+					lastBabyEat = os.clock()
+					say("Baby need (" .. kind .. "): eating " .. prettyKind(item.id))
+					send("ToolAPI/Equip", item.unique, { equip_as_last = false, use_sound_delay = true })
+					task.wait(0.5)
+					send("ToolAPI/ServerUseTool", item.unique, "START")
+					send("ToolAPI/Unequip", item.unique, nil)
+				end
+				break
+			end
+		end
+	end
+end
+local function babyTick()
+	local Farm = UserConfig.Farm
+	if not Farm.BabyMode then
+		return
+	end
+	ensureBaby()
+	babyEatTick()
+	if Farm.AutoAcceptMenu then
+		acceptMenus()
+	end
+end
+task.spawn(function()
+	while true do
+		pcall(babyTick)
+		task.wait(1)
+	end
+end)
 local farmStart = nil
 -- forward declarations: `show` and `onFinished` are fully defined further down (UI section)
 local show
@@ -2980,7 +2829,6 @@ local function runFarm()
 			farmNeonTick()
 			farmPotionTick()
 			farmEggTick()
-			pcall(babyTick)
 			careStep()
 			flushCalls()
 		end
@@ -3143,6 +2991,81 @@ local function footer(frame, width, y)
 			end)
 		end
 	end)
+end
+-- (Config menu) VISIBLE SETTINGS WINDOW: every Farm/Transfer/Telemetry switch, live
+local function configGet(path)
+	local node = UserConfig
+	for _, key in ipairs(path) do
+		if type(node) ~= "table" then
+			return nil
+		end
+		node = node[key]
+	end
+	return node
+end
+local function configSet(path, value)
+	local node = UserConfig
+	for index = 1, #path - 1 do
+		node = node[path[index]]
+		if type(node) ~= "table" then
+			return false
+		end
+	end
+	node[path[#path]] = value
+	return true
+end
+local function toggleRow(parent, y, width, label, path)
+	local value = configGet(path) == true
+	local b = create("TextButton", { Position = UDim2.fromOffset(10, y), Size = UDim2.fromOffset(width - 20, 20),
+		BackgroundColor3 = THEME.field, BorderSizePixel = 0, Text = (value and "[ ON ]  " or "[ OFF ] ") .. label,
+		TextColor3 = value and THEME.ok or THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = true }, parent)
+	corner(b, 4)
+	create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
+	b.MouseButton1Click:Connect(function()
+		local now = configGet(path) ~= true
+		configSet(path, now)
+		b.Text = (now and "[ ON ]  " or "[ OFF ] ") .. label
+		b.TextColor3 = now and THEME.ok or THEME.dim
+		log("CONFIG", table.concat(path, ".") .. " = " .. tostring(now))
+	end)
+	return y + 22
+end
+local CONFIG_ROWS = {
+	{ "Farm after Guide", { "Farm", "Enabled" } },
+	{ "Auto needs", { "Farm", "AutoNeeds", "Enabled" } },
+	{ "Baby mode", { "Farm", "BabyMode" } },
+	{ "Auto-accept menus", { "Farm", "AutoAcceptMenu" } },
+	{ "Keep pet equipped", { "Farm", "KeepPetEquipped" } },
+	{ "Buy eggs", { "Farm", "BuyEgg" } },
+	{ "Auto age potions", { "Farm", "AutoPotions", "Enabled" } },
+	{ "Auto neon", { "Farm", "AutoNeon", "Enabled" } },
+	{ "Mega neon", { "Farm", "AutoNeon", "Mega" } },
+	{ "Pet Pen", { "Farm", "PetPen", "Enabled" } },
+	{ "Box Lure", { "Farm", "LureBox", "Enabled" } },
+	{ "Transfer: mannequins (Main)", { "Farm", "Transfer", "Mannequin" } },
+	{ "Transfer: buy outfits (Alt)", { "Farm", "Transfer", "BuyMannequin" } },
+	{ "Transfer: cash register (Alt)", { "Farm", "Transfer", "AutoPay" } },
+	{ "Share your-turn logs", { "Telemetry", "Enabled" } },
+}
+local function settingsWindow()
+	if ui.settingsFrame and ui.settingsFrame.Parent then
+		ui.settingsFrame.Visible = not ui.settingsFrame.Visible
+		return
+	end
+	local width = 250
+	local frame = window(width, 452, function()
+		ui.settingsFrame = nil
+	end)
+	ui.settingsFrame = frame
+	frame.Position = UDim2.new(0, 300, 0.5, -226)
+	text(frame, 10, 36, width - 20, 16, "Settings (live)", 12, THEME.accent, true)
+	local y = 58
+	for _, row in ipairs(CONFIG_ROWS) do
+		y = toggleRow(frame, y, width, row[1], row[2])
+	end
+	text(frame, 10, y + 2, width - 20, 14, "Changes apply immediately (Guide + Farm).", 10, THEME.dim)
+	footer(frame, width, 428)
 end
 function show(title, desc, detail)
 	setGoal(title or "", {})
@@ -3448,7 +3371,7 @@ local function runGuide()
 end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 454, function()
+	local frame = window(width, 456, function()
 		running = false
 		uiLog = nil
 		ui.now = nil
@@ -3511,15 +3434,13 @@ local function mainWindow()
 	featureToggle(138, 304, "Mannequin (main)", function() return Farm.Transfer.Mannequin end, function(v) Farm.Transfer.Mannequin = v end)
 	featureToggle(10, 330, "Buy outfits (alt)", function() return Farm.Transfer.BuyMannequin end, function(v) Farm.Transfer.BuyMannequin = v end)
 	featureToggle(138, 330, "Auto pay (alt)", function() return Farm.Transfer.AutoPay end, function(v) Farm.Transfer.AutoPay = v end)
-	featureToggle(10, 356, "Baby mode", function() return Farm.BabyMode end, function(v) Farm.BabyMode = v end)
-	featureToggle(138, 356, "Baby care", function() return Farm.BabyNeeds.Enabled end, function(v) Farm.BabyNeeds.Enabled = v end)
-	local roleLine = text(frame, 10, 382, width - 20, 14, "", 11, THEME.dim)
+	local roleLine = text(frame, 10, 356, width - 20, 14, "", 11, THEME.dim)
 	pcall(function()
 		roleLine.Text = "Transfer role: " .. transferRole() .. "  (Main: " .. (Farm.Transfer.MainName ~= "" and Farm.Transfer.MainName or tostring(Farm.Transfer.MainUserId)) .. ")"
 	end)
 	local third = (width - 32) / 3
 	local startButton
-	startButton = button(frame, 10, 402, third, "Start", THEME.ok, function()
+	startButton = button(frame, 10, 376, third, "Start", THEME.ok, function()
 		if running then
 			return
 		end
@@ -3537,29 +3458,18 @@ local function mainWindow()
 			end
 		end)
 	end)
-	button(frame, 16 + third, 402, third, "Skip", THEME.text, function()
+	button(frame, 16 + third, 376, third, "Skip", THEME.text, function()
 		skipPressed = true
 	end)
-	button(frame, 22 + third * 2, 402, third, "Stop", THEME.bad, function()
+	button(frame, 22 + third * 2, 376, third, "Stop", THEME.bad, function()
 		running = false
 		show("Stopped", "", "")
 	end)
-	footer(frame, width, 432)
+	button(frame, 10, 404, width - 20, "Settings", THEME.text, settingsWindow)
+	footer(frame, width, 434)
 end
 env.AutoAchievements = {
 	Stop = function() running = false end,
 	Skip = function() skipPressed = true end,
 }
-do
-	local ok, err = pcall(mainWindow)
-	if ok then
-		-- UI built: remove the boot marker
-		pcall(function()
-			if bootFrame and bootFrame.Parent then
-				bootFrame.Parent:Destroy()
-			end
-		end)
-	else
-		bootSay("UI error: " .. tostring(err))
-	end
-end
+mainWindow()
