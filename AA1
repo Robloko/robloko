@@ -20,6 +20,11 @@ local UserConfig = {
 			Enabled = true,
 			Skip = {}, -- e.g. { "walk", "ride" }
 		},
+		BabyMode = false, -- you are the baby: the farm also takes care of YOUR needs (eat, drink, shower, sleep, toilet)
+		BabyNeeds = { -- done while BabyMode is on
+			Enabled = true,
+			Skip = {}, -- e.g. { "sick" }
+		},
 		KeepPetEquipped = true, -- farm sticks to one session pet instead of switching
 		PreferNeon = true, -- neon/mega copies are picked as the fusion goal first
 		BuyEgg = true, -- no pet/egg left -> buy EggToBuy and hatch it on repeat
@@ -2468,6 +2473,7 @@ local function switchPet(target, why)
 	sessionPet = { unique = target.unique, kind = target.id }
 	firstPet()
 end
+local babyTick -- (Farm integration) forward declaration: BabyMode care, defined with the Farm code below
 local function grindStep(waiting, firstPage)
 	local pending = { first = firstPage == true }
 	for _, id in ipairs(waiting) do
@@ -2494,6 +2500,9 @@ local function grindStep(waiting, firstPage)
 		end
 	end
 	penClaim()
+	if babyTick then
+		pcall(babyTick)
+	end
 	careStep()
 end
 
@@ -2510,11 +2519,132 @@ local function farmApplyConfig()
 	for _, kind in ipairs(type(Farm.AutoPotions.Skip) == "table" and Farm.AutoPotions.Skip or {}) do
 		GC.NEED_SKIP[tostring(kind)] = true
 	end
+	for _, kind in ipairs(type(Farm.BabyNeeds.Skip) == "table" and Farm.BabyNeeds.Skip or {}) do
+		GC.NEED_SKIP[tostring(kind)] = true
+	end
 	if Farm.Focus ~= "" then
 		GC.ReleasePetKind = Farm.Focus
 	end
 end
 farmApplyConfig()
+-- ============================================================================
+-- (Farm integration) BABY NEEDS (AdoptMeFarm_public.lua "BabyMode"):
+-- while BabyMode is on, the player is the baby. The player's own ailments live in
+-- the same ailments_manager, keyed by the player's char wrapper, and are fixed by
+-- the same remotes: eat/drink (buy + equip + use tool), shower/bed/toilet at home,
+-- doctor at the Hospital.
+-- ============================================================================
+local function babyUnique()
+	local wrapper = getKey("char_wrapper_raw")
+	if type(wrapper) ~= "table" then
+		return nil
+	end
+	return wrapper.unique or wrapper.id or wrapper.char
+end
+local function babyNeeds()
+	local manager = getKey("ailments_manager")
+	local ailments = type(manager) == "table" and type(manager.ailments) == "table" and manager.ailments[babyUnique()]
+	local list = {}
+	for key, raw in pairs(type(ailments) == "table" and ailments or {}) do
+		list[tostring(type(raw) == "table" and raw.kind or key)] = true
+	end
+	return list
+end
+GC.BABY_NEED_LINES = {
+	hungry = "You are hungry: eating something", thirsty = "You are thirsty: drinking something",
+	sleepy = "You are sleepy: off to bed", dirty = "You are dirty: taking a shower",
+	toilet = "You need the toilet", sick = "You are sick: off to the doctor",
+}
+local function babyFeed(kind)
+	local item = firstOf("food", GC.NEED_ITEMS[kind])
+	if not item and GC.BuyFood then
+		local buy = GC.NEED_BUY[kind]
+		say("Buying " .. buy.id .. " for the baby")
+		send("ShopAPI/BuyItem", "food", buy.id, buy.options)
+		waitUntil(function()
+			item = firstOf("food", { buy.id })
+			return item ~= nil
+		end, 6)
+	end
+	if not item then
+		return false, "nothing to eat or drink in your backpack"
+	end
+	local done = function()
+		return babyNeeds()[kind] == nil
+	end
+	send("ToolAPI/Equip", item.unique, { equip_as_last = false, use_sound_delay = true })
+	task.wait(0.5)
+	send("ToolAPI/ServerUseTool", item.unique, "START")
+	task.wait(1)
+	send("ToolAPI/ServerUseTool", item.unique, "END", nil)
+	send("ToolAPI/Unequip", item.unique, nil)
+	if waitUntil(done, 8) then
+		return true
+	end
+	return false, "eating did not clear " .. kind
+end
+local function babyFurniture(kind)
+	standUp()
+	local ok, why = goTo("housing")
+	if not ok then
+		return false, why
+	end
+	local spots
+	waitUntil(function()
+		spots = (furnitureSpots(GC.NEED_FURNITURE[kind]))
+		return #spots > 0
+	end, 10)
+	for _, spot in ipairs(spots or {}) do
+		sendNoWait("HousingAPI/ActivateFurniture", LocalPlayer, spot.key, spot.useName, { cframe = spot.cframe }, character())
+		if waitUntil(function()
+			return babyNeeds()[kind] == nil
+		end, 25) then
+			standUp()
+			return true
+		end
+		standUp()
+	end
+	return false, "no furniture fixed your " .. kind .. " need"
+end
+local function babySick()
+	standUp()
+	local ok, why = goTo("Hospital")
+	if not ok then
+		return false, why
+	end
+	if talkToDoctor() then
+		return waitUntil(function()
+			return babyNeeds().sick == nil
+		end, 30)
+	end
+	return false, "no doctor found"
+end
+local BABY_NEED_DO = { hungry = babyFeed, thirsty = babyFeed, sleepy = babyFurniture, dirty = babyFurniture,
+	toilet = babyFurniture, sick = babySick }
+local lastBabyTry = {}
+babyTick = function()
+	local Farm = UserConfig.Farm
+	if not (Farm.BabyMode and Farm.BabyNeeds.Enabled) then
+		return
+	end
+	local needs = babyNeeds()
+	for _, kind in ipairs({ "hungry", "thirsty", "sleepy", "dirty", "toilet", "sick" }) do
+		if needs[kind] and not GC.NEED_SKIP[kind] and BABY_NEED_DO[kind]
+			and os.clock() - (lastBabyTry[kind] or -1000) > 60 then
+			lastBabyTry[kind] = os.clock()
+			say(GC.BABY_NEED_LINES[kind] or ("Baby need: " .. kind))
+			log("BABY", kind .. " at " .. tostring(currentPlace()) .. " bucks=" .. money())
+			local ok, why = runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, BABY_NEED_DO[kind], kind)
+			if ok then
+				say("Baby need done: " .. kind, "ok")
+				lastBabyTry[kind] = 0
+			else
+				say("Couldn't fix that: " .. tostring(why), "bad")
+			end
+			return -- one baby need per tick; the loop comes back for the rest
+		end
+	end
+end
 local function transferRole()
 	local T = UserConfig.Farm.Transfer
 	if T.Role == "main" then
@@ -2722,6 +2852,7 @@ local function runFarm()
 			farmNeonTick()
 			farmPotionTick()
 			farmEggTick()
+			pcall(babyTick)
 			careStep()
 			flushCalls()
 		end
@@ -3189,7 +3320,7 @@ local function runGuide()
 end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 428, function()
+	local frame = window(width, 454, function()
 		running = false
 		uiLog = nil
 		ui.now = nil
@@ -3252,13 +3383,15 @@ local function mainWindow()
 	featureToggle(138, 304, "Mannequin (main)", function() return Farm.Transfer.Mannequin end, function(v) Farm.Transfer.Mannequin = v end)
 	featureToggle(10, 330, "Buy outfits (alt)", function() return Farm.Transfer.BuyMannequin end, function(v) Farm.Transfer.BuyMannequin = v end)
 	featureToggle(138, 330, "Auto pay (alt)", function() return Farm.Transfer.AutoPay end, function(v) Farm.Transfer.AutoPay = v end)
-	local roleLine = text(frame, 10, 356, width - 20, 14, "", 11, THEME.dim)
+	featureToggle(10, 356, "Baby mode", function() return Farm.BabyMode end, function(v) Farm.BabyMode = v end)
+	featureToggle(138, 356, "Baby care", function() return Farm.BabyNeeds.Enabled end, function(v) Farm.BabyNeeds.Enabled = v end)
+	local roleLine = text(frame, 10, 382, width - 20, 14, "", 11, THEME.dim)
 	pcall(function()
 		roleLine.Text = "Transfer role: " .. transferRole() .. "  (Main: " .. (Farm.Transfer.MainName ~= "" and Farm.Transfer.MainName or tostring(Farm.Transfer.MainUserId)) .. ")"
 	end)
 	local third = (width - 32) / 3
 	local startButton
-	startButton = button(frame, 10, 376, third, "Start", THEME.ok, function()
+	startButton = button(frame, 10, 402, third, "Start", THEME.ok, function()
 		if running then
 			return
 		end
@@ -3276,14 +3409,14 @@ local function mainWindow()
 			end
 		end)
 	end)
-	button(frame, 16 + third, 376, third, "Skip", THEME.text, function()
+	button(frame, 16 + third, 402, third, "Skip", THEME.text, function()
 		skipPressed = true
 	end)
-	button(frame, 22 + third * 2, 376, third, "Stop", THEME.bad, function()
+	button(frame, 22 + third * 2, 402, third, "Stop", THEME.bad, function()
 		running = false
 		show("Stopped", "", "")
 	end)
-	footer(frame, width, 406)
+	footer(frame, width, 432)
 end
 env.AutoAchievements = {
 	Stop = function() running = false end,
