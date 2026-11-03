@@ -235,7 +235,7 @@ local function serialize(value, depth)
 			end
 			table.insert(parts, "[" .. serialize(k, depth + 1) .. "]=" .. serialize(v, depth + 1))
 		end
-		return "{" .. table.concat(parts, ", ") .. "}"
+		return "{" .. table.concat(parts, ", " .. "") .. "}"
 	end
 	return tostring(value)
 end
@@ -2114,10 +2114,10 @@ local function runWithTimeout(limit, fn, ...)
 		end
 		done = true
 	end)
-	waitUntil(function() return done or not running end, limit)
+	waitUntil(function() return done or not (running or farming) end, limit)
 	if not done then
 		pcall(task.cancel, thread)
-		if not running then
+		if not (running or farming) then
 			return false, "stopped"
 		end
 		return false, "STUCK (cancelled after " .. limit .. " s)"
@@ -2402,261 +2402,6 @@ local function switchPet(target, why)
 	sessionPet = { unique = target.unique, kind = target.id }
 	firstPet()
 end
-
--- ===================== PET FARM & BABY FARM =====================
--- (ported from AdoptMeFarm's Farm / BabyMode idea)
-GC.Farm = {
-	Pet = {
-		HatchEggs = true, -- no pet needs left -> keep an egg equipped so it hatches
-		BuyEggs = true, -- no pets, no eggs -> buy a Cracked Egg
-		PetPen = true, -- claim Pet Pen aging progress while farming
-		ReleaseSpares = false, -- DANGER: releases spare pets (same rules as the Guide's AutoRelease)
-	},
-	Baby = {},
-}
-local farming = nil -- nil | "pet" | "baby"
-local FarmUI = { refresh = function() end }
-
--- ---------- PET FARM ----------
--- Cares for EVERY pet you own (not just the session pet), then
--- hatches eggs / buys new ones when nothing else is pending.
-local function petFarmStep()
-	if os.clock() - lastDailyClaim > 60 and finishedDaily() then
-		lastDailyClaim = os.clock()
-		claimDaily()
-	end
-	if GC.Farm.Pet.PetPen then
-		penClaim()
-	end
-	if GC.Farm.Pet.ReleaseSpares and releaseCandidate() then
-		releasePet()
-		return true
-	end
-	local best, bestCount
-	for _, pet in ipairs(itemsOf("pets", nil)) do
-		if not isEgg(pet.id) and not isTemporary(pet.id) then
-			local count = 0
-			for kind in pairs(needsOf(pet.unique)) do
-				if NEED_DO[kind] and os.clock() - (failedNeed[kind] or -1000) > 90 then
-					count += 1
-				end
-			end
-			if count > 0 and (not best or count > bestCount) then
-				best, bestCount = pet, count
-			end
-		end
-	end
-	if best then
-		if not (sessionPet and sessionPet.unique == best.unique) then
-			switchPet(best, "it needs care")
-		else
-			firstPet()
-		end
-		return careStep()
-	end
-	if GC.Farm.Pet.HatchEggs then
-		local egg = looseEgg()
-		if egg then
-			if not (sessionPet and sessionPet.unique == egg.unique) then
-				switchPet(egg, "hatching it")
-			else
-				firstPet()
-			end
-			setNow("Pet Farm: waiting for the egg's needs")
-			task.wait(5)
-			return true
-		end
-	end
-	if GC.Farm.Pet.BuyEggs and canAfford(GC.EGG_PRICE) then
-		buyEgg()
-		return true
-	end
-	setNow("Pet Farm: waiting for the next need")
-	task.wait(5)
-	return true
-end
-
--- ---------- BABY FARM ----------
--- Finds the ailments in ailments_manager that belong to no
--- equipped pet (i.e. they belong to YOUR baby character) and
--- serves them for Bucks, like AdoptMeFarm's BabyMode.
-local BABY_NEEDS = { "hungry", "thirsty", "sleepy", "dirty", "toilet", "sick", "bored", "play" }
-
-local function babyNeeds()
-	local manager = getKey("ailments_manager")
-	local ailments = type(manager) == "table" and type(manager.ailments) == "table" and manager.ailments or {}
-	local pets = {}
-	for _, pet in ipairs(equippedPets()) do
-		pets[pet.unique] = true
-	end
-	local mine, key
-	for k, raw in pairs(ailments) do
-		if not pets[tostring(k)] then
-			key = tostring(k)
-			mine = {}
-			for kind, entry in pairs(type(raw) == "table" and raw or {}) do
-				mine[tostring(type(entry) == "table" and entry.kind or kind)] = true
-			end
-			break
-		end
-	end
-	return mine or {}, key
-end
-
-local function babyNeedGone(kind)
-	return function()
-		return babyNeeds()[kind] == nil
-	end
-end
-
-local function babyFurnitureNeed(kind, kinds)
-	standUp()
-	local ok, why = goTo("housing")
-	if not ok then
-		return false, why
-	end
-	local spots, reason
-	if not waitUntil(function()
-		spots, reason = furnitureSpots(kinds)
-		return #spots > 0 or string.sub(tostring(reason), 1, 3) == "no "
-	end, 10) then
-		return false, reason or "no furniture"
-	end
-	for _, spot in ipairs(spots) do
-		send("HousingAPI/ActivateFurniture", LocalPlayer, spot.key, spot.useName, { cframe = spot.cframe }, character())
-		if waitUntil(babyNeedGone(kind), 120) then
-			standUp()
-			return true
-		end
-		standUp()
-	end
-	return false, "no furniture helped"
-end
-
-local function babyEatNeed(kind)
-	standUp()
-	local item = firstOf("food", GC.NEED_ITEMS[kind])
-	if not item and GC.BuyFood then
-		local buy = GC.NEED_BUY[kind]
-		if buy then
-			say("Buying " .. buy.id .. " for yourself")
-			send("ShopAPI/BuyItem", "food", buy.id, buy.options)
-			waitUntil(function()
-				item = firstOf("food", { buy.id })
-				return item ~= nil
-			end, 6)
-		end
-	end
-	if not item then
-		return false, "nothing to eat or drink in your backpack"
-	end
-	send("ToolAPI/Equip", item.unique, {})
-	task.wait(0.5)
-	send("ToolAPI/ServerUseTool", item.unique, "START")
-	task.wait(1)
-	send("ToolAPI/ServerUseTool", item.unique, "END", nil)
-	send("ToolAPI/Unequip", item.unique, nil)
-	if waitUntil(babyNeedGone(kind), 15) then
-		return true
-	end
-	-- fallback: spawn the food object and grab it with the character
-	local _, key = babyNeeds()
-	local before = petObjects()
-	send("PetObjectAPI/CreatePetObject", GC.FOOD_CREATOR,
-		{ additional_consume_uniques = {}, pet_unique = key, unique_id = item.unique })
-	task.wait(1)
-	local object = newPetObject(before)
-	if object then
-		send("PetObjectAPI/GrabPetObject", character(), object)
-		if waitUntil(babyNeedGone(kind), 10) then
-			return true
-		end
-	end
-	return false, "you did not eat it"
-end
-
-local function babyFarmStep()
-	local needs = babyNeeds()
-	local pick
-	for _, kind in ipairs(BABY_NEEDS) do
-		if needs[kind] then
-			pick = kind
-			break
-		end
-	end
-	if not pick then
-		setNow("Baby Farm: waiting for your next need")
-		task.wait(5)
-		return true
-	end
-	say("Baby need: " .. string.gsub(pick, "_", " "))
-	local ok, why = false, "no handler for " .. pick
-	if pick == "hungry" or pick == "thirsty" then
-		ok, why = babyEatNeed(pick)
-	elseif pick == "sleepy" or pick == "dirty" or pick == "toilet" then
-		ok, why = babyFurnitureNeed(pick, GC.NEED_FURNITURE[pick])
-	elseif pick == "sick" then
-		standUp()
-		if goTo("Hospital") then
-			talkToDoctor()
-			ok = waitUntil(babyNeedGone("sick"), 60)
-			why = ok and nil or "the doctor did not help"
-		else
-			why = "could not reach the Hospital"
-		end
-	elseif pick == "bored" or pick == "play" then
-		standUp()
-		local spot = GC.NEED_SPOT.bored
-		if goTo("MainMap") then
-			pivotTo(Vector3.new(spot[1], spot[2], spot[3]))
-			ok = waitUntil(babyNeedGone(pick), 90)
-			why = ok and nil or pick .. " did not finish"
-		else
-			why = "could not reach town"
-		end
-	end
-	if ok then
-		say("Baby need done! (" .. money() .. " Bucks)", "ok")
-	else
-		say("Baby need failed: " .. tostring(why), "bad")
-	end
-	return ok, why
-end
-
--- ---------- SHARED FARM LOOP ----------
--- The farm pauses while the Guide is running (running = true).
-local function farmLoop(mode)
-	while farming == mode do
-		if running then
-			task.wait(1)
-		else
-			local ok, err = pcall(mode == "pet" and petFarmStep or babyFarmStep)
-			if not ok then
-				log("ERROR", "farm step: " .. tostring(err))
-				task.wait(3)
-			end
-			task.wait(0.3)
-		end
-	end
-end
-
-local function setFarming(mode)
-	if farming == mode then
-		return
-	end
-	farming = mode
-	if mode then
-		say((mode == "pet" and "Pet" or "Baby") .. " Farm started (the Guide pauses while it runs)")
-	else
-		say("Farm stopped", "warn")
-	end
-	FarmUI.refresh()
-	if mode then
-		task.spawn(farmLoop, mode)
-	end
-end
--- ===================== END PET FARM & BABY FARM =====================
-
 local function grindStep(waiting, firstPage)
 	local pending = { first = firstPage == true }
 	for _, id in ipairs(waiting) do
@@ -2685,6 +2430,263 @@ local function grindStep(waiting, firstPage)
 	penClaim()
 	careStep()
 end
+
+-- =====================================================================
+-- FARM MODE (merged from AdoptMeFarm_public): endless pet farm, baby
+-- farm and Transfer Thingy, running on the same need engine as Guide.
+-- =====================================================================
+GC.Farm = {
+	Needs = true, -- endless pet needs farming
+	SkipNeeds = {}, -- need kinds to ignore while farming, e.g. { "mystery", "walk" }
+	Priority = { mystery = 51, pet_me = 50, hungry = 49, thirsty = 48, sick = 47, dirty = 46, toilet = 45, sleepy = 44,
+		play = 42, salon = 40, school = 39, pizza_party = 38, cat_cafe = 35, camping = 34, beach_party = 33,
+		walk = 32, ride = 31, bored = 30 },
+	BabyMode = false, -- also keep YOURSELF fed (baby / parent role: eats your own food)
+	BuyEgg = false, -- buy a new egg when you have no pet at all
+	AutoPotions = true, -- give your session pet age potions so it keeps growing
+	AutoNeon = false, Mega = false, -- auto fuse neon / mega neon when 4 full grown copies exist
+	PetPen = true, -- keep claiming Pet Pen progress while farming
+	LureBox = { Enabled = false, Kind = "lures_2023_normal_lure", Baits = {} },
+	Transfer = {
+		Enabled = false,
+		Role = "main", -- "main": place mannequins + collect the register. "alt": buy outfits / pay the register.
+		MainName = "", -- the main account you farm Bucks onto (display only)
+		Mannequin = true, -- main: place mannequins in your house
+		MannequinKind = "mannequin", -- furniture kind the game uses for mannequins
+		MannequinCount = 1,
+		OutfitPrice = 100,
+		BuyMannequin = false, -- alt: buy the main's outfits (up to MaxOutfitPrice)
+		AutoPay = false, -- alt: pay the main's Cash Register
+		PayAmount = 50,
+		MaxOutfitPrice = 100,
+		RemoteSetOutfitPrice = nil, -- OPTIONAL: remote name + args learned with the CALL recorder,
+		RemoteRegisterCollect = nil, -- see notes below the script. nil = the step only logs.
+	},
+}
+local farming = false
+local function farmNeedOrder()
+	local order = {}
+	for kind, prio in pairs(GC.Farm.Priority) do
+		if NEED_DO[kind] and not table.find(GC.Farm.SkipNeeds, kind) then
+			table.insert(order, { kind = kind, prio = prio })
+		end
+	end
+	table.sort(order, function(a, b)
+		if a.prio ~= b.prio then
+			return a.prio > b.prio
+		end
+		return a.kind < b.kind
+	end)
+	local result = {}
+	for _, entry in ipairs(order) do
+		table.insert(result, entry.kind)
+	end
+	return result
+end
+local function farmNeedsStep(pet)
+	local needs = needsOf(pet.unique)
+	for _, kind in ipairs(farmNeedOrder()) do
+		local entry = needs[kind]
+		if entry and NEED_DO[kind] and os.clock() - (failedNeed[kind] or -1000) > 90 then
+			say(GC.NEED_LINES[kind] or ("Your pet wants: " .. kind))
+			log("FARM", kind .. " on " .. tostring(pet.kind) .. " " .. pet.unique .. " at " .. tostring(currentPlace()))
+			local ok, why = runWithTimeout(GC.NeedTimeout, NEED_DO[kind], pet, kind)
+			flushCalls()
+			log("FARM", kind .. " -> " .. (ok and "done" or ("failed: " .. tostring(why))))
+			if ok then
+				failCount[kind] = 0
+				needsDone += 1
+				say("Need done! (" .. needsDone .. " so far, " .. money() .. " Bucks)", "ok")
+			else
+				failCount[kind] = (failCount[kind] or 0) + 1
+				failedNeed[kind] = failCount[kind] >= 3 and (os.clock() + 510) or os.clock()
+				say("Couldn't finish that one: " .. tostring(why), "bad")
+			end
+			return ok
+		end
+	end
+	return nil -- nothing to do right now
+end
+local function babyStep()
+	-- Baby farm: keep your own character fed and watered by eating from your backpack.
+	if not GC.Farm.BabyMode then
+		return
+	end
+	local wrapper = getKey("char_wrapper_raw")
+	local food = firstOf("food", GC.NEED_ITEMS.hungry) or firstOf("food", GC.NEED_ITEMS.thirsty)
+	if not (type(wrapper) == "table" and food) then
+		return
+	end
+	say("Baby farm: eating " .. tostring(food.id))
+	send("ToolAPI/Equip", food.unique, { equip_as_last = false, use_sound_delay = true })
+	task.wait(0.4)
+	send("ToolAPI/ServerUseTool", food.unique, "START")
+	task.wait(0.2)
+	send("ToolAPI/ServerUseTool", food.unique, "END", nil)
+	send("ToolAPI/Unequip", food.unique, nil)
+	task.wait(1)
+end
+local function lureBoxStep()
+	local lb = GC.Farm.LureBox
+	if not lb.Enabled then
+		return
+	end
+	local interior = getKey("house_interior")
+	local lure
+	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
+		if type(piece) == "table" and piece.id == lb.Kind then
+			lure = tostring(key)
+		end
+	end
+	if not lure then
+		if not isAt("housing") then
+			return
+		end
+		say("Lure Box: placing a lure first")
+		placeFurniture(lb.Kind)
+		return
+	end
+	local bait
+	if #lb.Baits > 0 then
+		bait = firstOf("food", lb.Baits)
+	else
+		local inventory = getKey("inventory")
+		for category in pairs(type(inventory) == "table" and inventory or {}) do
+			bait = bait or itemsOf(category, function(id) return string.find(id, "bait", 1, true) ~= nil end)[1]
+		end
+	end
+	if not bait then
+		return
+	end
+	say("Lure Box: refilling with " .. tostring(bait.id))
+	send("HousingAPI/ActivateFurniture", LocalPlayer, lure, "UseBlock", { bait_unique = bait.unique }, character())
+end
+local function transferStep()
+	local t = GC.Farm.Transfer
+	if not t.Enabled then
+		return
+	end
+	local interior = getKey("house_interior")
+	local furniture = type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}
+	if t.Role == "main" then
+		-- MAIN: make sure mannequins exist in the house for the alts to buy from.
+		local mannequins = {}
+		for key, piece in pairs(furniture) do
+			if type(piece) == "table" and tostring(piece.id):lower():find("mannequin", 1, true) then
+				table.insert(mannequins, tostring(key))
+			end
+		end
+		if t.Mannequin and #mannequins < t.MannequinCount then
+			say("Transfer: placing a mannequin for outfit sales")
+			placeFurniture(t.MannequinKind)
+		end
+		-- Optional: collect the Cash Register money with a learned remote.
+		if t.RemoteRegisterCollect then
+			say("Transfer: collecting the Cash Register")
+			send(t.RemoteRegisterCollect, character())
+		else
+			log("FARM", "Transfer main: set Farm.Transfer.RemoteRegisterCollect to collect the register (learn it with the CALL recorder: run one manual collect while an assist task records)")
+		end
+	elseif t.Role == "alt" then
+		-- ALT: pay the main through their mannequins / Cash Register, never a trade.
+		if t.BuyMannequin then
+			local bought = false
+			for key, piece in pairs(furniture) do
+				if type(piece) == "table" and tostring(piece.id):lower():find("mannequin", 1, true) then
+					say("Transfer: buying the " .. tostring(t.MainName ~= "" and t.MainName or "main") .. "'s outfit")
+					send("HousingAPI/ActivateFurniture", LocalPlayer, tostring(key), "UseBlock",
+						{ price = math.min(t.OutfitPrice, t.MaxOutfitPrice) }, character())
+					bought = true
+					break
+				end
+			end
+			if not bought then
+				log("FARM", "Transfer alt: no mannequin found here; visit the main's house first")
+			end
+		end
+		if t.AutoComplete and t.AutoComplete ~= "" then
+			send(t.AutoComplete, character())
+		end
+		if t.AutoComplete == nil then
+			log("FARM", "Transfer alt: Cash Register / AutoPay remote not learned yet (fill Farm.Transfer.AutoComplete or do it manually once while recording)")
+		end
+	end
+end
+local function farmLoop()
+	if not waitUntil(function() return getKey("loaded_in") == true end, 120) then
+		say("The game hasn't loaded yet, try again in a moment", "bad")
+		farming = false
+		return
+	end
+	local savedOrder = GC.NEED_ORDER
+	GC.NEED_ORDER = farmNeedOrder()
+	say("Farm mode on: pet needs forever" .. (GC.Farm.BabyMode and ", baby care" or ""), "ok")
+	setGoal("Farm mode", {})
+	local lastTransfer, lastLure = -1000, -1000
+	while farming do
+		local ok, err = pcall(function()
+			local pet = firstPet()
+			if pet and GC.Farm.Needs then
+				local did = farmNeedsStep(pet)
+				if did == nil then
+					setNow("Waiting for your " .. prettyKind(pet.kind) .. "'s next need (" .. needsDone .. " done)")
+					waitUntil(function()
+						local needs = needsOf(pet.unique)
+						for _, kind in ipairs(GC.NEED_ORDER) do
+							if needs[kind] and os.clock() - (failedNeed[kind] or -1000) > 90 then
+								return true
+							end
+						end
+						return false
+					end, 8)
+				end
+				if GC.Farm.BuyEgg and not choosePet() and canAfford(GC.EGG_PRICE) then
+					buyEgg()
+				end
+				if GC.Farm.AutoPotions then
+					local p = realPet()
+					if p and (petAge(p.unique) or 6) < 6 and itemsOf("food", isAgePotion)[1] then
+						useAgePotion()
+					end
+				end
+				if GC.Farm.AutoNeon and fusionGroup(GC.Farm.Mega) then
+					fuse(GC.Farm.Mega)
+				end
+			end
+			if GC.Farm.PetPen then
+				penClaim()
+			end
+			if GC.Farm.LureBox.Enabled and os.clock() - lastLure > 120 then
+				lastLure = os.clock()
+				lureBoxStep()
+			end
+			if GC.Farm.Transfer.Enabled and os.clock() - lastTransfer > 150 then
+				lastTransfer = os.clock()
+				transferStep()
+			end
+			babyStep()
+			if os.clock() - lastDailyClaim > 60 then
+				if finishedDaily() then
+					lastDailyClaim = os.clock()
+					claimDaily()
+				elseif boardRewardReady() then
+					lastDailyClaim = os.clock()
+					sendNet(GC.QUEST_BOARD, "vanilla")
+				end
+			end
+		end)
+		if not ok then
+			log("ERROR", "farm loop: " .. tostring(err))
+			task.wait(2)
+		else
+			task.wait(1)
+		end
+	end
+	GC.NEED_ORDER = savedOrder
+	say("Farm mode off", "warn")
+	setGoal("Completes your Guide tasks", {})
+end
+
 GC.Discord = "https://discord.gg/7rvgpgXrwd"
 GC.Credit = "KiritoKun"
 GC.AvatarUrl = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/victimoffate_.png"
@@ -3130,10 +3132,9 @@ local function runGuide()
 end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 236, function()
+	local frame = window(width, 264, function()
 		running = false
-		farming = nil
-		FarmUI.refresh()
+		farming = false
 		uiLog = nil
 		ui.now = nil
 	end)
@@ -3162,11 +3163,15 @@ local function mainWindow()
 		end
 		logBox.Text = table.concat(shown, "\n")
 	end
-	local third = (width - 32) / 3
+	local quarter = (width - 40) / 4
 	local startButton
-	startButton = button(frame, 10, 184, third, "Start", THEME.ok, function()
+	startButton = button(frame, 10, 184, quarter, "Start", THEME.ok, function()
 		if running then
 			return
+		end
+		if farming then
+			farming = false
+			task.wait(0.5)
 		end
 		running = true
 		startButton.Text = "Running"
@@ -3182,42 +3187,60 @@ local function mainWindow()
 			end
 		end)
 	end)
-	button(frame, 16 + third, 184, third, "Skip", THEME.text, function()
+	local farmButton
+	farmButton = button(frame, 16 + quarter, 184, quarter, "Farm", THEME.accent, function()
+		if farming then
+			return
+		end
+		if running then
+			say("Stop the Guide first, then press Farm", "bad")
+			return
+		end
+		farming = true
+		farmButton.Text = "Farming"
+		task.spawn(function()
+			local ok = pcall(farmLoop)
+			if not ok then
+				say("farm loop error, press Farm again", "bad")
+			end
+			farming = false
+			farmButton.Text = "Farm"
+		end)
+	end)
+	button(frame, 22 + quarter * 2, 184, quarter, "Skip", THEME.text, function()
 		skipPressed = true
 	end)
-	local stopButton = button(frame, 22 + third * 2, 184, third, "Stop", THEME.bad, function()
+	button(frame, 28 + quarter * 3, 184, quarter, "Stop", THEME.bad, function()
 		running = false
-		farming = nil
-		FarmUI.refresh()
+		farming = false
 		show("Stopped", "", "")
 	end)
 	footer(frame, width, 214)
 end
-local function farmWindow()
-	local width = 270
-	local frame = window(width, 152, function()
-		farming = nil
-		FarmUI.refresh()
-	end)
-	text(frame, 10, 36, width - 20, 16, "Farms (they pause while the Guide runs)", 12, THEME.text, true)
-	local petBtn = button(frame, 10, 58, width - 20, "Pet Farm: OFF", THEME.text, function()
-		setFarming(farming == "pet" and nil or "pet")
-	end)
-	local babyBtn = button(frame, 10, 86, width - 20, "Baby Farm: OFF", THEME.text, function()
-		setFarming(farming == "baby" and nil or "baby")
-	end)
-	text(frame, 10, 114, width - 20, 14,
-		"Pet Farm: cares for every pet + hatches eggs. Baby Farm: serve your baby's needs (be a baby in-game).",
-		11, THEME.dim)
-	FarmUI.refresh = function()
-		petBtn.Text = "Pet Farm: " .. (farming == "pet" and "ON" or "OFF")
-		babyBtn.Text = "Baby Farm: " .. (farming == "baby" and "ON" or "OFF")
-	end
-	footer(frame, width, 132)
-end
 env.AutoAchievements = {
-	Stop = function() running = false farming = nil end,
+	Stop = function()
+		running = false
+		farming = false
+	end,
 	Skip = function() skipPressed = true end,
+	Farm = function(on)
+		if on == false then
+			farming = false
+			return
+		end
+		if running or farming then
+			return
+		end
+		farming = true
+		task.spawn(function()
+			local ok = pcall(farmLoop)
+			if not ok then
+				say("farm loop error, press Farm again", "bad")
+			end
+			farming = false
+		end)
+	end,
+	IsFarming = function() return farming end,
+	IsRunning = function() return running end,
 }
 mainWindow()
-farmWindow()
