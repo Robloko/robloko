@@ -1,155 +1,4 @@
--- Auto Achievements + AdoptMe Farm (merged build)
--- Base: AutoAchievements (Guide tasks) | Integrated: AdoptMeFarm_public v3.0.86
--- Farm system, Transfer Thingy and the full UserConfig window settings are ported from
--- https://github.com/Amivictim/adoptmefarm/blob/main/AdoptMeFarm_public.lua
--- NOTE: remote names used by the Farm/Transfer modules that were NOT visible in the
--- public config (mannequin outfit buy, cash register pay, gift open) are best-effort
--- and pcall-guarded: check the log (CALL lines) if a step reports "not supported".
-
 local DEBUG = false
-
--- =====================================================================
--- USER CONFIG (ported from AdoptMeFarm_public.lua v3.0.86)
--- every feature has its own switch; Farm.Enabled = false pauses everything
--- =====================================================================
-local UserConfig = {
-	Farm = {
-		Enabled = true, -- false = everything paused ("Pause all"); each feature has its own switch
-		BabyMode = false,
-		AutoNeeds = {
-			Enabled = true, -- the endless pet-care loop (needs) while farming
-			Skip = {}, -- need kinds never done, e.g. { "mystery", "ride" }
-		},
-		KeepPetEquipped = false,
-		PreferNeon = true,
-		PetOrder = "youngest", -- "youngest" | "oldest"
-		FarmPetKinds = {}, -- only these pet kinds are farmed (empty = all)
-		BuyEgg = false, -- keep hatching EggsToBuy while farming
-		EggToBuy = "cracked_egg",
-		Focus = "", -- an egg id or pet kind the farm focuses on growing/neon/mega
-		AutoPotions = {
-			Enabled = false,
-			Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion",
-				"pet_bonus_bucks_potion", "pet_random_ailment_potion" },
-			BuffMinutes = 15, -- one buff potion of each kind per 15 min
-			Skip = {},
-			PetKinds = {},
-		},
-		AutoNeon = {
-			Enabled = false,
-			Mega = false, -- true = mega neon fusion (needs 4 neons of one kind)
-			Exclude = {}, -- pet kinds never fused
-		},
-		CollectCashback = false,
-		CashbackMinutes = 10,
-		AutoOpen = {
-			Enabled = false, -- open every gift/box in the backpack
-			Exclude = {}, -- gift ids never opened
-		},
-		AutoAcceptMenu = true,
-		AntiAfk = true,
-		CameraGuard = true,
-		CameraZoom = 10, -- camera distance the camera guard locks (5-20)
-		AutoRejoin = false, -- the farm never rejoins by itself unless this is true
-		LeaveWhenStuck = false, -- true = repeated stuck trips -> rejoin (needs AutoRejoin)
-		SpotTravel = "teleport",
-		GameTravel = true,
-		HomeByRespawn = true,
-		FoodBowlTrip = false,
-		StuckRecovery = {
-			Enabled = true,
-			Seconds = 240, -- no progress for this long -> recover (go home)
-		},
-		DisableMinutes = 15, -- this many minutes of repeated failures -> pause the farm
-		MaxConsecutiveFailures = 3,
-		FailureCooldownSeconds = 30,
-		PetMeFocusSeconds = 7,
-		Event = {
-			GhostGallery = false,
-			Spotlight = false, -- Stitches' Spotlight rounds (join by the game's own prompt)
-			WhereBear = false,
-			Shoebill = false,
-			Hauntlet = false,
-			HauntletSquad = false,
-			HauntletSquadKey = "", -- never shared
-			StrayCat = false,
-			StrayCatDragon = false,
-			Crypt = false,
-			PigeonNest = false,
-			AutoLever = false,
-			CandyPets = {
-				Enabled = false, -- buy event pets with candy
-				Pick = {},
-				MaxBuy = false,
-				KeepCandy = 0,
-				KeepBucks = 0, -- Bucks the shop never spends
-			},
-			Quests = false, -- claims finished quests
-			PetPen = false, -- farm the Pet Pen (slots + progress claims)
-			PetPenMinutes = 15,
-			PetPenSlots = 4,
-			PetPenEggs = true, -- eggs only for empty pen slots
-		},
-		LureBox = {
-			Enabled = false, -- collect the Box Lure's reward and refill it with a bait
-			Baits = {}, -- bait ids from your backpack, in the order they are used
-		},
-		Transfer = { -- Transfer Thingy: YOUR accounts only (mannequin sales + Cash Register, never a trade)
-			MainUserId = 0, -- the Main is kept by UserId
-			MainName = "", -- shown only; the UserId decides
-			Mannequin = false, -- MAIN: mannequins in your house (price = MaxOutfitPrice)
-			MannequinCount = 1,
-			BuyMannequin = false, -- ALT: buys the Main's mannequin outfits (3 each, then 2 min rest)
-			AutoPay = false, -- ALT: 50 Bucks at the Main's Cash Register (3, then 2 min rest)
-			MaxOutfitPrice = 100,
-		},
-		-- per-need switches (all 18 needs); a need set to false is never done
-		Tasks = {
-			pet_me = true, salon = true, bored = true, cat_cafe = true, sleepy = true,
-			dirty = true, toilet = true, hungry = true, thirsty = true, play = true,
-			pizza_party = true, school = true, sick = true, camping = true,
-			beach_party = true, mystery = true, walk = true, ride = true,
-		},
-		SmartPriority = true,
-		Priority = { -- higher number = done first
-			mystery = 51, pet_me = 50, hungry = 49, thirsty = 48, sick = 47, dirty = 46,
-			toilet = 45, sleepy = 44, play = 42, salon = 40, school = 39, pizza_party = 38,
-			cat_cafe = 35, camping = 34, beach_party = 33, walk = 32, ride = 31, bored = 30,
-		},
-		MultiNeed = {
-			Enabled = true,
-			Kinds = { "pet_me", "hungry", "thirsty", "play" },
-			GapSeconds = 1,
-		},
-	},
-	Interface = { Enabled = true, Keybind = "RightShift", Toasts = true, RememberSettings = true,
-		Theme = "Halloween", StartHidden = false },
-	Logging = {
-		ConsoleLevel = "OFF",
-		FileEnabled = false,
-		SessionFile = false,
-	},
-	Telemetry = {
-		Enabled = true, -- your-turn tasks you finish are shared with the developer (no keys, no passwords)
-		IncludeInventory = true,
-		SendFiles = true,
-	},
-	Notifications = {
-		Enabled = false,
-		Webhooks = {
-			Summary = "", -- Discord webhook URL for summaries
-			Alerts = "", -- Discord webhook URL for kicks / errors
-		},
-		SummaryIntervalMinutes = 30,
-		SendOnError = true,
-		SendOnKick = true,
-		PingDiscordUserId = "",
-	},
-}
-
--- =====================================================================
--- AutoAchievements core (unchanged base, now driven by UserConfig)
--- =====================================================================
 local GC = {}
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -159,6 +8,63 @@ local env = getgenv and getgenv() or {}
 if env.AutoAchievements and env.AutoAchievements.Stop then
 	pcall(env.AutoAchievements.Stop)
 end
+
+-- ============================================================================
+-- UserConfig (integrated from AdoptMeFarm_public.lua "Adopt Victims v3")
+-- Everything the Farm system, Transfer Thingy and UI read their settings from.
+-- ============================================================================
+local UserConfig = {
+	Farm = {
+		Enabled = true, -- false = stop after the Guide is done (no farm loop)
+		AutoNeeds = { -- the farm loop's pet-care core (reuses the Guide need code)
+			Enabled = true,
+			Skip = {}, -- e.g. { "walk", "ride" }
+		},
+		KeepPetEquipped = true, -- farm sticks to one session pet instead of switching
+		PreferNeon = true, -- neon/mega copies are picked as the fusion goal first
+		BuyEgg = true, -- no pet/egg left -> buy EggToBuy and hatch it on repeat
+		EggToBuy = "cracked_egg",
+		Focus = "", -- a pet kind to grow/neon ("" = auto: most copies kind)
+		AutoPotions = {
+			Enabled = false, -- age up the session pet with age potions when it has one
+			Skip = {},
+		},
+		AutoNeon = {
+			Enabled = true, -- fuse 4 full grown -> neon (Mega = 4 full grown NEONS -> mega)
+			Mega = false,
+			Exclude = {}, -- pet kinds never fused
+		},
+		CollectCashback = false, -- cash back chest (remote not public: TODO capture)
+		AutoOpen = { Enabled = false }, -- open gifts/boxes (remote not public: TODO capture)
+		PetPen = {
+			Enabled = true, -- keep the Pet Pen filled + claim its progress
+			Minutes = 15, -- minutes between pen claims
+			Slots = 4,
+		},
+		LureBox = {
+			Enabled = false, -- collect Box Lure reward + refill with Baits (a free lure is placed first)
+			Baits = {}, -- bait ids from your backpack, e.g. { "ice_dimension_2025_ice_soup_bait" }
+		},
+		StuckRecovery = { Enabled = true, Seconds = 240 }, -- a farm step may not run longer than this
+		DisableMinutes = 0, -- 0 = farm forever
+		Transfer = { -- Transfer Thingy: YOUR accounts only, mannequin sales + Cash Register (never a trade)
+			Role = "auto", -- "main" | "alt" | "auto" (auto: MainUserId decides)
+			MainUserId = 0, -- the Main account's UserId (kept by UserId, never by name)
+			MainName = "", -- shown only
+			Mannequin = false, -- MAIN: place mannequins in your house (sold outfits pay the Main)
+			MannequinCount = 1,
+			MannequinPrice = 100, -- outfit price the mannequins ask
+			BuyMannequin = false, -- ALT: buy the Main's mannequin outfits
+			AutoPay = false, -- ALT: pay PayAmount Bucks at the Main's Cash Register
+			PayAmount = 50,
+			MaxOutfitPrice = 100, -- an outfit costing more is never bought
+			GapMinutes = 2, -- rest between alt purchase/pay bursts
+		},
+	},
+	Logging = { ConsoleLevel = "OFF", FileEnabled = DEBUG },
+	Telemetry = { Enabled = true, IncludeInventory = true }, -- GC.DevLogs reports
+}
+
 local running = false
 local uiLog = nil
 local ui = {}
@@ -1481,26 +1387,14 @@ end
 for kind in pairs(GC.NEED_FURNITURE) do
 	NEED_DO[kind] = furnitureNeed
 end
--- Farm window: need order follows your SmartPriority weights when on
 GC.NEED_ORDER = { "pet_me", "hungry", "thirsty", "play", "sleepy", "dirty", "toilet", "sick", "salon", "school", "cat_cafe",
 	"pizza_party", "camping", "beach_party", "bored", "walk", "ride", "mystery" }
-do
-	local F = UserConfig.Farm
-	local weighted = {}
-	for kind in pairs(NEED_DO) do
-		table.insert(weighted, { kind = kind, weight = F.Priority[kind] or 0 })
-	end
-	table.sort(weighted, function(a, b)
-		if a.weight ~= b.weight then
-			return a.weight > b.weight
-		end
-		return a.kind < b.kind
-	end)
-	GC.NEED_ORDER = {}
-	for _, entry in ipairs(weighted) do
-		table.insert(GC.NEED_ORDER, entry.kind)
-	end
-end
+-- (Farm integration) per-need skip list, filled from UserConfig.Farm.AutoNeeds.Skip
+GC.NEED_SKIP = {}
+GC.KeepBucks = 0
+GC.ReleaseMaxRarity = "uncommon"
+GC.ReleasePetKind = ""
+GC.DontRelease = { "MEGA NEONS", "NEONS" }
 GC.QUEST_CLAIM = "adoptme_new.modules.Dailies.DailiesNetService:9"
 GC.QUEST_BOARD = "adoptme_new.modules.Dailies.DailiesNetService:15"
 local function vanillaTab()
@@ -1570,14 +1464,15 @@ local function useAgePotion()
 end
 GC.EGG_PRICE = 350
 GC.TREE_PRICE = 1450
-local function buyEgg()
+local function buyEgg(kind, price)
 	local ok, why = goTo("Nursery")
 	if not ok then
 		return false, why
 	end
 	local before = #itemsOf("pets", nil)
-	say("Buying a Cracked Egg (" .. GC.EGG_PRICE .. " Bucks)")
-	send("ShopAPI/BuyItem", "pets", GC.EGG_PRICE == 350 and "cracked_egg" or UserConfig.Farm.EggToBuy, { buy_count = 1 })
+	price = price or GC.EGG_PRICE
+	say("Buying a " .. prettyKind(kind or UserConfig.Farm.EggToBuy) .. " (" .. price .. " Bucks)")
+	send("ShopAPI/BuyItem", "pets", kind or UserConfig.Farm.EggToBuy, { buy_count = 1 })
 	if not waitUntil(function() return #itemsOf("pets", nil) > before end, 8) then
 		return false, "the egg did not arrive"
 	end
@@ -1590,9 +1485,6 @@ local function buyMoneyTree()
 	end
 end
 local goalKindRef
-GC.ReleaseMaxRarity = "uncommon"
-GC.ReleasePetKind = ""
-GC.DontRelease = { "MEGA NEONS", "NEONS" }
 local dontRelease = { kinds = {} }
 for _, entry in ipairs(type(GC.DontRelease) == "table" and GC.DontRelease or {}) do
 	local key = string.upper((string.gsub(tostring(entry), "^%s*(.-)%s*$", "%1")))
@@ -1723,8 +1615,7 @@ local function penClaim()
 		return
 	end
 	local since = os.clock() - lastPenClaim
-	local interval = (tonumber(UserConfig.Farm.Event.PetPenMinutes) or 15) * 60
-	if since < interval or (since < 900 and not isAt("housing")) then
+	if since < 300 or (since < 900 and not isAt("housing")) then
 		return
 	end
 	lastPenClaim = os.clock()
@@ -1826,12 +1717,12 @@ local function workOnSameKind()
 	end
 	return buyEgg()
 end
-local function fusionGroup(mega)
+local function fusionGroup(mega, exclude)
 	local inPen = penPets()
 	local groups, best = {}, nil
-	local exclude = {}
-	for _, kind in ipairs(type(UserConfig.Farm.AutoNeon.Exclude) == "table" and UserConfig.Farm.AutoNeon.Exclude or {}) do
-		exclude[tostring(kind)] = true
+	local banned = {}
+	for _, kind in ipairs(type(exclude) == "table" and exclude or {}) do
+		banned[tostring(kind)] = true
 	end
 	for _, pet in ipairs(itemsOf("pets", nil)) do
 		local p = type(pet.properties) == "table" and pet.properties or {}
@@ -1841,8 +1732,7 @@ local function fusionGroup(mega)
 		else
 			fits = p.neon ~= true and p.mega_neon ~= true
 		end
-		if fits and tonumber(p.age) == 6 and not inPen[pet.unique] and not isEgg(pet.id)
-			and not isTemporary(pet.id) and not exclude[pet.id] then
+		if fits and tonumber(p.age) == 6 and not banned[pet.id] and not inPen[pet.unique] and not isEgg(pet.id) and not isTemporary(pet.id) then
 			groups[pet.id] = groups[pet.id] or {}
 			table.insert(groups[pet.id], pet.unique)
 		end
@@ -1860,7 +1750,7 @@ local function fusionGroup(mega)
 	return best, { list[1], list[2], list[3], list[4] }
 end
 local function fuse(mega)
-	local kind, uniques = fusionGroup(mega)
+	local kind, uniques = fusionGroup(mega, UserConfig.Farm.AutoNeon.Exclude)
 	if not kind then
 		return false, "no 4 full grown " .. (mega and "neon " or "") .. "pets of one kind"
 	end
@@ -2095,7 +1985,7 @@ local AUTO = {
 		canRun = function() return canAfford(GC.EGG_PRICE) end, run = buyEgg },
 	get_four_pets = { kind = "slow", grind = true, price = GC.EGG_PRICE, line = "Getting another pet",
 		canRun = function() return canAfford(GC.EGG_PRICE) end, run = buyEgg },
-	get_four_full_grown_pets = { kind = "slow", grind = true, maxRuns = 40, line = "Working on 4 of the same",
+	get_four_full_grown_pets = { kind = "slow", grind = true, maxRuns = 40, line = "Working on 4 of the same pet",
 		canRun = function()
 			if goalPenMove() then
 				return true
@@ -2472,21 +2362,9 @@ GC.NeedTimeout = 240
 local failedNeed, failCount, needsDone = {}, {}, 0
 local lastDailyClaim = -1000
 local function needReady(kind, needs)
-	-- Farm window: honor per-need switches (Farm.Tasks) and the AutoNeeds skip list
-	local F = UserConfig.Farm
-	if F.Tasks[kind] == false then
-		return false
-	end
-	if F.AutoNeeds.Skip and F.AutoNeeds.Skip[kind] then
-		return false
-	end
-	if #F.FarmPetKinds > 0 then
-		local pet = choosePet()
-		if pet and not F.FarmPetKinds[pet.kind] then
-			return false
-		end
-	end
-	return needs[kind] ~= nil and NEED_DO[kind] ~= nil and os.clock() - (failedNeed[kind] or -1000) > 90
+	-- (Farm integration) UserConfig.Farm.AutoNeeds.Skip + AutoPotions.Skip are honoured here
+	return needs[kind] ~= nil and NEED_DO[kind] ~= nil and not GC.NEED_SKIP[kind]
+		and os.clock() - (failedNeed[kind] or -1000) > 90
 end
 local function careStep()
 	local pet = firstPet()
@@ -2523,7 +2401,6 @@ local function careStep()
 	if ok then
 		failCount[pick] = 0
 		needsDone += 1
-		FarmStats.needs += 1
 		say("Need done! (" .. needsDone .. " so far, " .. money() .. " Bucks)", "ok")
 		return true
 	end
@@ -2620,544 +2497,247 @@ local function grindStep(waiting, firstPage)
 	careStep()
 end
 
--- =====================================================================
--- FARM SYSTEM (AdoptMeFarm integration)
--- the endless farm loop: AutoNeeds, AutoPotions, AutoNeon, AutoOpen,
--- CollectCashback, Pet Pen, LureBox, Transfer Thingy, Anti-AFK,
--- stuck recovery, auto rejoin and Discord webhook notifications
--- =====================================================================
-FarmStats = { needs = 0, eggs = 0, potions = 0, neons = 0, transfers = 0, opened = 0, cashback = 0, started = os.clock() }
-local farmRunning = false
-local antiAfkConnection = nil
-
--- ---------- notifications (Discord webhooks, from AdoptMeFarm) ----------
-local function notifyDiscord(kind, text)
-	local N = UserConfig.Notifications
-	if not N.Enabled then
+-- ============================================================================
+-- (Farm integration) FARM SYSTEM + TRANSFER THINGY
+-- from AdoptMeFarm_public.lua, rebuilt on the AutoAchievements core
+-- ============================================================================
+local function farmApplyConfig()
+	local Farm = UserConfig.Farm
+	GC.DevLogs = UserConfig.Telemetry.Enabled
+	for _, kind in ipairs(type(Farm.AutoNeeds.Skip) == "table" and Farm.AutoNeeds.Skip or {}) do
+		GC.NEED_SKIP[tostring(kind)] = true
+	end
+	for _, kind in ipairs(type(Farm.AutoPotions.Skip) == "table" and Farm.AutoPotions.Skip or {}) do
+		GC.NEED_SKIP[tostring(kind)] = true
+	end
+	if Farm.Focus ~= "" then
+		GC.ReleasePetKind = Farm.Focus
+	end
+end
+farmApplyConfig()
+local function transferRole()
+	local T = UserConfig.Farm.Transfer
+	if T.Role == "main" then
+		return "main"
+	end
+	if T.Role == "alt" then
+		return "alt"
+	end
+	return (tonumber(T.MainUserId) or 0) == (tonumber(LocalPlayer.UserId) or -1) and "main" or "alt"
+end
+local transferBusy = false
+-- MAIN: keep MannequinCount mannequins placed in your house (outfits pay the Main).
+-- NOTE: the mannequin furniture kind below is the game's own id; if the game refuses it,
+-- run the "your turn" recorder once while placing one manually and copy the kind from the CALL log.
+GC.MANNEQUIN_KIND = "mannequin_2024"
+local function findFurnitureById(id)
+	local interior = getKey("house_interior")
+	local found = {}
+	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
+		if type(piece) == "table" and piece.id == id then
+			table.insert(found, tostring(key))
+		end
+	end
+	table.sort(found)
+	return found
+end
+local function transferMainTick()
+	local T = UserConfig.Farm.Transfer
+	if not T.Mannequin then
 		return
 	end
-	local url = kind == "alerts" and N.Webhooks.Alerts or N.Webhooks.Summary
-	local request = httpRequest()
-	if not (type(url) == "string" and string.sub(url, 1, 8) == "https://") or not request then
+	local placed = findFurnitureById(GC.MANNEQUIN_KIND)
+	if #placed < T.MannequinCount then
+		local ok, why = goTo("housing")
+		if not ok then
+			return
+		end
+		say("Placing a mannequin (outfits sold on it pay you)")
+		placeFurniture(GC.MANNEQUIN_KIND)
+	end
+end
+-- ALT: buy the Main's mannequin outfits / pay at the Main's Cash Register.
+-- The remote names below follow the game's usual API naming; every call is wrapped in
+-- send() (pcall + log), so wrong guesses only log an ERROR and never crash the farm.
+local function transferAltTick()
+	local T = UserConfig.Farm.Transfer
+	if transferBusy then
 		return
 	end
-	local content = "**AutoAchievements Farm** " .. text
-	if N.PingDiscordUserId ~= "" and N.PingOn and N.PingOn[kind == "alerts" and "Error" or "Summary"] then
-		content = content .. " <@" .. tostring(N.PingDiscordUserId) .. ">"
+	local main = Players:GetPlayerByUserId(tonumber(T.MainUserId) or 0)
+	if not main then
+		return -- the Main is not in this server
 	end
-	pcall(function()
-		local payload = game:GetService("HttpService"):JSONEncode({ content = string.sub(content, 1, 1900) })
-		request({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = payload })
+	transferBusy = true
+	if T.BuyMannequin then
+		say("Buying a " .. (T.MainName ~= "" and T.MainName or "the Main") .. " mannequin outfit")
+		send("ShopAPI/BuyMannequinOutfit", main, T.MaxOutfitPrice)
+	end
+	if T.AutoPay then
+		say("Paying " .. T.PayAmount .. " Bucks at the Cash Register")
+		send("HousingAPI/ActivateInteriorFurniture", "cash_register", "UseBlock", T.PayAmount, main)
+	end
+	task.delay((T.GapMinutes or 2) * 60, function()
+		transferBusy = false
 	end)
 end
-
--- ---------- anti-AFK ----------
-local function startAntiAfk()
-	if antiAfkConnection or not UserConfig.Farm.AntiAfk then
+local function transferTick()
+	local T = UserConfig.Farm.Transfer
+	if not (T.Mannequin or T.BuyMannequin or T.AutoPay) then
 		return
 	end
-	local ok = pcall(function()
-		antiAfkConnection = LocalPlayer.Idled:Connect(function()
-			pcall(function()
-				local vu = LocalPlayer and (LocalPlayer:FindFirstChildOfClass("VirtualUser") or game:GetService("VirtualUser"))
-				if vu then
-					vu:CaptureController()
-					vu:ClickButton2(Vector2.new())
-				end
-			end)
-		end)
-	end)
-	if ok then
-		log("INFO", "Anti-AFK armed")
+	local role = transferRole()
+	if role == "main" then
+		transferMainTick()
 	else
-		antiAfkConnection = nil
+		transferAltTick()
 	end
 end
-local function stopAntiAfk()
-	if antiAfkConnection then
-		pcall(function() antiAfkConnection:Disconnect() end)
-		antiAfkConnection = nil
-	end
-end
-
--- ---------- camera guard ----------
-local function applyCameraGuard()
-	if not UserConfig.Farm.CameraGuard then
+-- Box Lure: collect its reward, then refill it with the next bait from your backpack
+local lureRefilled = 0
+local function lureTick()
+	if not UserConfig.Farm.LureBox.Enabled then
 		return
 	end
-	pcall(function()
-		local cam = workspace.CurrentCamera
-		local zoom = math.clamp(tonumber(UserConfig.Farm.CameraZoom) or 10, 5, 20)
-		LocalPlayer.CameraMaxZoomDistance = zoom
-		LocalPlayer.CameraMinZoomDistance = zoom
-		cam.CameraType = Enum.CameraType.Custom
-	end)
-end
-
--- ---------- Baby / Parent mode ----------
-local function applyBabyMode()
-	if not UserConfig.Farm.BabyMode then
+	local lures = findFurnitureById("lures_2023_normal_lure")
+	if #lures == 0 then
+		say("Placing a free Box Lure first")
+		placeFurniture("lures_2023_normal_lure")
 		return
 	end
-	say("Switching to Baby mode")
-	-- the game's own team setting; both spellings are tried, pcall-guarded
-	pcall(function() send("AdoptAPI/UpdateTeam", "baby") end)
-	pcall(function() send("SettingsAPI/SetSetting", "team", "baby") end)
-end
-
--- ---------- AutoNeeds: keep the session pet equipped ----------
-local function applyKeepPetEquipped()
-	if UserConfig.Farm.KeepPetEquipped then
-		firstPet()
-	end
-end
-
--- ---------- Farm.BuyEgg: keep buying and hatching eggs ----------
-local function farmBuyEggStep()
-	local F = UserConfig.Farm
-	if not F.BuyEgg then
+	local ok, why = goTo("housing")
+	if not ok then
 		return
 	end
-	local egg = looseEgg()
-	if not egg and canAfford(GC.EGG_PRICE) then
-		local ok, why = buyEgg()
-		if ok ~= false then
-			FarmStats.eggs += 1
-		else
-			log("WARN", "buy egg: " .. tostring(why))
+	local baits = {}
+	for _, id in ipairs(type(UserConfig.Farm.LureBox.Baits) == "table" and UserConfig.Farm.LureBox.Baits or {}) do
+		table.insert(baits, tostring(id))
+	end
+	local bait
+	local inventory = getKey("inventory")
+	for _, wanted in ipairs(#baits > 0 and baits or { false }) do
+		for category in pairs(type(inventory) == "table" and inventory or {}) do
+			local found = itemsOf(category, function(id) return string.find(id, "bait", 1, true) ~= nil end)[1]
+			if found and (wanted == false or found.id == wanted) then
+				bait = found
+				break
+			end
 		end
-		return
-	end
-	if egg then
-		local session = choosePet()
-		if not (session and session.unique == egg.unique) then
-			switchPet(egg, "hatching " .. prettyKind(egg.id))
+		if bait then
+			break
 		end
 	end
+	if not bait then
+		return
+	end
+	if os.clock() - lureRefilled > 300 then
+		lureRefilled = os.clock()
+		say("Collecting the Box Lure + refilling it with bait")
+		send("HousingAPI/ActivateFurniture", LocalPlayer, lures[1], "UseBlock", { bait_unique = bait.unique }, character())
+	end
 end
-
--- ---------- Farm.AutoPotions ----------
-local lastBuffPotion = {}
-local function farmAutoPotionsStep()
+local function farmPotionTick()
 	local P = UserConfig.Farm.AutoPotions
 	if not P.Enabled then
 		return
 	end
 	local pet = realPet()
-	if not pet then
+	if not pet or (petAge(pet.unique) or 6) >= 6 then
 		return
 	end
-	for _, potionId in ipairs(P.Potions or {}) do
-		if not P.Skip[potionId] then
-			local potion = firstOf("food", { potionId })
-			if potion then
-				local isBuff = string.find(potionId, "bonus", 1, true) ~= nil
-				local onCooldown = isBuff and os.clock() - (lastBuffPotion[potionId] or -math.huge) < (P.BuffMinutes or 15) * 60
-				local kindAllowed = #P.PetKinds == 0 or P.PetKinds[pet.kind]
-				if potion and not onCooldown and kindAllowed then
-					say("Giving your " .. prettyKind(pet.kind) .. " " .. prettyKind(potionId))
-					local before = petAge(pet.unique) or 0
-					local ok = giveItem(pet, potion, function()
-						return not hasUnique("food", potion.unique)
-							or (not isBuff and (petAge(pet.unique) or 0) > before)
-					end)
-					if ok then
-						FarmStats.potions += 1
-						lastBuffPotion[potionId] = os.clock()
-					end
-					task.wait(1)
-				end
-			end
-		end
+	if itemsOf("food", isAgePotion)[1] then
+		runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, useAgePotion)
 	end
 end
-
--- ---------- Farm.AutoNeon ----------
-local function farmAutoNeonStep()
+local function farmNeonTick()
 	local N = UserConfig.Farm.AutoNeon
 	if not N.Enabled then
 		return
 	end
-	if fusionGroup(N.Mega) then
-		local ok, why = fuse(N.Mega)
-		if ok ~= false then
-			FarmStats.neons += 1
-			notifyDiscord("summary", (N.Mega and "Mega neon" or "Neon") .. " fused!")
-		else
-			log("WARN", "fusion: " .. tostring(why))
-		end
+	if fusionGroup(N.Mega, N.Exclude) then
+		runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, fuse, N.Mega)
 	end
 end
-
--- ---------- Farm.AutoOpen: open every gift/box in the backpack ----------
-local function farmAutoOpenStep()
-	local O = UserConfig.Farm.AutoOpen
-	if not O.Enabled then
-		return
-	end
-	for _, gift in ipairs(itemsOf("gifts", nil)) do
-		if not O.Exclude[gift.id] and running then
-			say("Opening " .. prettyKind(gift.id))
-			local before = #itemsOf("gifts", nil)
-			-- best-effort: equip + use, then confirm it left the backpack
-			send("ToolAPI/Equip", gift.unique, { equip_as_last = false, use_sound_delay = true })
-			task.wait(0.4)
-			send("ToolAPI/ServerUseTool", gift.unique, "START")
-			task.wait(0.4)
-			send("ToolAPI/Unequip", gift.unique, nil)
-			if waitUntil(function() return not hasUnique("gifts", gift.unique) end, 4) then
-				FarmStats.opened += 1
-			else
-				log("WARN", "could not open " .. tostring(gift.id) .. " (remote shape may differ)")
-			end
-			task.wait(0.3)
-		end
-	end
-end
-
--- ---------- Farm.CollectCashback: claim money furniture at home ----------
-local lastCashback = -math.huge
-local function farmCollectCashbackStep()
-	local F = UserConfig.Farm
-	if not F.CollectCashback then
-		return
-	end
-	if os.clock() - lastCashback < (F.CashbackMinutes or 10) * 60 then
-		return
-	end
-	lastCashback = os.clock()
-	local ok = goTo("housing")
-	if not ok then
-		return
-	end
-	local interior = getKey("house_interior")
-	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
-		if type(piece) == "table" and (piece.id == "cash_register" or string.find(tostring(piece.id), "cash", 1, true)) then
-			say("Collecting your cash register")
-			send("HousingAPI/ActivateInteriorFurniture", key, "UseBlock", true, character())
-			FarmStats.cashback += 1
-			task.wait(1)
-		end
-	end
-end
-
--- ---------- Farm.Event.PetPen: fill slots and claim progress ----------
-local function farmPetPenStep()
-	local E = UserConfig.Farm.Event
-	if not E.PetPen then
+local farmPetTaskDone = false
+local function farmPenTick()
+	local P = UserConfig.Farm.PetPen
+	if not P.Enabled then
 		return
 	end
 	local _, count = penPets()
-	local target = tonumber(E.PetPenSlots) or 4
-	if count < target then
-		local ok, why = penAdd(target)
-		if ok == false and E.PetPenEggs and not anySpare() and canAfford(GC.EGG_PRICE) then
-			local bought = buyEgg()
-			if bought ~= false then
-				penAdd(target)
-			end
+	if count < (P.Slots or 4) and realSpares()[1] then
+		runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, penAdd, (P.Slots or 4), realSpares)
+	elseif count == 0 and UserConfig.Farm.BuyEgg and canAfford(GC.EGG_PRICE) then
+		local ok = runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, buyEgg)
+		if ok then
+			runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, penAdd, 1, sparePets)
 		end
 	end
-	penClaim()
 end
-
--- ---------- Farm.LureBox: collect + refill the Box Lure ----------
-local function farmLureBoxStep()
-	local L = UserConfig.Farm.LureBox
-	if not L.Enabled then
+local function farmEggTick()
+	if not UserConfig.Farm.BuyEgg then
 		return
 	end
-	local ok = goTo("housing")
-	if not ok then
+	local pet = choosePet()
+	if pet and isEgg(pet.kind) then
+		return -- an egg is already being hatched
+	end
+	if not looseEgg() and canAfford(GC.EGG_PRICE) then
+		runWithTimeout(UserConfig.Farm.StuckRecovery.Seconds, buyEgg)
+	end
+end
+local farmStart = nil
+-- forward declarations: `show` and `onFinished` are fully defined further down (UI section)
+local show
+local onFinished
+local function runFarm()
+	if not UserConfig.Farm.Enabled or not UserConfig.Farm.AutoNeeds.Enabled then
 		return
 	end
-	local interior = getKey("house_interior")
-	local lure
-	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
-		if type(piece) == "table" and string.find(tostring(piece.id), "lure", 1, true) then
-			lure = tostring(key)
+	farmStart = os.clock()
+	say("Guide done — farm mode is on", "ok")
+	setGoal("Farming: needs, pen, neon, transfer", {})
+	while running do
+		local minutes = (UserConfig.Farm.DisableMinutes or 0)
+		if minutes > 0 and os.clock() - farmStart > minutes * 60 then
+			say("Farm time is up (" .. minutes .. " min): stopping", "warn")
+			break
 		end
-	end
-	if not lure then
-		say("Placing a free Box Lure for the Lure Box farm")
-		local key, why = placeFurniture("lures_2023_normal_lure")
-		if not key then
-			log("WARN", "lure box: " .. tostring(why))
-			return
-		end
-		lure = key
-	end
-	-- collect the reward
-	say("Collecting the Box Lure")
-	send("HousingAPI/ActivateFurniture", LocalPlayer, lure, "UseBlock", { collect = true }, character())
-	task.wait(1)
-	-- refill with the first bait from your list that is in the backpack
-	for _, baitId in ipairs(L.Baits or {}) do
-		local bait
-		local inventory = getKey("inventory")
-		for category in pairs(type(inventory) == "table" and inventory or {}) do
-			bait = bait or itemsOf(category, { [baitId] = true })[1]
-		end
-		if bait then
-			say("Refilling the Box Lure with " .. prettyKind(baitId))
-			send("HousingAPI/ActivateFurniture", LocalPlayer, lure, "UseBlock", { bait_unique = bait.unique }, character())
-			return
-		end
-	end
-end
-
--- ---------- Farm.Transfer: the Transfer Thingy (your accounts only) ----------
-local lastTransferRest = 0
-local function mainPlayerOfTransfer()
-	local T = UserConfig.Farm.Transfer
-	if (tonumber(T.MainUserId) or 0) > 0 and LocalPlayer.UserId ~= T.MainUserId then
-		for _, player in ipairs(Players:GetPlayers()) do
-			if player.UserId == T.MainUserId then
-				return player
+		if not UserConfig.Farm.KeepPetEquipped then
+			local ok, target, why = pcall(grindTarget, { farm = true })
+			if ok and target then
+				pcall(switchPet, target, why)
 			end
-		end
-		return nil, "the Main (UserId " .. tostring(T.MainUserId) .. ") is not in this server"
-	end
-	return LocalPlayer
-end
-local function goHomeOf(owner)
-	if not interiorsM then
-		local ok, module = pcall(function() return require(ReplicatedStorage.ClientModules.Core.InteriorsM.InteriorsM) end)
-		if not ok then
-			return false, "InteriorsM not usable"
-		end
-		interiorsM = module
-	end
-	local ok = goTo("MainMap")
-	if not ok then
-		return false, "could not reach town first"
-	end
-	say("Visiting " .. tostring(owner.Name) .. "'s house...")
-	task.spawn(pcall, interiorsM.enter, "housing", "MainDoor", { house_owner = owner })
-	return waitUntil(function() return isAt("housing") end, GC.ArrivalTimeout)
-end
-local function furnitureKeysOf(id)
-	local interior = getKey("house_interior")
-	local keys = {}
-	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
-		if type(piece) == "table" and piece.id == id then
-			table.insert(keys, tostring(key))
-		end
-	end
-	return keys
-end
-local function isMainAccount()
-	return (tonumber(UserConfig.Farm.Transfer.MainUserId) or 0) == LocalPlayer.UserId
-end
-local function farmTransferStep()
-	local T = UserConfig.Farm.Transfer
-	if not (T.Mannequin or T.BuyMannequin or T.AutoPay) or (tonumber(T.MainUserId) or 0) == 0 then
-		return
-	end
-	if os.clock() - lastTransferRest < 120 then
-		return
-	end
-	if isMainAccount() then
-		-- MAIN: place mannequins in your own house and price their outfits
-		if T.Mannequin then
-			local ok = goTo("housing")
-			if not ok then
-				return
-			end
-			local mannequins = furnitureKeysOf("mannequin")
-			while #mannequins < (tonumber(T.MannequinCount) or 1) do
-				say("Buying a mannequin (750 Bucks)")
-				local key = buyFurniture("mannequin", 0, -20)
-				if not key then
-					log("WARN", "transfer: the mannequin was not placed")
-					break
-				end
-				table.insert(mannequins, key)
-				task.wait(0.5)
-			end
-			for _, key in ipairs(mannequins) do
-				pcall(function()
-					send("HousingAPI/ActivateInteriorFurniture", key, "UseBlock",
-						{ outfit_price = math.tointeger(T.MaxOutfitPrice) or 100 }, character())
-				end)
-				task.wait(0.4)
-			end
-			say("Mannequins ready: your alts can buy the outfits", "ok")
-			FarmStats.transfers += #mannequins
-		end
-	else
-		-- ALT: visit the Main's house, buy outfits / pay the Cash Register
-		local main, why = mainPlayerOfTransfer()
-		if not main then
-			log("WARN", "transfer: " .. tostring(why))
-			return
-		end
-		local ok = goHomeOf(main)
-		if not ok then
-			log("WARN", "transfer: could not enter the Main's house")
-			return
-		end
-		local bought = 0
-		if T.BuyMannequin then
-			for _, key in ipairs(furnitureKeysOf("mannequin")) do
-				if bought >= 3 then
-					break
-				end
-				if money() < (tonumber(T.MaxOutfitPrice) or 100) then
-					break
-				end
-				say("Buying the Main's mannequin outfit")
-				local before = money()
-				pcall(function()
-					send("HousingAPI/ActivateInteriorFurniture", key, "UseBlock", "Buy", character())
-				end)
-				if waitUntil(function() return money() < before end, 4) then
-					bought += 1
-					FarmStats.transfers += 1
-				end
-				task.wait(0.5)
-			end
-		end
-		if T.AutoPay then
-			for _, key in ipairs(furnitureKeysOf("cash_register")) do
-				for _ = 1, 3 do
-					if money() < 50 then
-						break
-					end
-					say("Paying 50 Bucks at the Main's Cash Register")
-					local before = money()
-					pcall(function()
-						send("HousingAPI/ActivateInteriorFurniture", key, "UseBlock", 50, character())
-					end)
-					if waitUntil(function() return money() < before end, 4) then
-						FarmStats.transfers += 1
-					end
-					task.wait(0.5)
-				end
-			end
-		end
-		lastTransferRest = os.clock() -- 2 min rest between alt trips
-		goTo("MainMap")
-	end
-end
-
--- ---------- stuck recovery / auto rejoin ----------
-local lastProgress = os.clock()
-local stuckStrikes = 0
-local function noteProgress()
-	lastProgress = os.clock()
-	stuckStrikes = 0
-end
-local function farmStuckStep()
-	local F = UserConfig.Farm
-	if not (F.StuckRecovery and F.StuckRecovery.Enabled) then
-		return
-	end
-	if os.clock() - lastProgress > (F.StuckRecovery.Seconds or 240) then
-		say("Stuck: recovering by going home", "warn")
-		notifyDiscord("alerts", "stuck for " .. tostring(F.StuckRecovery.Seconds or 240) .. " s, recovering")
-		local ok = goTo("MainMap")
-		if not ok and F.HomeByRespawn then
-			pcall(function() LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Health = 0 end)
-		end
-		stuckStrikes += 1
-		lastProgress = os.clock()
-		if F.LeaveWhenStuck and stuckStrikes >= 3 then
-			if F.AutoRejoin then
-				say("Leaving and rejoining", "warn")
-				notifyDiscord("alerts", "repeated stuck trips, rejoining")
-				pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId) end)
-			else
-				say("Repeated stuck trips: pausing the farm (turn on AutoRejoin for auto rejoin)", "bad")
-				farmRunning = false
-			end
-		end
-	end
-end
-
--- ---------- the farm loop ----------
-local function farmSummaryText()
-	local up = os.clock() - FarmStats.started
-	return string.format("%s up %s | needs %d | eggs %d | potions %d | neons %d | opened %d | transfers %d | Bucks %d",
-		"farm", tostring(math.floor(up / 60)) .. " min", FarmStats.needs, FarmStats.eggs, FarmStats.potions,
-		FarmStats.neons, FarmStats.opened, FarmStats.transfers, money())
-end
-local lastSummary = -math.huge
-local lastFailureStreak = 0
-local function farmLoop()
-	farmRunning = true
-	FarmStats.started = os.clock()
-	FarmStats.needs, FarmStats.eggs, FarmStats.potions = 0, 0, 0
-	startAntiAfk()
-	applyCameraGuard()
-	applyBabyMode()
-	say("Farm mode: taking care of everything until you press Stop", "ok")
-	setGoal("Farm mode (AdoptMeFarm settings)", { "needs | potions | neon | pen | lure | transfer" })
-	notifyDiscord("summary", "farm session started")
-	local failures = 0
-	while running and farmRunning do
-		if not UserConfig.Farm.Enabled then
-			setNow("Farm paused (Farm.Enabled = false)")
-			task.wait(1)
 		else
-			local ok, why = pcall(function()
-				applyKeepPetEquipped()
-				farmBuyEggStep()
-				farmAutoPotionsStep()
-				farmAutoNeonStep()
-				farmAutoOpenStep()
-				farmCollectCashbackStep()
-				farmPetPenStep()
-				farmLureBoxStep()
-				farmTransferStep()
-				careStep()
-			end)
-			if ok then
-				noteProgress()
-				failures = 0
-			else
-				failures += 1
-				log("ERROR", "farm step: " .. tostring(why))
-				if failures >= (UserConfig.Farm.MaxConsecutiveFailures or 3) then
-					if os.clock() - lastFailureStreak < (UserConfig.Farm.DisableMinutes or 15) * 60 then
-						say("Too many failures in a row: pausing the farm", "bad")
-						notifyDiscord("alerts", "paused after repeated failures")
-						farmRunning = false
-					else
-						lastFailureStreak = os.clock()
-						failures = 0
-						task.wait(UserConfig.Farm.FailureCooldownSeconds or 30)
-					end
-				end
-			end
-			farmStuckStep()
-			if UserConfig.Notifications.Enabled and os.clock() - lastSummary > (UserConfig.Notifications.SummaryIntervalMinutes or 30) * 60 then
-				lastSummary = os.clock()
-				notifyDiscord("summary", farmSummaryText())
-			end
-			task.wait(0.5)
+			firstPet()
 		end
+		transferTick()
+		farmPenTick()
+		lureTick()
+		farmNeonTick()
+		farmPotionTick()
+		farmEggTick()
+		careStep()
+		flushCalls()
 	end
-	stopAntiAfk()
-	if farmRunning then
-		say("Farm stopped. " .. farmSummaryText(), "warn")
-		notifyDiscord("summary", "farm session stopped")
+	if running then
+		say("Farm stopped. " .. needsDone .. " needs done this session", "warn")
+		show("Farm stopped", needsDone .. " needs done", "")
 	else
-		say("Farm paused. " .. farmSummaryText(), "warn")
+		say("Stopped. " .. needsDone .. " needs done this session", "warn")
+		show("Stopped", needsDone .. " needs done", "")
 	end
-	farmRunning = false
-	setGoal("Farm stopped", {})
+	running = false
+	if onFinished then
+		pcall(onFinished)
+	end
 end
-
--- =====================================================================
--- Guide runner (unchanged logic, now hands over to the farm)
--- =====================================================================
 GC.Discord = "https://discord.gg/7rvgpgXrwd"
 GC.Credit = "KiritoKun"
 GC.AvatarUrl = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/victimoffate_.png"
 GC.AvatarUser = "victimoffate_"
 local skipPressed = false
-local onFinished = nil
+onFinished = nil
 local THEME = {
 	bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
 	text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
@@ -3270,7 +2850,7 @@ local function window(width, height, onClose)
 			avatar.Image = image
 		end
 	end)
-	text(header, 32, 0, width - 64, 30, "Auto Achievements + Farm", 13, THEME.text, true)
+	text(header, 32, 0, width - 64, 30, "Auto Achievements", 13, THEME.text, true)
 	local close = create("TextButton", { Position = UDim2.fromOffset(width - 28, 3), Size = UDim2.fromOffset(24, 24),
 		BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 18 }, header)
 	close.MouseButton1Click:Connect(function()
@@ -3299,7 +2879,7 @@ local function footer(frame, width, y)
 		end
 	end)
 end
-local function show(title, desc, detail)
+function show(title, desc, detail)
 	setGoal(title or "", {})
 	setNow((detail and detail ~= "") and detail or (desc or ""))
 end
@@ -3313,9 +2893,6 @@ GC.PetsPageFirst = true
 GC.GrindMinutes = 180
 GC.StepTimeout = 150
 GC.GapSeconds = 0.3
--- adopt the farm window's settings into the Guide knobs
-GC.DevLogs = UserConfig.Telemetry.Enabled
-GC.KeepBucks = UserConfig.Farm.Event.CandyPets.KeepBucks or 0
 local function blocker(id, plan)
 	if plan.needsRealPet and not realPet() then
 		local pet = choosePet()
@@ -3588,17 +3165,13 @@ local function runGuide()
 		if #readyIds() > 0 then
 			say(#readyIds() .. " left for later (they unlock as you play)")
 		end
-		show("All done!", total .. " task(s) completed", "")
-		-- hand over to the farm system (AdoptMeFarm settings)
-		if UserConfig.Farm.Enabled and (UserConfig.Farm.AutoNeeds.Enabled
-			or UserConfig.Farm.BuyEgg or UserConfig.Farm.AutoPotions.Enabled
-			or UserConfig.Farm.AutoNeon.Enabled or UserConfig.Farm.AutoOpen.Enabled
-			or UserConfig.Farm.CollectCashback or UserConfig.Farm.Event.PetPen
-			or UserConfig.Farm.LureBox.Enabled or UserConfig.Farm.Transfer.Mannequin
-			or UserConfig.Farm.Transfer.BuyMannequin or UserConfig.Farm.Transfer.AutoPay) then
-			say("Guide finished: switching to Farm mode", "warn")
-			farmLoop()
+		-- (Farm integration) the Guide is done: hand over to the Farm system
+		if UserConfig.Farm.Enabled then
+			show("Guide done!", total .. " task(s) completed", UserConfig.Farm.AutoNeeds.Enabled and "Farm mode starting..." or "")
+			runFarm()
+			return
 		end
+		show("All done!", total .. " task(s) completed", "")
 	else
 		say("Stopped. " .. total .. " task(s) completed so far", "warn")
 		show("Stopped", total .. " task(s) completed", "")
@@ -3610,9 +3183,8 @@ local function runGuide()
 end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 266, function()
+	local frame = window(width, 236, function()
 		running = false
-		farmRunning = false
 		uiLog = nil
 		ui.now = nil
 	end)
@@ -3666,40 +3238,12 @@ local function mainWindow()
 	end)
 	button(frame, 22 + third * 2, 184, third, "Stop", THEME.bad, function()
 		running = false
-		farmRunning = false
 		show("Stopped", "", "")
 	end)
-	local farmButton
-	farmButton = button(frame, 10, 212, width - 20, "Farm Mode (AdoptMeFarm settings)", THEME.accent, function()
-		if farmRunning then
-			return
-		end
-		running = true
-		farmButton.Text = "Farming"
-		task.spawn(function()
-			local ok = pcall(function()
-				if not waitUntil(function() return getKey("loaded_in") == true end, 120) then
-					say("The game hasn't loaded yet, try again in a moment", "bad")
-					farmButton.Text = "Farm Mode (AdoptMeFarm settings)"
-					return
-				end
-				farmLoop()
-			end)
-			if not ok then
-				say("farm error: press Farm again", "bad")
-			end
-			farmButton.Text = "Farm Mode (AdoptMeFarm settings)"
-		end)
-	end)
-	footer(frame, width, 240)
+	footer(frame, width, 214)
 end
 env.AutoAchievements = {
-	Stop = function()
-		running = false
-		farmRunning = false
-	end,
+	Stop = function() running = false end,
 	Skip = function() skipPressed = true end,
-	FarmStop = function() farmRunning = false end,
-	Config = UserConfig,
 }
 mainWindow()
