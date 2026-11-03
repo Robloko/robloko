@@ -2193,40 +2193,58 @@ local function runWithTimeout(limit, fn, ...)
 	end
 	return ok, why
 end
-GC.RecordCalls = true
+-- RecordCalls is OFF by default: on some executors hookmetamethod does not return the
+-- original __namecall, which silently breaks EVERY namecall in the game (the script stops
+-- loading and game LocalScripts error with "attempt to call a nil value" in hashed chunks).
+-- Turn it on only if you know your executor's hook works (Synapse/Krnl-style).
+GC.RecordCalls = false
 GC.CallWindowSeconds = 20
 local recent, queue = {}, {}
 local assistCalls = {}
 local recording = false
+local function namecallWorks()
+	-- a real namecall must still come back: if the hook swallows it, the game is poisoned
+	local ok, service = pcall(function()
+		return game:GetService("Players")
+	end)
+	return ok and service ~= nil
+end
 do
 	if GC.RecordCalls and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
-		local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
-		local isExecutor = type(checkcaller) == "function" and checkcaller or function() return false end
-		local old
-		local ok, err = pcall(function()
-			old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-				-- fail-safe: if this executor did not give us the original, never touch the
-				-- call (calling a nil original here broke every game LocalScript with
-				-- "attempt to call a nil value" in hashed-chunk errors)
-				if type(old) ~= "function" then
-					return
-				end
-				if recording and GC.RecordCalls and not isExecutor() then
-					local method = getnamecallmethod()
-					if method == "FireServer" or method == "InvokeServer" then
-						table.insert(queue, { at = os.clock(), remote = self, method = method, args = table.pack(...) })
-					end
-				end
-				return old(self, ...)
-			end))
-		end)
-		if not ok or type(old) ~= "function" then
-			-- hook installed but the original was not returned: try to undo it
-			-- (executors that restore on nil) and fall back to data-only assist logs
-			pcall(hookmetamethod, game, "__namecall", nil)
-			recording = false
+		if not namecallWorks() then
 			GC.RecordCalls = false
-			log("WARN", "namecall hook not usable on this executor (no original returned): assist logs data only")
+			log("WARN", "namecalls already broken before the hook: skipping the recorder, rejoin the game")
+		else
+			local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
+			local isExecutor = type(checkcaller) == "function" and checkcaller or function() return false end
+			local old
+			local ok, err = pcall(function()
+				old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+					if type(old) ~= "function" then
+						return
+					end
+					if recording and GC.RecordCalls and not isExecutor() then
+						local method = getnamecallmethod()
+						if method == "FireServer" or method == "InvokeServer" then
+							table.insert(queue, { at = os.clock(), remote = self, method = method, args = table.pack(...) })
+						end
+					end
+					return old(self, ...)
+				end))
+			end)
+			-- verify with a REAL namecall: the hook must forward calls, not swallow them
+			if not ok or type(old) ~= "function" or not namecallWorks() then
+				pcall(hookmetamethod, game, "__namecall", nil)
+				if type(old) == "function" then
+					pcall(hookmetamethod, game, "__namecall", old)
+				end
+				if not namecallWorks() then
+					log("ERROR", "namecall recorder broke namecalls and could not be undone: REJOIN the game")
+				end
+				recording = false
+				GC.RecordCalls = false
+				log("WARN", "namecall recorder disabled on this executor: assist logs data only")
+			end
 		end
 	else
 		log("WARN", "hookmetamethod not available: assist logs data only")
