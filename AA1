@@ -8,6 +8,94 @@ local env = getgenv and getgenv() or {}
 if env.AutoAchievements and env.AutoAchievements.Stop then
 	pcall(env.AutoAchievements.Stop)
 end
+-- boot marker: a tiny always-on label so you can SEE the chunk executed. Without it a
+-- silently aborted load looks exactly like "not loading", and some executors strip line
+-- info from errors so nothing else tells you what happened.
+local bootFrame
+pcall(function()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "AutoAchievementsBoot"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 1000
+	local parent
+	pcall(function()
+		parent = gethui and gethui() or game:GetService("CoreGui")
+	end)
+	if not parent then
+		parent = LocalPlayer:WaitForChild("PlayerGui", 5)
+	end
+	gui.Parent = parent
+	local mark = Instance.new("TextLabel")
+	mark.Size = UDim2.fromOffset(260, 24)
+	mark.Position = UDim2.new(1, -270, 0, 10)
+	mark.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+	mark.TextColor3 = Color3.fromRGB(150, 120, 255)
+	mark.Text = "AutoAchievements: starting..."
+	mark.Font = Enum.Font.Gotham
+	mark.TextSize = 12
+	mark.Parent = gui
+	bootFrame = mark
+end)
+local function bootSay(text, keep)
+	pcall(function()
+		if bootFrame then
+			bootFrame.Text = tostring(text)
+			if not keep then
+				task.delay(keep == false and 15 or 15, function()
+					pcall(function()
+						if bootFrame and bootFrame.Parent then
+							bootFrame.Parent:Destroy()
+						end
+					end)
+				end)
+			end
+		end
+	end)
+end
+-- boot marker: a tiny always-on label so you can SEE the chunk executed. Without it a
+-- silently aborted load looks exactly like "not loading", and some executors strip line
+-- info from errors so nothing else tells you what happened.
+local bootFrame
+pcall(function()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "AutoAchievementsBoot"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 1000
+	local parent
+	pcall(function()
+		parent = gethui and gethui() or game:GetService("CoreGui")
+	end)
+	if not parent then
+		parent = LocalPlayer:WaitForChild("PlayerGui", 5)
+	end
+	gui.Parent = parent
+	local mark = Instance.new("TextLabel")
+	mark.Size = UDim2.fromOffset(260, 24)
+	mark.Position = UDim2.new(1, -270, 0, 10)
+	mark.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+	mark.TextColor3 = Color3.fromRGB(150, 120, 255)
+	mark.Text = "AutoAchievements: starting..."
+	mark.Font = Enum.Font.Gotham
+	mark.TextSize = 12
+	mark.Parent = gui
+	bootFrame = mark
+end)
+local function bootSay(text, keep)
+	pcall(function()
+		if bootFrame then
+			bootFrame.Text = tostring(text)
+			if not keep then
+				task.delay(keep == false and 15 or 15, function()
+					pcall(function()
+						if bootFrame and bootFrame.Parent then
+							bootFrame.Parent:Destroy()
+						end
+					end)
+				end)
+			end
+		end
+	end)
+end
 
 -- ============================================================================
 -- UserConfig (integrated from AdoptMeFarm_public.lua "Adopt Victims v3")
@@ -146,14 +234,25 @@ end
 GC.Skip = {}
 local clientData
 do
-	local ok, result = pcall(function()
-		return require(ReplicatedStorage:WaitForChild("ClientModules", 15):WaitForChild("Core", 15):WaitForChild("ClientData", 15))
-	end)
-	if not ok or type(result) ~= "table" or type(result.get_data) ~= "function" then
-		log("ERROR", "ClientData not usable: " .. tostring(result))
+	local loaded = false
+	-- executed too early (loading screen / teleport): retry for up to ~2 minutes instead
+	-- of silently aborting (a bare return here was why the UI "did not load")
+	for _ = 1, 12 do
+		local ok, result = pcall(function()
+			return require(ReplicatedStorage:WaitForChild("ClientModules", 10):WaitForChild("Core", 10):WaitForChild("ClientData", 10))
+		end)
+		if ok and type(result) == "table" and type(result.get_data) == "function" then
+			clientData = result
+			loaded = true
+			break
+		end
+		bootSay("AutoAchievements: waiting for the game to load...")
+		task.wait(5)
+	end
+	if not loaded then
+		bootSay("Game data not reachable: rejoin and run again from the menu")
 		return
 	end
-	clientData = result
 end
 local function getKey(key)
 	local ok, all = pcall(clientData.get_data)
@@ -3451,4 +3550,16 @@ env.AutoAchievements = {
 	Stop = function() running = false end,
 	Skip = function() skipPressed = true end,
 }
-mainWindow()
+do
+	local ok, err = pcall(mainWindow)
+	if ok then
+		-- UI built: remove the boot marker
+		pcall(function()
+			if bootFrame and bootFrame.Parent then
+				bootFrame.Parent:Destroy()
+			end
+		end)
+	else
+		bootSay("UI error: " .. tostring(err))
+	end
+end
