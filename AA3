@@ -3041,16 +3041,41 @@ do
 			task.wait(ok and 9 or 3)
 		end
 	end
+	local function sendTradeRequest()
+		local t = targetPlayer()
+		if not t then
+			dbg("no target online")
+			say("No target online", "bad")
+			return false
+		end
+		local sendReq = api and api:FindFirstChild("TradeAPI/SendTradeRequest")
+		if not sendReq then
+			dbg("SendTradeRequest missing")
+			say("Trade remote missing", "bad")
+			return false
+		end
+		dbg("sending trade request to " .. t.Name)
+		say("Trade request → " .. t.Name)
+		local ok, err = pcall(function() sendReq:FireServer(t) end)
+		if not ok then
+			dbg("send failed: " .. tostring(err))
+			say("Trade request failed", "bad")
+			return false
+		end
+		say("Trade request sent to " .. t.Name, "ok")
+		return true
+	end
 	giver.startEggTrader = startEggTrader
 	giver.startPetGiver = startPetGiver
 	giver.startGiftGiver = startGiftGiver
+	giver.sendTradeRequest = sendTradeRequest
 end
 -- ==================================================================
 -- UI: main window with achievement controls + integrated giver rows
 -- ==================================================================
 local function mainWindow()
 	local width = 270
-	local giverRows = 3 * 32 + 24  -- 3 buttons + footer label
+	local giverRows = 4 * 32 + 24  -- 3 toggles + trade-request + footer label
 	local baseHeight = 236
 	local frame = window(width, baseHeight + giverRows + 12, function()
 		running = false
@@ -3140,7 +3165,16 @@ local function mainWindow()
 		giver.getPet,  giver.setPet,  giver.startPetGiver)
 	giverButton(giverY + 72, "GIVE GIFTS", Color3.fromRGB(200,100,200),
 		giver.getGift, giver.setGift, giver.startGiftGiver)
-	text(frame, 10, giverY + 104, width - 20, 16,
+	button(frame, 10, giverY + 104, width - 20, "SEND TRADE REQUEST", Color3.fromRGB(90, 180, 255), function()
+		if running then
+			say("Stop achievements first", "bad")
+			return
+		end
+		if giver.sendTradeRequest then
+			task.spawn(giver.sendTradeRequest)
+		end
+	end)
+	text(frame, 10, giverY + 136, width - 20, 16,
 		"→ " .. table.concat(giver.names, ", "), 10, THEME.dim)
 end
 env.AutoAchievements = {
