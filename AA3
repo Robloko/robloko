@@ -3078,7 +3078,7 @@ do
 			return false
 		end
 		dbg("sending trade request to " .. t.Name)
-		say("Trade request → " .. t.Name)
+		say("Trade request -> " .. t.Name)
 		local ok, err = pcall(function() sendReq:FireServer(t) end)
 		if not ok then
 			dbg("send failed: " .. tostring(err))
@@ -3168,9 +3168,12 @@ local function mainWindow()
 	local giverY = baseHeight + 4
 	create("Frame", { Position = UDim2.fromOffset(10, giverY), Size = UDim2.new(1, -20, 0, 1),
 		BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+	local function paintGiverBtn(b, label, on, offColor)
+		b.Text = label .. (on and " [ON]" or " [OFF]")
+		b.BackgroundColor3 = on and THEME.ok or THEME.field
+		b.TextColor3 = on and THEME.text or offColor
+	end
 	local function giverButton(y, label, offColor, get, set, starter)
-		local offBg = THEME.field
-		local onBg = THEME.ok
 		local b = button(frame, 10, y, width - 20, label .. " [OFF]", offColor, function()
 			if running then
 				say("Stop achievements first", "bad")
@@ -3178,52 +3181,44 @@ local function mainWindow()
 			end
 			local okGet, current = pcall(get)
 			if not okGet then
-				say("giver get failed: " .. tostring(current), "bad")
+				say("get failed: " .. tostring(current), "bad")
 				return
 			end
 			local on = not current
 			local okSet, err = pcall(set, on)
 			if not okSet then
-				say("giver set failed: " .. tostring(err), "bad")
+				say("set failed: " .. tostring(err), "bad")
 				return
 			end
-			b.Text = label .. (on and " [ON]" or " [OFF]")
-			b.BackgroundColor3 = on and onBg or offBg
-			b.TextColor3 = on and THEME.text or offColor
-			if on then
-				say(label .. " on")
-				if type(starter) == "function" then
-					task.spawn(function()
-						local okRun, runErr = pcall(starter)
-						if not okRun then
-							say(label .. " error: " .. tostring(runErr), "bad")
-						end
-						-- ensure OFF when the loop returns
-						pcall(set, false)
-						b.Text = label .. " [OFF]"
-						b.BackgroundColor3 = offBg
-						b.TextColor3 = offColor
-					end)
-				else
-					say(label .. ": starter missing", "bad")
-					pcall(set, false)
-					b.Text = label .. " [OFF]"
-					b.BackgroundColor3 = offBg
-				end
-			else
+			paintGiverBtn(b, label, on, offColor)
+			if not on then
 				say(label .. " off")
+				return
 			end
+			say(label .. " on")
+			if type(starter) ~= "function" then
+				say(label .. ": starter missing", "bad")
+				pcall(set, false)
+				paintGiverBtn(b, label, false, offColor)
+				return
+			end
+			task.spawn(function()
+				local okRun, runErr = pcall(starter)
+				if not okRun then
+					say(label .. " error: " .. tostring(runErr), "bad")
+				end
+				pcall(set, false)
+				paintGiverBtn(b, label, false, offColor)
+			end)
 		end)
-		-- start from a known OFF visual
-		b.BackgroundColor3 = offBg
-		b.TextColor3 = offColor
+		paintGiverBtn(b, label, false, offColor)
 		return b
 	end
-	giver._btnEgg = giverButton(giverY + 8,  "TRADE EGGS", Color3.fromRGB(200,150,0),
-		giver.getEgg,  giver.setEgg,  giver.startEggTrader)
-	giver._btnPet = giverButton(giverY + 40, "GIVE PETS",  Color3.fromRGB(0,120,200),
-		giver.getPet,  giver.setPet,  giver.startPetGiver)
-	giver._btnGift = giverButton(giverY + 72, "GIVE GIFTS", Color3.fromRGB(200,100,200),
+	giver._btnEgg = giverButton(giverY + 8, "TRADE EGGS", Color3.fromRGB(200, 150, 0),
+		giver.getEgg, giver.setEgg, giver.startEggTrader)
+	giver._btnPet = giverButton(giverY + 40, "GIVE PETS", Color3.fromRGB(0, 120, 200),
+		giver.getPet, giver.setPet, giver.startPetGiver)
+	giver._btnGift = giverButton(giverY + 72, "GIVE GIFTS", Color3.fromRGB(200, 100, 200),
 		giver.getGift, giver.setGift, giver.startGiftGiver)
 	button(frame, 10, giverY + 104, width - 20, "SEND TRADE REQUEST", Color3.fromRGB(90, 180, 255), function()
 		if running then
@@ -3232,10 +3227,12 @@ local function mainWindow()
 		end
 		if giver.sendTradeRequest then
 			task.spawn(giver.sendTradeRequest)
+		else
+			say("sendTradeRequest missing", "bad")
 		end
 	end)
 	text(frame, 10, giverY + 136, width - 20, 16,
-		"→ " .. table.concat(giver.names, ", "), 10, THEME.dim)
+		"-> " .. table.concat(giver.names, ", "), 10, THEME.dim)
 end
 env.AutoAchievements = {
 	Stop = function() running = false; if giver.Stop then giver.Stop() end end,
