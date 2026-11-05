@@ -2911,7 +2911,10 @@ do
 	local eggMode, petMode, giftMode = false, false, false
 	local function anyMode() return eggMode or petMode or giftMode end
 	giver.anyMode = anyMode
-	giver.Stop = function() eggMode, petMode, giftMode = false, false, false end
+	giver.Stop = function()
+		eggMode, petMode, giftMode = false, false, false
+		if giver.syncAll then giver.syncAll() end
+	end
 	giver.names = TARGET_PLAYER_NAMES
 	giver.getEgg  = function() return eggMode end
 	giver.setEgg  = function(v) eggMode = v end
@@ -2919,6 +2922,20 @@ do
 	giver.setPet  = function(v) petMode = v end
 	giver.getGift = function() return giftMode end
 	giver.setGift = function(v) giftMode = v end
+	-- UI button handles, filled in by mainWindow so loops can turn labels OFF
+	giver._btnEgg, giver._btnPet, giver._btnGift = nil, nil, nil
+	local function syncBtn(btn, label, on, offColor)
+		if not btn or not btn.Parent then return end
+		pcall(function()
+			btn.Text = label .. (on and " [ON]" or " [OFF]")
+			btn.BackgroundColor3 = on and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(28, 28, 34)
+			btn.TextColor3 = on and Color3.fromRGB(230, 230, 235) or offColor
+		end)
+	end
+	giver.syncEgg  = function() syncBtn(giver._btnEgg,  "TRADE EGGS", eggMode,  Color3.fromRGB(200,150,0)) end
+	giver.syncPet  = function() syncBtn(giver._btnPet,  "GIVE PETS",  petMode,  Color3.fromRGB(0,120,200)) end
+	giver.syncGift = function() syncBtn(giver._btnGift, "GIVE GIFTS", giftMode, Color3.fromRGB(200,100,200)) end
+	giver.syncAll  = function() giver.syncEgg(); giver.syncPet(); giver.syncGift() end
 	local function dbg(msg) print("[Giver] " .. msg) end
 	local function targetPlayer()
 		for _, name in ipairs(TARGET_PLAYER_NAMES) do
@@ -3006,12 +3023,14 @@ do
 	local function startEggTrader()
 		while eggMode do
 			if running then dbg("achievements running — pausing giver"); task.wait(5); continue end
-			if #eligibleEggs() == 0 then dbg("no eggs left"); eggMode = false; break end
+			if #eligibleEggs() == 0 then dbg("no eggs left"); eggMode = false; if giver.syncEgg then giver.syncEgg() end; break end
 			local t = targetPlayer()
 			if not t then dbg("no target online"); task.wait(10); continue end
 			if tradeEggsWithPlayer(t) then task.wait(math.random(8, 12))
 			else task.wait(15) end
 		end
+		eggMode = false
+		if giver.syncEgg then giver.syncEgg() end
 	end
 	local function startPetGiver()
 		while petMode do
@@ -3019,13 +3038,15 @@ do
 			local t = targetPlayer()
 			if not t then task.wait(10); continue end
 			local pets = eligiblePets()
-			if #pets == 0 then dbg("no target pets left"); petMode = false; break end
+			if #pets == 0 then dbg("no target pets left"); petMode = false; if giver.syncPet then giver.syncPet() end; break end
 			local give = api and api:FindFirstChild("TradeAPI/GiveItem")
 			if not give then dbg("GiveItem missing"); task.wait(5); continue end
 			local ok, res = pcall(function() return give:InvokeServer(t, pets[1].unique) end)
 			dbg(ok and "gave pet" or ("give failed: " .. tostring(res)))
 			task.wait(ok and 9 or 3)
 		end
+		petMode = false
+		if giver.syncPet then giver.syncPet() end
 	end
 	local function startGiftGiver()
 		while giftMode do
@@ -3033,13 +3054,15 @@ do
 			local t = targetPlayer()
 			if not t then task.wait(10); continue end
 			local gifts = eligibleGifts()
-			if #gifts == 0 then dbg("all gifts given"); giftMode = false; break end
+			if #gifts == 0 then dbg("all gifts given"); giftMode = false; if giver.syncGift then giver.syncGift() end; break end
 			local give = api and api:FindFirstChild("TradeAPI/GiveItem")
 			if not give then dbg("GiveItem missing"); task.wait(5); continue end
 			local ok, res = pcall(function() return give:InvokeServer(t, gifts[1].unique) end)
 			dbg(ok and "gave gift" or ("give failed: " .. tostring(res)))
 			task.wait(ok and 9 or 3)
 		end
+		giftMode = false
+		if giver.syncGift then giver.syncGift() end
 	end
 	local function sendTradeRequest()
 		local t = targetPlayer()
@@ -3145,25 +3168,62 @@ local function mainWindow()
 	local giverY = baseHeight + 4
 	create("Frame", { Position = UDim2.fromOffset(10, giverY), Size = UDim2.new(1, -20, 0, 1),
 		BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-	local function giverButton(y, label, color, get, set, starter)
-		local b = button(frame, 10, y, width - 20, label .. " [OFF]", color, function()
+	local function giverButton(y, label, offColor, get, set, starter)
+		local offBg = THEME.field
+		local onBg = THEME.ok
+		local b = button(frame, 10, y, width - 20, label .. " [OFF]", offColor, function()
 			if running then
 				say("Stop achievements first", "bad")
 				return
 			end
-			local on = not get()
-			set(on)
+			local okGet, current = pcall(get)
+			if not okGet then
+				say("giver get failed: " .. tostring(current), "bad")
+				return
+			end
+			local on = not current
+			local okSet, err = pcall(set, on)
+			if not okSet then
+				say("giver set failed: " .. tostring(err), "bad")
+				return
+			end
 			b.Text = label .. (on and " [ON]" or " [OFF]")
-			b.BackgroundColor3 = on and THEME.ok or color
-			if on then task.spawn(starter) end
+			b.BackgroundColor3 = on and onBg or offBg
+			b.TextColor3 = on and THEME.text or offColor
+			if on then
+				say(label .. " on")
+				if type(starter) == "function" then
+					task.spawn(function()
+						local okRun, runErr = pcall(starter)
+						if not okRun then
+							say(label .. " error: " .. tostring(runErr), "bad")
+						end
+						-- ensure OFF when the loop returns
+						pcall(set, false)
+						b.Text = label .. " [OFF]"
+						b.BackgroundColor3 = offBg
+						b.TextColor3 = offColor
+					end)
+				else
+					say(label .. ": starter missing", "bad")
+					pcall(set, false)
+					b.Text = label .. " [OFF]"
+					b.BackgroundColor3 = offBg
+				end
+			else
+				say(label .. " off")
+			end
 		end)
+		-- start from a known OFF visual
+		b.BackgroundColor3 = offBg
+		b.TextColor3 = offColor
 		return b
 	end
-	giverButton(giverY + 8,  "TRADE EGGS", Color3.fromRGB(200,150,0),
+	giver._btnEgg = giverButton(giverY + 8,  "TRADE EGGS", Color3.fromRGB(200,150,0),
 		giver.getEgg,  giver.setEgg,  giver.startEggTrader)
-	giverButton(giverY + 40, "GIVE PETS",  Color3.fromRGB(0,120,200),
+	giver._btnPet = giverButton(giverY + 40, "GIVE PETS",  Color3.fromRGB(0,120,200),
 		giver.getPet,  giver.setPet,  giver.startPetGiver)
-	giverButton(giverY + 72, "GIVE GIFTS", Color3.fromRGB(200,100,200),
+	giver._btnGift = giverButton(giverY + 72, "GIVE GIFTS", Color3.fromRGB(200,100,200),
 		giver.getGift, giver.setGift, giver.startGiftGiver)
 	button(frame, 10, giverY + 104, width - 20, "SEND TRADE REQUEST", Color3.fromRGB(90, 180, 255), function()
 		if running then
