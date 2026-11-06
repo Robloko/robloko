@@ -1,5 +1,5 @@
 -- ==================================================================
--- AUTO GIVER (compact themed GUI + giver/trader functions)
+-- COCOON (compact GUI + giver/trader functions, with avatar icon)
 -- Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -8,8 +8,8 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 local env = getgenv and getgenv() or {}
-if env.AutoGiver and env.AutoGiver.Stop then
-    pcall(env.AutoGiver.Stop)
+if env.COCOON and env.COCOON.Stop then
+    pcall(env.COCOON.Stop)
 end
 
 -- ================= CONFIG =================
@@ -49,15 +49,22 @@ local EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
 -- ================= STATUS / LOG =================
 local ui = {}
 local uiLog = nil
-local status = { now = "Ready", goal = "Pick a mode and press a button" }
+local status = { now = "Ready", goal = "Pick a mode and press a button", queue = {} }
 
 local function renderStatus()
     if ui.now then
         pcall(function()
             ui.now.Text = status.now
             ui.goal.Text = status.goal
+            ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
         end)
     end
+end
+
+local function setGoal(text, queue)
+    status.goal = text or ""
+    status.queue = queue or {}
+    renderStatus()
 end
 
 local function setNow(text)
@@ -70,7 +77,7 @@ local function say(text, tone)
     if uiLog then
         pcall(uiLog, tone or "info", text)
     end
-    print("[AutoGiver] " .. tostring(text))
+    print("[COCOON] " .. tostring(text))
 end
 
 -- ================= HELPERS =================
@@ -157,6 +164,7 @@ local function addEggsToTrade(eggs)
         end)
         if success then
             added += 1
+            say("Added egg " .. i .. "/" .. maxEggs .. ": " .. eggs[i].name)
         end
         task.wait(0.2)
     end
@@ -164,7 +172,7 @@ local function addEggsToTrade(eggs)
 end
 
 local function tradeEggsWithPlayer(targetPlayer)
-    say("Trading with " .. targetPlayer.Name)
+    say("Sending trade request to " .. targetPlayer.Name)
     local ok1 = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(targetPlayer)
     end)
@@ -197,7 +205,7 @@ local function tradeEggsWithPlayer(targetPlayer)
         ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
     end)
     if ok4 then
-        say("Traded " .. added .. " eggs to " .. targetPlayer.Name, "ok")
+        say("Trade completed: " .. added .. " eggs to " .. targetPlayer.Name, "ok")
         return true
     end
     say("Failed to confirm trade", "bad")
@@ -261,12 +269,13 @@ local function startGiftGiver()
         end
         local gifts = findGifts()
         if #gifts == 0 then
-            say("All gifts given away! Stopping.", "warn")
+            say("All " .. GIFT_TYPE .. " given away! Stopping.", "warn")
             GiftMode = false
             break
         end
         local stack = gifts[1]
         if giveItem(target, stack.uid) then
+            say("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name, "ok")
             task.wait(9)
         else
             task.wait(3)
@@ -297,7 +306,7 @@ end
 
 -- ================= UI =================
 local GC = GC or {}
-GC.LogFolder = "AutoGiver"
+GC.LogFolder = "COCOON"
 GC.AvatarUrl = "https://raw.githubusercontent.com/Robloko/robloko/main/icon.png"
 GC.AvatarUser = "COCOON"
 
@@ -406,7 +415,7 @@ local function window(width, height)
     if ui.screen and ui.screen.Parent then
         ui.screen:Destroy()
     end
-    ui.screen = create("ScreenGui", { Name = "AutoGiver", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
+    ui.screen = create("ScreenGui", { Name = "COCOON", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
     local frame = create("Frame", { Size = UDim2.fromOffset(width, height), Position = UDim2.new(0, 16, 0.5, -height / 2),
         BackgroundColor3 = THEME.bg, BorderSizePixel = 0 }, ui.screen)
     corner(frame, 8)
@@ -422,8 +431,8 @@ local function window(width, height)
             avatar.Image = image
         end
     end)
-    text(header, 30, 0, width - 58, 26, "Auto Giver", 12, THEME.text, true)
-    local close = create("TextButton", { Position = UDim2.fromOffset(width - 26, 1), Size = UDim2.fromOffset(24, 24),
+    text(header, 30, 0, width - 58, 26, "COCOON", 13, THEME.text, true)
+    local close = create("TextButton", { Position = UDim2.fromOffset(width - 26, 1), Size = UDim2.fromOffset(22, 22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, header)
     close.MouseButton1Click:Connect(function()
         EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
@@ -438,16 +447,17 @@ end
 
 local function mainWindow()
     local width = 210
-    local frame = window(width, 208)
+    local frame = window(width, 264)
     -- status lines
-    ui.now = text(frame, 8, 30, width - 16, 14, status.now, 11, THEME.text, true)
-    ui.goal = text(frame, 8, 44, width - 16, 13, status.goal, 10, THEME.dim)
-    renderStatus()
-    -- log box (3 lines)
-    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8, 58), Size = UDim2.fromOffset(width - 16, 34),
+    text(frame, 8, 29, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now = text(frame, 34, 29, width - 42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 44, width - 16, 12, status.goal, 10, THEME.dim)
+    -- log box
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8, 58), Size = UDim2.fromOffset(width - 16, 40),
         BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim, Font = Enum.Font.Gotham, TextSize = 10,
-        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Bottom, TextWrapped = false,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false,
         ClipsDescendants = true }, frame)
+    renderStatus()
     local shown = {}
     local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
     uiLog = function(tone, message)
@@ -458,70 +468,62 @@ local function mainWindow()
         end
         logBox.Text = table.concat(shown, "\n")
     end
-    -- buttons (2x2 grid, compact)
-    local bw, bh, gap = (width - 24) / 2, 24, 4
-    local eggButton = toggleButton(frame, 8, 96, bw, "EGGS", MODE_COLORS.egg, function(btn)
-        EggMode = not EggMode
-        btn.BackgroundColor3 = EggMode and THEME.ok or MODE_COLORS.egg
-        if EggMode then
-            task.spawn(startEggTrader)
-            say("Egg trader started", "ok")
-        else
-            say("Egg trader stopped", "warn")
-        end
-    end)
-    local petButton = toggleButton(frame, 12 + bw, 96, bw, "PETS", MODE_COLORS.pet, function(btn)
-        PetMode = not PetMode
-        btn.BackgroundColor3 = PetMode and THEME.ok or MODE_COLORS.pet
-        if PetMode then
-            task.spawn(startPetGiver)
-            say("Pet giver started", "ok")
-        else
-            say("Pet giver stopped", "warn")
-        end
-    end)
-    local giftButton = toggleButton(frame, 8, 96 + bh + gap, bw, "GIFTS", MODE_COLORS.gift, function(btn)
-        GiftMode = not GiftMode
-        btn.BackgroundColor3 = GiftMode and THEME.ok or MODE_COLORS.gift
-        if GiftMode then
-            task.spawn(startGiftGiver)
-            say("Gift giver started", "ok")
-        else
-            say("Gift giver stopped", "warn")
-        end
-    end)
-    local reqButton = toggleButton(frame, 12 + bw, 96 + bh + gap, bw, "TRADE REQ", MODE_COLORS.req, function(btn)
-        TradeRequestMode = not TradeRequestMode
-        btn.BackgroundColor3 = TradeRequestMode and THEME.ok or MODE_COLORS.req
-        if TradeRequestMode then
-            task.spawn(startTradeRequester)
-            say("Trade requester started", "ok")
-        else
-            say("Trade requester stopped", "warn")
-        end
-    end)
-    text(frame, 8, 96 + (bh + gap) * 2 + 4, width - 16, 12, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 9, THEME.dim)
-    -- keep colors in sync when loops stop themselves
+    create("Frame", { Position = UDim2.fromOffset(8, 101), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+
+    -- 2x2 compact button grid
+    local half = (width - 20) / 2
+    local function gridButton(x, y, label, color, modeGet, starter, setName)
+        local btn = toggleButton(frame, x, y, half, label .. " [OFF]", color, function(b)
+            local on = not modeGet()
+            setName(on)
+            b.Text = label .. (on and " [ON]" or " [OFF]")
+            b.BackgroundColor3 = on and THEME.ok or color
+            if on then
+                task.spawn(starter)
+                say(label .. " started", "ok")
+            else
+                say(label .. " stopped", "warn")
+            end
+            return b
+        end)
+        return btn
+    end
+
+    local eggButton = gridButton(8, 108, "EGGS", MODE_COLORS.egg, function() return EggMode end, startEggTrader,
+        function(on) EggMode = on end)
+    local petButton = gridButton(12 + half, 108, "PETS", MODE_COLORS.pet, function() return PetMode end, startPetGiver,
+        function(on) PetMode = on end)
+    local giftButton = gridButton(8, 137, "GIFTS", MODE_COLORS.gift, function() return GiftMode end, startGiftGiver,
+        function(on) GiftMode = on end)
+    local reqButton = gridButton(12 + half, 137, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end,
+        startTradeRequester, function(on) TradeRequestMode = on end)
+
+    -- keep buttons in sync when a loop stops itself (out of items)
     task.spawn(function()
+        local labels = { { eggButton, "EGGS", MODE_COLORS.egg, function() return EggMode end },
+            { petButton, "PETS", MODE_COLORS.pet, function() return PetMode end },
+            { giftButton, "GIFTS", MODE_COLORS.gift, function() return GiftMode end },
+            { reqButton, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end } }
         while true do
             task.wait(2)
-            if not EggMode then
-                eggButton.BackgroundColor3 = MODE_COLORS.egg
-            end
-            if not PetMode then
-                petButton.BackgroundColor3 = MODE_COLORS.pet
-            end
-            if not GiftMode then
-                giftButton.BackgroundColor3 = MODE_COLORS.gift
-            end
-            if not TradeRequestMode then
-                reqButton.BackgroundColor3 = MODE_COLORS.req
+            for _, entry in ipairs(labels) do
+                local btn, label, color, get = entry[1], entry[2], entry[3], entry[4]
+                if not get() and string.find(btn.Text, "ON", 1, true) then
+                    btn.Text = label .. " [OFF]"
+                    btn.BackgroundColor3 = color
+                end
             end
         end
     end)
+
+    -- footer
+    text(frame, 8, 168, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 185), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
 end
 
-env.AutoGiver = {
+env.COCOON = {
     Stop = function()
         EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
     end,
