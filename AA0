@@ -1,15 +1,12 @@
---[[
-    STANDALONE AUTO GIVER — same look & feel as the Auto Achievements UI
-    4 buttons: TRADE EGGS / GIVE PETS / GIVE GIFTS / SEND TRADE REQ
-    Run it as its own script, separately from Auto Achievements.
-]]
+-- AUTO GIVER (AutoAchievements style, standalone)
+-- Buttons: TRADE EGGS / GIVE PETS / GIVE GIFTS / SEND TRADE REQ
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
--- ================= CONFIG =================
+-- CONFIG
 local TARGET_PLAYER_NAMES = { "Ndalynna", "Veronnau" }
 local GIFT_TYPE = "2d_tuesdays_2025_box"
 local EGG_TRADE_MAX = 18
@@ -40,15 +37,16 @@ local TARGET_PETS = {
     "basic_egg_2022_parakeet", "basic_egg_2022_swordfish", "basic_egg_2022_robot", "basic_egg_2022_corgi",
 }
 
--- ================= MODES =================
+-- MODES
 local EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
 local buttons = {}
+local setButtonOff -- declared first, defined later in the UI part
 
 local function debugPrint(msg)
     print("[AutoGiver] " .. msg)
 end
 
--- ================= DATA HELPERS =================
+-- DATA HELPERS
 local function getPlayerData()
     local ok, clientData = pcall(require, ReplicatedStorage.ClientModules.Core.ClientData)
     if not ok then return nil end
@@ -100,9 +98,11 @@ local function findFirstAvailablePlayer()
     return nil
 end
 
--- ================= REMOTES (direct calls, proven working) =================
+-- REMOTES (direct calls)
 local function getRemote(name)
-    return ReplicatedStorage:WaitForChild("API"):WaitForChild(name, 5)
+    local api = ReplicatedStorage:FindFirstChild("API")
+    if not api then return nil end
+    return api:FindFirstChild(name)
 end
 
 local function fireRemote(name, ...)
@@ -136,7 +136,7 @@ local function invokeRemote(name, ...)
     return true, result
 end
 
--- ================= EGG TRADING (eggs can only be traded) =================
+-- EGG TRADING (eggs can only be traded)
 local function addEggsToTrade(eggs)
     local maxEggs = math.min(#eggs, EGG_TRADE_MAX)
     local added = 0
@@ -195,24 +195,24 @@ local function startEggTrader()
         if #eggs == 0 then
             debugPrint("No eggs left! Stopping.")
             EggMode = false
-            setButtonOff(buttons.egg, "TRADE EGGS")
+            if setButtonOff then setButtonOff(buttons.egg, "TRADE EGGS") end
             break
         end
         local target = findFirstAvailablePlayer()
         if not target then
             task.wait(10)
-            continue
-        end
-        if tradeEggsWithPlayer(target) then
-            task.wait(math.random(8, 12))
         else
-            debugPrint("Trade failed. Retrying in 15 seconds...")
-            task.wait(15)
+            if tradeEggsWithPlayer(target) then
+                task.wait(math.random(8, 12))
+            else
+                debugPrint("Trade failed. Retrying in 15 seconds...")
+                task.wait(15)
+            end
         end
     end
 end
 
--- ================= GIVE (instant GiveItem) =================
+-- GIVE (instant GiveItem)
 local function giveItemTo(targetPlayer, uid)
     local ok, result = invokeRemote("TradeAPI/GiveItem", targetPlayer, uid)
     if ok then
@@ -228,19 +228,19 @@ local function startPetGiver()
         local target = findFirstAvailablePlayer()
         if not target then
             task.wait(10)
-            continue
-        end
-        local pets = findTargetItems(TARGET_PETS)
-        if #pets == 0 then
-            debugPrint("No target pets left! Stopping.")
-            PetMode = false
-            setButtonOff(buttons.pet, "GIVE PETS")
-            break
-        end
-        if giveItemTo(target, pets[1].uid) then
-            task.wait(GIVE_DELAY)
         else
-            task.wait(3)
+            local pets = findTargetItems(TARGET_PETS)
+            if #pets == 0 then
+                debugPrint("No target pets left! Stopping.")
+                PetMode = false
+                if setButtonOff then setButtonOff(buttons.pet, "GIVE PETS") end
+                break
+            end
+            if giveItemTo(target, pets[1].uid) then
+                task.wait(GIVE_DELAY)
+            else
+                task.wait(3)
+            end
         end
     end
 end
@@ -250,47 +250,41 @@ local function startGiftGiver()
         local target = findFirstAvailablePlayer()
         if not target then
             task.wait(10)
-            continue
-        end
-        local gifts = findGifts()
-        if #gifts == 0 then
-            debugPrint("All " .. GIFT_TYPE .. " given away! Stopping.")
-            GiftMode = false
-            setButtonOff(buttons.gift, "GIVE GIFTS")
-            break
-        end
-        local stack = gifts[1]
-        if giveItemTo(target, stack.uid) then
-            debugPrint("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name)
-            task.wait(GIVE_DELAY)
         else
-            task.wait(3)
+            local gifts = findGifts()
+            if #gifts == 0 then
+                debugPrint("All " .. GIFT_TYPE .. " given away! Stopping.")
+                GiftMode = false
+                if setButtonOff then setButtonOff(buttons.gift, "GIVE GIFTS") end
+                break
+            end
+            local stack = gifts[1]
+            if giveItemTo(target, stack.uid) then
+                debugPrint("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name)
+                task.wait(GIVE_DELAY)
+            else
+                task.wait(3)
+            end
         end
     end
 end
 
--- ================= TRADE REQUEST ONLY =================
+-- TRADE REQUEST ONLY
 local function startTradeRequester()
     while TradeRequestMode do
         local target = findFirstAvailablePlayer()
-        if not target then
-            task.wait(10)
-            continue
-        end
-        if fireRemote("TradeAPI/SendTradeRequest", target) then
+        if target and fireRemote("TradeAPI/SendTradeRequest", target) then
             debugPrint("Trade request sent to " .. target.Name)
         end
         task.wait(math.random(8, 15))
     end
 end
 
--- ================= UI (AutoAchievements look) =================
+-- UI (AutoAchievements look)
 local THEME = {
     bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
     text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
     ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
-    eggOn = Color3.fromRGB(200, 150, 0), petOn = Color3.fromRGB(0, 120, 200),
-    giftOn = Color3.fromRGB(200, 100, 200), reqOn = Color3.fromRGB(150, 100, 50),
 }
 
 local function guiParent()
@@ -341,13 +335,13 @@ local function text(parent, x, y, width, height, value, size, color, bold)
         TextTruncate = Enum.TextTruncate.AtEnd }, parent)
 end
 
-function setButtonOff(b, label)
+setButtonOff = function(b, label)
     b.Text = label .. " [OFF]"
     b.BackgroundColor3 = THEME.field
     b.TextColor3 = THEME.text
 end
 
-local function makeToggle(parent, x, y, width, label, offColor, onClick)
+local function makeToggle(parent, x, y, width, label, onClick)
     local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 24),
         BackgroundColor3 = THEME.field, BorderSizePixel = 0, Text = label .. " [OFF]", TextColor3 = THEME.text,
         Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = true }, parent)
@@ -366,17 +360,11 @@ local function makeToggle(parent, x, y, width, label, offColor, onClick)
     return b
 end
 
-local screen
-do
-    -- own ScreenGui so it never conflicts with other scripts
-    local ok, existing = pcall(function()
-        return guiParent():FindFirstChild("AutoGiverUI")
-    end)
-    if ok and existing then
-        existing:Destroy()
-    end
-    screen = create("ScreenGui", { Name = "AutoGiverUI", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
-end
+-- own ScreenGui so it never conflicts with other scripts
+local parentGui = guiParent()
+local existing = parentGui:FindFirstChild("AutoGiverUI")
+if existing then existing:Destroy() end
+local screen = create("ScreenGui", { Name = "AutoGiverUI", ResetOnSpawn = false, DisplayOrder = 999 }, parentGui)
 
 local width = 270
 local frame = create("Frame", { Size = UDim2.fromOffset(width, 208), Position = UDim2.new(0, 16, 0.5, -104),
@@ -384,12 +372,11 @@ local frame = create("Frame", { Size = UDim2.fromOffset(width, 208), Position = 
 corner(frame, 8)
 create("UIStroke", { Color = THEME.line, Thickness = 1 }, frame)
 
--- header (drag handle) with title + close button
 local header = create("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1 }, frame)
 makeDraggable(header, frame)
 text(header, 10, 0, width - 44, 30, "Auto Giver", 13, THEME.text, true)
 local close = create("TextButton", { Position = UDim2.fromOffset(width - 28, 3), Size = UDim2.fromOffset(24, 24),
-    BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 18 }, header)
+    BackgroundTransparency = 1, Text = "X", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 18 }, header)
 close.MouseButton1Click:Connect(function()
     EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
     frame:Destroy()
@@ -398,34 +385,31 @@ end)
 create("Frame", { Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.line,
     BorderSizePixel = 0 }, frame)
 
--- targets line
 text(frame, 10, 36, width - 20, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 11, THEME.dim)
 text(frame, 10, 50, width - 20, 12, "Gift: " .. GIFT_TYPE, 11, THEME.dim)
 
--- 4 toggle buttons
 local bw = width - 20
-buttons.egg = makeToggle(frame, 10, 68, bw, "TRADE EGGS", THEME.eggOn, function()
+buttons.egg = makeToggle(frame, 10, 68, bw, "TRADE EGGS", function()
     EggMode = not EggMode
     if EggMode then task.spawn(startEggTrader) end
     return EggMode
 end)
-buttons.pet = makeToggle(frame, 10, 96, bw, "GIVE PETS", THEME.petOn, function()
+buttons.pet = makeToggle(frame, 10, 96, bw, "GIVE PETS", function()
     PetMode = not PetMode
     if PetMode then task.spawn(startPetGiver) end
     return PetMode
 end)
-buttons.gift = makeToggle(frame, 10, 124, bw, "GIVE GIFTS", THEME.giftOn, function()
+buttons.gift = makeToggle(frame, 10, 124, bw, "GIVE GIFTS", function()
     GiftMode = not GiftMode
     if GiftMode then task.spawn(startGiftGiver) end
     return GiftMode
 end)
-buttons.req = makeToggle(frame, 10, 152, bw, "SEND TRADE REQ", THEME.reqOn, function()
+buttons.req = makeToggle(frame, 10, 152, bw, "SEND TRADE REQ", function()
     TradeRequestMode = not TradeRequestMode
     if TradeRequestMode then task.spawn(startTradeRequester) end
     return TradeRequestMode
 end)
 
--- stop-all button
 local stopAll = create("TextButton", { Position = UDim2.fromOffset(10, 180), Size = UDim2.fromOffset(width - 20, 20),
     BackgroundColor3 = THEME.field, BorderSizePixel = 0, Text = "STOP ALL", TextColor3 = THEME.bad,
     Font = Enum.Font.GothamMedium, TextSize = 11, AutoButtonColor = true }, frame)
@@ -439,4 +423,4 @@ stopAll.MouseButton1Click:Connect(function()
     setButtonOff(buttons.req, "SEND TRADE REQ")
 end)
 
-debugPrint("Auto Giver loaded (AutoAchievements style). Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", ") .. " | Gift: " .. GIFT_TYPE)
+debugPrint("Auto Giver loaded. Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", ") .. " | Gift: " .. GIFT_TYPE)
