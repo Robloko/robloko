@@ -1,10 +1,11 @@
 -- ==================================================================
--- AUTO GIVER (AutoAchievements button style)
+-- AUTO GIVER (themed GUI + giver/trader functions, with avatar icon)
+-- Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
+local player = Players.LocalPlayer
 
 local env = getgenv and getgenv() or {}
 if env.AutoGiver and env.AutoGiver.Stop then
@@ -46,8 +47,8 @@ local TARGET_PETS = {
 local EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
 
 -- ================= STATUS / LOG =================
-local uiLog = nil
 local ui = {}
+local uiLog = nil
 local status = { now = "Ready", goal = "Pick a mode and press a button", queue = {} }
 
 local function renderStatus()
@@ -79,11 +80,6 @@ local function say(text, tone)
     print("[AutoGiver] " .. tostring(text))
 end
 
-local function show(title, desc, detail)
-    setGoal(title or "", {})
-    setNow((detail and detail ~= "") and detail or (desc or ""))
-end
-
 -- ================= HELPERS =================
 local function findFirstAvailablePlayer()
     for _, name in ipairs(TARGET_PLAYER_NAMES) do
@@ -106,7 +102,7 @@ local function getPlayerData()
     if not ok2 then
         return nil
     end
-    return data and data[LocalPlayer.Name] or nil
+    return data and data[player.Name] or nil
 end
 
 local function findTargetItems(targetList)
@@ -308,11 +304,20 @@ local function startTradeRequester()
     end
 end
 
--- ================= UI (AutoAchievements style) =================
+-- ================= UI =================
+local GC = GC or {}
+GC.LogFolder = "AutoGiver"
+GC.AvatarUrl = "https://raw.githubusercontent.com/Robloko/robloko/main/icon.png"
+GC.AvatarUser = "COCOON"
+
 local THEME = {
     bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
     text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
     ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
+}
+local MODE_COLORS = {
+    egg = Color3.fromRGB(200, 150, 0), pet = Color3.fromRGB(0, 120, 200),
+    gift = Color3.fromRGB(200, 100, 200), req = Color3.fromRGB(150, 100, 50),
 }
 
 local function guiParent()
@@ -324,7 +329,7 @@ local function guiParent()
     if okCore and core then
         return core
     end
-    return LocalPlayer:WaitForChild("PlayerGui")
+    return player:WaitForChild("PlayerGui")
 end
 
 local function create(className, props, parent)
@@ -367,21 +372,46 @@ local function text(parent, x, y, width, height, value, size, color, bold)
         TextTruncate = Enum.TextTruncate.AtEnd }, parent)
 end
 
--- Button style copied from the AutoAchievements script:
--- dark field bg, 5px corner, 1px stroke, colored text, 24px tall.
-local function button(parent, x, y, width, value, color, onClick)
-    local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 24),
-        BackgroundColor3 = THEME.field, BorderSizePixel = 0, Text = value, TextColor3 = color or THEME.text,
+local function toggleButton(parent, x, y, width, label, color, onClick)
+    local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 26),
+        BackgroundColor3 = color, BorderSizePixel = 0, Text = label, TextColor3 = THEME.text,
         Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = true }, parent)
     corner(b, 5)
     create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
     b.MouseButton1Click:Connect(function()
-        pcall(onClick)
+        pcall(onClick, b)
     end)
     return b
 end
 
-local function window(width, height, onClose)
+local function avatarImage()
+    if type(getcustomasset) == "function" and type(writefile) == "function" then
+        local file = GC.LogFolder .. "/" .. GC.AvatarUser .. ".png"
+        local ok, image = pcall(function()
+            if not (type(isfile) == "function" and isfile(file)) then
+                if type(isfolder) == "function" and not isfolder(GC.LogFolder) then
+                    makefolder(GC.LogFolder)
+                end
+                local data = game:HttpGet(GC.AvatarUrl)
+                if type(data) ~= "string" or (string.sub(data, 1, 8) ~= "\137PNG\r\n\26\n" and string.sub(data, 1, 3) ~= "\255\216\255") then
+                    error("not a picture")
+                end
+                writefile(file, data)
+            end
+            return getcustomasset(file)
+        end)
+        if ok and type(image) == "string" and image ~= "" then
+            return image
+        end
+    end
+    local ok, image = pcall(function()
+        local userId = Players:GetUserIdFromNameAsync(GC.AvatarUser)
+        return (Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48))
+    end)
+    return ok and type(image) == "string" and image or ""
+end
+
+local function window(width, height)
     if ui.screen and ui.screen.Parent then
         ui.screen:Destroy()
     end
@@ -392,14 +422,23 @@ local function window(width, height, onClose)
     create("UIStroke", { Color = THEME.line, Thickness = 1 }, frame)
     local header = create("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1 }, frame)
     makeDraggable(header, frame)
-    text(header, 10, 0, width - 48, 30, "Auto Giver", 13, THEME.text, true)
+    local avatar = create("ImageLabel", { Position = UDim2.fromOffset(8, 6), Size = UDim2.fromOffset(18, 18),
+        BackgroundColor3 = THEME.field, BorderSizePixel = 0, Image = "" }, header)
+    corner(avatar, 9)
+    task.spawn(function()
+        local image = avatarImage()
+        if avatar.Parent then
+            avatar.Image = image
+        end
+    end)
+    text(header, 32, 0, width - 64, 30, "Auto Giver", 13, THEME.text, true)
     local close = create("TextButton", { Position = UDim2.fromOffset(width - 28, 3), Size = UDim2.fromOffset(24, 24),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 18 }, header)
     close.MouseButton1Click:Connect(function()
+        EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
+        uiLog = nil
+        ui.now = nil
         frame:Destroy()
-        if onClose then
-            pcall(onClose)
-        end
     end)
     create("Frame", { Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.line,
         BorderSizePixel = 0 }, frame)
@@ -410,15 +449,9 @@ local function footer(frame, width, y)
     text(frame, 10, y, width - 20, 16, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 11, THEME.dim)
 end
 
--- ================= MAIN WINDOW =================
 local function mainWindow()
     local width = 270
-    local frame = window(width, 320, function()
-        EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
-        uiLog = nil
-        ui.now = nil
-    end)
-
+    local frame = window(width, 330)
     text(frame, 10, 36, 40, 16, "Now", 11, THEME.accent, true)
     ui.now = text(frame, 48, 36, width - 58, 16, status.now, 12, THEME.text, true)
     text(frame, 10, 54, 40, 14, "Goal", 11, THEME.accent, true)
@@ -430,7 +463,6 @@ local function mainWindow()
     create("Frame", { Position = UDim2.fromOffset(10, 98), Size = UDim2.new(1, -20, 0, 1), BackgroundColor3 = THEME.line,
         BorderSizePixel = 0 }, frame)
     renderStatus()
-
     local logBox = create("TextLabel", { Position = UDim2.fromOffset(10, 104), Size = UDim2.fromOffset(width - 20, 56),
         BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim, Font = Enum.Font.Gotham, TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Bottom, TextWrapped = false,
@@ -446,65 +478,78 @@ local function mainWindow()
         logBox.Text = table.concat(shown, "\n")
     end
 
-    -- Mode accent colors (used as the OFF text color)
-    local MODE_COLORS = {
-        egg = Color3.fromRGB(220, 170, 60), pet = Color3.fromRGB(90, 170, 230),
-        gift = Color3.fromRGB(210, 130, 210), req = Color3.fromRGB(200, 130, 90),
-    }
+    local eggButton = toggleButton(frame, 10, 168, width - 20, "TRADE EGGS [OFF]", MODE_COLORS.egg, function(btn)
+        EggMode = not EggMode
+        btn.Text = "TRADE EGGS " .. (EggMode and "[ON]" or "[OFF]")
+        btn.BackgroundColor3 = EggMode and THEME.ok or MODE_COLORS.egg
+        if EggMode then
+            task.spawn(startEggTrader)
+            say("Egg trader started", "ok")
+        else
+            say("Egg trader stopped", "warn")
+        end
+    end)
 
-    -- Generic mode toggle using the AutoAchievements button style
-    local function modeButton(y, label, color, getMode, setMode, starter)
-        local b = button(frame, 10, y, width - 20, label, color, function()
-            local on = not getMode()
-            setMode(on)
-            b.Text = label .. (on and " [ON]" or " [OFF]")
-            b.TextColor3 = on and THEME.ok or color
-            if on then
-                task.spawn(starter)
-                say(label .. " started", "ok")
-            else
-                say(label .. " stopped", "warn")
-            end
-        end)
-        return b, label
-    end
+    local petButton = toggleButton(frame, 10, 200, width - 20, "GIVE PETS [OFF]", MODE_COLORS.pet, function(btn)
+        PetMode = not PetMode
+        btn.Text = "GIVE PETS " .. (PetMode and "[ON]" or "[OFF]")
+        btn.BackgroundColor3 = PetMode and THEME.ok or MODE_COLORS.pet
+        if PetMode then
+            task.spawn(startPetGiver)
+            say("Pet giver started", "ok")
+        else
+            say("Pet giver stopped", "warn")
+        end
+    end)
 
-    local eggButton, eggLabel = modeButton(168, "TRADE EGGS", MODE_COLORS.egg,
-        function() return EggMode end, function(v) EggMode = v end, startEggTrader)
-    local petButton, petLabel = modeButton(198, "GIVE PETS", MODE_COLORS.pet,
-        function() return PetMode end, function(v) PetMode = v end, startPetGiver)
-    local giftButton, giftLabel = modeButton(228, "GIVE GIFTS", MODE_COLORS.gift,
-        function() return GiftMode end, function(v) GiftMode = v end, startGiftGiver)
-    local reqButton, reqLabel = modeButton(258, "SEND TRADE REQ", MODE_COLORS.req,
-        function() return TradeRequestMode end, function(v) TradeRequestMode = v end, startTradeRequester)
+    local giftButton = toggleButton(frame, 10, 232, width - 20, "GIVE GIFTS [OFF]", MODE_COLORS.gift, function(btn)
+        GiftMode = not GiftMode
+        btn.Text = "GIVE GIFTS " .. (GiftMode and "[ON]" or "[OFF]")
+        btn.BackgroundColor3 = GiftMode and THEME.ok or MODE_COLORS.gift
+        if GiftMode then
+            task.spawn(startGiftGiver)
+            say("Gift giver started", "ok")
+        else
+            say("Gift giver stopped", "warn")
+        end
+    end)
 
-    -- Stop All button, same style
-    button(frame, 10, 288, width - 20, "Stop All", THEME.bad, function()
-        EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
-        show("Stopped", "All modes off", "")
+    local reqButton = toggleButton(frame, 10, 264, width - 20, "SEND TRADE REQ [OFF]", MODE_COLORS.req, function(btn)
+        TradeRequestMode = not TradeRequestMode
+        btn.Text = "SEND TRADE REQ " .. (TradeRequestMode and "[ON]" or "[OFF]")
+        btn.BackgroundColor3 = TradeRequestMode and THEME.ok or MODE_COLORS.req
+        if TradeRequestMode then
+            task.spawn(startTradeRequester)
+            say("Trade requester started", "ok")
+        else
+            say("Trade requester stopped", "warn")
+        end
     end)
 
     -- Keep buttons in sync when a loop stops itself (out of items)
     task.spawn(function()
-        local pairs_ = {
-            { eggButton, eggLabel, MODE_COLORS.egg, function() return EggMode end },
-            { petButton, petLabel, MODE_COLORS.pet, function() return PetMode end },
-            { giftButton, giftLabel, MODE_COLORS.gift, function() return GiftMode end },
-            { reqButton, reqLabel, MODE_COLORS.req, function() return TradeRequestMode end },
-        }
         while true do
             task.wait(2)
-            for _, entry in ipairs(pairs_) do
-                local b, label, color, getMode = entry[1], entry[2], entry[3], entry[4]
-                if not getMode() and b.Text == label .. " [ON]" then
-                    b.Text = label .. " [OFF]"
-                    b.TextColor3 = color
-                end
+            if not EggMode and string.find(eggButton.Text, "ON", 1, true) then
+                eggButton.Text = "TRADE EGGS [OFF]"
+                eggButton.BackgroundColor3 = MODE_COLORS.egg
+            end
+            if not PetMode and string.find(petButton.Text, "ON", 1, true) then
+                petButton.Text = "GIVE PETS [OFF]"
+                petButton.BackgroundColor3 = MODE_COLORS.pet
+            end
+            if not GiftMode and string.find(giftButton.Text, "ON", 1, true) then
+                giftButton.Text = "GIVE GIFTS [OFF]"
+                giftButton.BackgroundColor3 = MODE_COLORS.gift
+            end
+            if not TradeRequestMode and string.find(reqButton.Text, "ON", 1, true) then
+                reqButton.Text = "SEND TRADE REQ [OFF]"
+                reqButton.BackgroundColor3 = MODE_COLORS.req
             end
         end
     end)
 
-    footer(frame, width, 316)
+    footer(frame, width, 314)
 end
 
 env.AutoGiver = {
