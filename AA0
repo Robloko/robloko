@@ -1,17 +1,33 @@
+--[[
+	Auto Achievements + 4-Button Auto Giver (merged)
+	- AutoAchievements runs exactly as before (Guide tasks, Pet Pen, needs, etc.)
+	- Auto Giver is a second draggable window with 4 toggles:
+	  TRADE EGGS / GIVE PETS / GIVE GIFTS / SEND TRADE REQ
+	- Giver reuses the same THEME, helpers, remote sender (send/sendNoWait) and logging
+	- The main window's Stop button and env.AutoAchievements.Stop() stop BOTH scripts
+]]
+
 local DEBUG = false
+
 local GC = {}
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+
 local env = getgenv and getgenv() or {}
+
 if env.AutoAchievements and env.AutoAchievements.Stop then
 	pcall(env.AutoAchievements.Stop)
 end
+
 local running = false
 local uiLog = nil
 local ui = {}
+
 GC.LogFolder = "AutoAchievements"
+
 local writeLine = function() end
 if DEBUG then
 	local startClock = os.clock()
@@ -36,6 +52,7 @@ if DEBUG then
 	end
 	writeLine("INFO", "Debug run. Log file: workspace/" .. logFile)
 end
+
 local logRing = {}
 do
 	local toFile = writeLine
@@ -47,9 +64,11 @@ do
 		toFile(level, message)
 	end
 end
+
 local function log(level, message)
 	writeLine(level, message)
 end
+
 local status = { now = "Ready", goal = "Completes your Guide tasks", queue = {} }
 local function renderStatus()
 	if ui.now then
@@ -81,7 +100,9 @@ local function say(text, tone)
 		pcall(uiLog, tone or "info", text)
 	end
 end
+
 GC.Skip = {}
+
 local clientData
 do
 	local ok, result = pcall(function()
@@ -93,19 +114,23 @@ do
 	end
 	clientData = result
 end
+
 local function getKey(key)
 	local ok, all = pcall(clientData.get_data)
 	local mine = ok and type(all) == "table" and all[LocalPlayer.Name]
 	return type(mine) == "table" and mine[key] or nil
 end
+
 local function manager()
 	local m = getKey("achievements_manager")
 	return type(m) == "table" and m or nil
 end
+
 local function isCompleted(id)
 	local m = manager()
 	return m ~= nil and type(m.completed) == "table" and m.completed[id] ~= nil
 end
+
 local function currentPlace()
 	local interior = getKey("house_interior")
 	if type(interior) ~= "table" then
@@ -116,6 +141,7 @@ local function currentPlace()
 	end
 	return interior.house_pos ~= nil and "housing" or nil
 end
+
 local function waitUntil(predicate, seconds)
 	local deadline = os.clock() + seconds
 	while os.clock() < deadline do
@@ -127,6 +153,7 @@ local function waitUntil(predicate, seconds)
 	end
 	return false
 end
+
 local definitions = {}
 pcall(function()
 	local tracks = require(ReplicatedStorage.new.modules.Achievements.AchievementTracks)
@@ -145,11 +172,14 @@ pcall(function()
 		end
 	end
 end)
+
 GC.PLACE_NAMES = { HatShop = "the Accessory Shop", AutoShop = "the Dealership", ToyShop = "the Toy Shop",
 	housing = "your house", MainMap = "town", PizzaShop = "the Pizza Place", Nursery = "the Nursery", School = "the School",
 	Salon = "the Salon", Hospital = "the Hospital", CatCafe = "the Cat Cafe", Neighborhood = "the neighborhood" }
+
 GC.ITEM_NAMES = { cracked_egg = "a Cracked Egg", smallgift = "a Small Gift", stickers_2024_standard_pack = "a sticker pack",
 	vehicle_shop_2022_bicycle = "a bicycle", red_collar = "a red collar" }
+
 GC.ACT_LINES = {
 	buy_a_new_texture = "Picking a fresh wallpaper",
 	buy_furniture = "Shopping for a mini fridge",
@@ -170,6 +200,7 @@ GC.ACT_LINES = {
 	color_your_house = "Painting the house",
 	buy_a_new_house = "House hunting: grabbing a Micro house",
 }
+
 local function titleOf(id)
 	local def = definitions[id]
 	return def and def.title or id
@@ -177,6 +208,7 @@ end
 local function placeName(place)
 	return GC.PLACE_NAMES[place] or tostring(place)
 end
+
 local unlockedBy = {}
 local function guideOrder(a, b)
 	local ra, rb = unlockedBy[a] == "ready", unlockedBy[b] == "ready"
@@ -192,10 +224,12 @@ local function guideOrder(a, b)
 	end
 	return a < b
 end
+
 local skip = {}
 for _, id in ipairs(GC.Skip) do
 	skip[id] = true
 end
+
 local function readyIds()
 	local m = manager()
 	local list = {}
@@ -213,8 +247,11 @@ local function readyIds()
 	table.sort(list, guideOrder)
 	return list
 end
+
 GC.RemoteTimeout = 10
+
 local api = ReplicatedStorage:WaitForChild("API", 15)
+
 local function serialize(value, depth)
 	local t = typeof(value)
 	if t == "string" then
@@ -239,6 +276,7 @@ local function serialize(value, depth)
 	end
 	return tostring(value)
 end
+
 local function fire(remote, remoteName, timeout, ...)
 	if not remote then
 		log("ERROR", remoteName .. " not found")
@@ -276,16 +314,20 @@ local function fire(remote, remoteName, timeout, ...)
 	log("INFO", remoteName .. " -> ok=" .. tostring(ok) .. " result=" .. tostring(result))
 	return ok, result
 end
+
 local function send(remoteName, ...)
 	return fire(api and api:FindFirstChild(remoteName), remoteName, GC.RemoteTimeout, ...)
 end
+
 local function sendNoWait(remoteName, ...)
 	return fire(api and api:FindFirstChild(remoteName), remoteName, 0, ...)
 end
+
 local function sendNet(remoteName, ...)
 	local folder = ReplicatedStorage:FindFirstChild("adoptme_new_net")
 	return fire(folder and folder:FindFirstChild(remoteName), remoteName, GC.RemoteTimeout, ...)
 end
+
 GC.ArrivalTimeout = 35
 GC.DOORS = {
 	MainMap = "Neighborhood/MainDoor", housing = "MainDoor",
@@ -293,11 +335,13 @@ GC.DOORS = {
 	HatShop = "MainDoor", AutoShop = "MainDoor", ToyShop = "MainDoor", CatCafe = "MainDoor",
 	Neighborhood = "MainDoor",
 }
+
 local interiorsM
 local function isAt(place)
 	local now = currentPlace()
 	return type(now) == "string" and string.sub(now, 1, #place) == place
 end
+
 local function goTo(place)
 	if not place or isAt(place) then
 		return true
@@ -321,9 +365,11 @@ local function goTo(place)
 	end
 	return false, "still in " .. tostring(currentPlace())
 end
+
 local function money()
 	return tonumber(getKey("money")) or 0
 end
+
 local function itemsOf(category, wanted)
 	local inventory = getKey("inventory")
 	local items = type(inventory) == "table" and type(inventory[category]) == "table" and inventory[category] or {}
@@ -339,6 +385,7 @@ local function itemsOf(category, wanted)
 	table.sort(list, function(a, b) return a.unique < b.unique end)
 	return list
 end
+
 local function firstOf(category, ids)
 	for _, id in ipairs(ids) do
 		local found = itemsOf(category, { [id] = true })[1]
@@ -348,10 +395,12 @@ local function firstOf(category, ids)
 	end
 	return nil
 end
+
 local function hasUnique(category, unique)
 	local inventory = getKey("inventory")
 	return type(inventory) == "table" and type(inventory[category]) == "table" and inventory[category][unique] ~= nil
 end
+
 local function firstItem(category, wantedId)
 	local found = itemsOf(category, wantedId and { [wantedId] = true } or nil)[1]
 	if found then
@@ -359,6 +408,7 @@ local function firstItem(category, wantedId)
 	end
 	return nil
 end
+
 local function equippedPets()
 	local equip = getKey("equip_manager")
 	local list = {}
@@ -369,6 +419,7 @@ local function equippedPets()
 	end
 	return list
 end
+
 local function isEquipped(unique)
 	for _, pet in ipairs(equippedPets()) do
 		if pet.unique == unique then
@@ -377,6 +428,7 @@ local function isEquipped(unique)
 	end
 	return false
 end
+
 local function petWrapper(unique)
 	local wrappers = getKey("pet_char_wrappers_raw")
 	for _, wrapper in pairs(type(wrappers) == "table" and wrappers or {}) do
@@ -386,10 +438,12 @@ local function petWrapper(unique)
 	end
 	return nil
 end
+
 local function petStreamingId(unique)
 	local wrapper = petWrapper(unique)
 	return wrapper and type(wrapper.char) == "string" and wrapper.char or nil
 end
+
 local function petModel(unique)
 	local streamingId = petStreamingId(unique)
 	local folder = workspace:FindFirstChild("Pets")
@@ -404,6 +458,7 @@ local function petModel(unique)
 	end
 	return nil
 end
+
 local inventoryDB
 local function dbEntry(kind)
 	if inventoryDB == nil then
@@ -415,6 +470,7 @@ local function dbEntry(kind)
 	local entry = inventoryDB and type(inventoryDB.pets) == "table" and inventoryDB.pets[tostring(kind or "")]
 	return type(entry) == "table" and entry or nil
 end
+
 local function isEgg(kind)
 	local entry = dbEntry(kind)
 	if entry and entry.is_egg ~= nil then
@@ -422,18 +478,22 @@ local function isEgg(kind)
 	end
 	return string.sub(tostring(kind or ""), -4) == "_egg"
 end
+
 local function isTemporary(kind)
 	local entry = dbEntry(kind)
 	return entry ~= nil and entry.temporary == true
 end
+
 GC.RARITY = { common = 1, uncommon = 2, rare = 3, ultra_rare = 4, ultrarare = 4, ["ultra rare"] = 4, legendary = 5 }
 GC.NEON_GOALS = { make_a_neon_pet = true, obtain_a_neon_pet = true, get_four_full_grown_neon_pets = true,
 	make_a_mega_neon_pet = true }
 GC.PETS_PAGE_ONE = { open_backpack = 1, equip_an_egg = 2, complete_a_need = 3, hatch_an_egg = 4 }
+
 local function rarityOf(kind)
 	local entry = dbEntry(kind)
 	return entry and GC.RARITY[string.lower(tostring(entry.rarity or ""))] or 3
 end
+
 local function petAge(unique)
 	local item = itemsOf("pets", nil)
 	for _, pet in ipairs(item) do
@@ -443,12 +503,15 @@ local function petAge(unique)
 	end
 	return nil
 end
+
 local function prettyKind(kind)
 	return (string.gsub(tostring(kind or "pet"), "_", " "))
 end
+
 local function waitEquipped(unique)
 	return waitUntil(function() return isEquipped(unique) end, 6)
 end
+
 local sessionPet = nil
 local function choosePet()
 	if sessionPet then
@@ -476,6 +539,7 @@ local function choosePet()
 	sessionPet = realPet or egg
 	return sessionPet
 end
+
 local function firstPet()
 	local pet = choosePet()
 	if not pet then
@@ -490,6 +554,7 @@ local function firstPet()
 	waitEquipped(pet.unique)
 	return pet
 end
+
 local function ensureModel(pet)
 	local model = petModel(pet.unique)
 	if model then
@@ -502,6 +567,7 @@ local function ensureModel(pet)
 	end, 10)
 	return model
 end
+
 local function penPets()
 	local pen = getKey("idle_progression_manager")
 	local set, count = {}, 0
@@ -511,6 +577,7 @@ local function penPets()
 	end
 	return set, count
 end
+
 local function sparePets(eggsFirst)
 	local inPen = penPets()
 	local session = choosePet()
@@ -540,6 +607,7 @@ local function sparePets(eggsFirst)
 	end)
 	return list
 end
+
 local function houseFurnitureKeys()
 	local interior = getKey("house_interior")
 	local keys = {}
@@ -548,6 +616,7 @@ local function houseFurnitureKeys()
 	end
 	return keys
 end
+
 local function buyFurniture(kind, x, z)
 	local before = houseFurnitureKeys()
 	send("HousingAPI/BuyFurnitures", { { properties = { cframe = CFrame.new(x, 0, z) }, kind = kind } })
@@ -563,7 +632,9 @@ local function buyFurniture(kind, x, z)
 	end, 6)
 	return newKey
 end
+
 GC.PLACE_SPOTS = { { 39.1, -13.2 }, { 38.5, -8.5 }, { 14.5, -31 }, { 10.6, -19.6 }, { 12.4, -24 } }
+
 local function placeFurniture(kind)
 	local ok, why = goTo("housing")
 	if not ok then
@@ -577,17 +648,21 @@ local function placeFurniture(kind)
 	end
 	return nil, "the game did not take " .. kind .. " at any known spot"
 end
+
 local function character()
 	return LocalPlayer.Character
 end
+
 local function hasLicense()
 	return itemsOf("toys", { trade_license = true })[1] ~= nil
 end
+
 local function inLicenseZone()
 	local wrapper = getKey("char_wrapper_raw")
 	local location = type(wrapper) == "table" and type(wrapper.location) == "table" and wrapper.location
 	return type(location) == "table" and location.destination_id == "TradeLicenseZone"
 end
+
 local function getLicense()
 	if hasLicense() then
 		return nil
@@ -669,7 +744,9 @@ local function getLicense()
 	end
 	return finish(false, "no license yet")
 end
+
 GC.BuyFood = true
+
 local function needsOf(unique)
 	local manager = getKey("ailments_manager")
 	local ailments = type(manager) == "table" and type(manager.ailments) == "table" and manager.ailments[unique]
@@ -682,32 +759,38 @@ local function needsOf(unique)
 	end
 	return list
 end
+
 local function needGone(pet, kind)
 	return function()
 		return needsOf(pet.unique)[kind] == nil
 	end
 end
+
 local function needStarted(pet, kind)
 	return function()
 		local entry = needsOf(pet.unique)[kind]
 		return entry == nil or entry.started
 	end
 end
+
 local function waitNeedDone(pet, kind, extra)
 	local entry = needsOf(pet.unique)[kind]
 	local expected = (entry and entry.rate > 0) and (1 / entry.rate) or 30
 	return waitUntil(needGone(pet, kind), math.min(expected + (extra or 20), 200))
 end
+
 local function isSitting()
 	local manager = getKey("state_manager_raw")
 	return type(manager) == "table" and manager.is_sitting == true
 end
+
 local function standUp()
 	if isSitting() then
 		send("AdoptAPI/ExitSeatStates")
 		waitUntil(function() return not isSitting() end, 4)
 	end
 end
+
 local function petOnFurniture(pet)
 	local streamingId = petStreamingId(pet.unique)
 	local interior = getKey("house_interior")
@@ -722,12 +805,14 @@ local function petOnFurniture(pet)
 	end
 	return false
 end
+
 local function petOff(pet)
 	if petOnFurniture(pet) then
 		send("PetAPI/ExitFurnitureUseStates", pet.unique)
 		waitUntil(function() return not petOnFurniture(pet) end, 4)
 	end
 end
+
 GC.NEED_PLACE = { salon = "Salon", bored = "MainMap", cat_cafe = "CatCafe", pizza_party = "PizzaShop", school = "School",
 	sick = "Hospital", camping = "MainMap", beach_party = "MainMap" }
 GC.NEED_SPOT = { camping = { -18.443, 37.204, -1046.005 }, beach_party = { -579.456, 25.634, -1496.408 },
@@ -751,6 +836,7 @@ GC.NEED_LINES = {
 	camping = "Your pet wants to go camping", beach_party = "Beach party time", bored = "Your pet is bored: playground!",
 	walk = "Taking your pet for a walk", ride = "Taking your pet for a ride", mystery = "A mystery need: picking a card",
 }
+
 local function pivotTo(position)
 	local char = character()
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -783,6 +869,7 @@ local function pivotTo(position)
 	end
 	return false
 end
+
 local function talkToDoctor()
 	local interior = getKey("house_interior")
 	for key, piece in pairs(type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or {}) do
@@ -794,6 +881,7 @@ local function talkToDoctor()
 	end
 	return false
 end
+
 local function locationNeed(pet, kind)
 	local entry = needsOf(pet.unique)[kind]
 	if entry and not entry.started then
@@ -819,6 +907,7 @@ local function locationNeed(pet, kind)
 	end
 	return false, kind .. " did not finish"
 end
+
 local function furnitureSpots(kinds)
 	if not isAt("housing") then
 		return {}, "not at home"
@@ -868,6 +957,7 @@ local function furnitureSpots(kinds)
 	end
 	return spots, #spots == 0 and "the furniture is not loaded yet" or nil
 end
+
 GC.FREE_FURNITURE = { dirty = "cheap_pet_bathtub" }
 local placedFree = {}
 local function useFurniture(pet, kind, kinds)
@@ -922,9 +1012,11 @@ local function useFurniture(pet, kind, kinds)
 	petOff(pet)
 	return done, (not done) and (kind .. " did not finish") or nil
 end
+
 local function furnitureNeed(pet, kind)
 	return useFurniture(pet, kind, GC.NEED_FURNITURE[kind])
 end
+
 local function petObjects()
 	local folder = workspace:FindFirstChild("PetObjects")
 	local set = {}
@@ -933,6 +1025,7 @@ local function petObjects()
 	end
 	return set
 end
+
 local function newPetObject(before)
 	local folder = workspace:FindFirstChild("PetObjects")
 	for _, child in ipairs(folder and folder:GetChildren() or {}) do
@@ -942,6 +1035,7 @@ local function newPetObject(before)
 	end
 	return nil
 end
+
 local function giveItem(pet, item, done)
 	local model = ensureModel(pet)
 	if not model then
@@ -968,6 +1062,7 @@ local function giveItem(pet, item, done)
 	local ok = waitUntil(done, 6)
 	return ok, (not ok) and "your pet did not take it" or nil
 end
+
 local function feedNeed(pet, kind)
 	standUp()
 	local done = needGone(pet, kind)
@@ -1001,6 +1096,7 @@ local function feedNeed(pet, kind)
 	end
 	return done(), "still " .. kind
 end
+
 local function playNeed(pet)
 	local toy = firstOf("toys", { "squeaky_bone_default" })
 	if not toy then
@@ -1056,6 +1152,7 @@ local function playNeed(pet)
 	end
 	return result, why
 end
+
 local NEED_DO
 local mysteryFns
 local function mysteryCards(pet)
@@ -1133,8 +1230,10 @@ local function mysteryCards(pet)
 	end
 	return nil, pool
 end
+
 GC.MYSTERY_ORDER = { "toilet", "dirty", "sleepy", "hungry", "thirsty", "pet_me", "play", "sick", "cat_cafe", "salon",
 	"school", "pizza_party", "camping", "beach_party", "bored", "walk", "ride" }
+
 local function mysteryNeed(pet)
 	local gone = needGone(pet, "mystery")
 	local cards, pool = mysteryCards(pet)
@@ -1179,6 +1278,7 @@ local function mysteryNeed(pet)
 	end
 	return gone(), "no mystery card was taken"
 end
+
 local function walkAround(seconds, done, tick)
 	local char = character()
 	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1231,6 +1331,7 @@ local function walkAround(seconds, done, tick)
 	end
 	return done()
 end
+
 local function movingNeed(pet, kind)
 	standUp()
 	if not isAt("MainMap") then
@@ -1300,6 +1401,7 @@ local function movingNeed(pet, kind)
 	end
 	return done(), kind .. " did not finish"
 end
+
 local function doPetMe(pet, model)
 	send("AdoptAPI/FocusPet", model)
 	task.wait(1)
@@ -1313,6 +1415,7 @@ local function doPetMe(pet, model)
 	task.wait(1)
 	send("AdoptAPI/UnfocusPet", model)
 end
+
 local function petMeNeed(pet)
 	local model = ensureModel(pet)
 	if not model then
@@ -1322,6 +1425,7 @@ local function petMeNeed(pet)
 	local ok = waitUntil(needGone(pet, "pet_me"), 6)
 	return ok, (not ok) and "still wants pets" or nil
 end
+
 NEED_DO = { pet_me = petMeNeed, hungry = feedNeed, thirsty = feedNeed, play = playNeed, mystery = mysteryNeed,
 	walk = movingNeed, ride = movingNeed }
 for kind in pairs(GC.NEED_PLACE) do
@@ -1330,20 +1434,25 @@ end
 for kind in pairs(GC.NEED_FURNITURE) do
 	NEED_DO[kind] = furnitureNeed
 end
+
 GC.NEED_ORDER = { "pet_me", "hungry", "thirsty", "play", "sleepy", "dirty", "toilet", "sick", "salon", "school", "cat_cafe",
 	"pizza_party", "camping", "beach_party", "bored", "walk", "ride", "mystery" }
+
 GC.KeepBucks = 0
 GC.ReleaseMaxRarity = "uncommon"
 GC.ReleasePetKind = ""
 GC.DontRelease = { "MEGA NEONS", "NEONS" }
+
 GC.QUEST_CLAIM = "adoptme_new.modules.Dailies.DailiesNetService:9"
 GC.QUEST_BOARD = "adoptme_new.modules.Dailies.DailiesNetService:15"
+
 local function vanillaTab()
 	local dailies = getKey("dailies_manager")
 	local tabs = type(dailies) == "table" and type(dailies.serialized_tabs) == "table" and dailies.serialized_tabs
 	local tab = tabs and tabs.vanilla
 	return type(tab) == "table" and tab or nil
 end
+
 local function dailySignature()
 	local tab = vanillaTab()
 	if not tab then
@@ -1357,6 +1466,7 @@ local function dailySignature()
 	table.sort(parts)
 	return table.concat(parts, "|")
 end
+
 local function finishedDaily()
 	local tab = vanillaTab()
 	for _, daily in pairs(tab and type(tab.active_dailies) == "table" and tab.active_dailies or {}) do
@@ -1368,10 +1478,12 @@ local function finishedDaily()
 	end
 	return false
 end
+
 local function boardRewardReady()
 	local tab = vanillaTab()
 	return tab ~= nil and tab.reward_claimed == false and (tonumber(tab.total_dailies_completed_today) or 0) >= 3
 end
+
 local function claimDaily()
 	local before = dailySignature()
 	say("Claiming a finished daily task")
@@ -1380,16 +1492,19 @@ local function claimDaily()
 		return false, "the claim changed nothing"
 	end
 end
+
 local function isAgePotion(id)
 	id = string.lower(id)
 	return string.find(id, "potion", 1, true) ~= nil and (string.find(id, "^age_potion") ~= nil
 		or string.find(id, "_age_potion", 1, true) ~= nil or string.find(id, "age_up", 1, true) ~= nil
 		or string.find(id, "ageup", 1, true) ~= nil)
 end
+
 local function realPet()
 	local pet = choosePet()
 	return pet and not isEgg(pet.kind) and pet or nil
 end
+
 local function useAgePotion()
 	local pet = realPet()
 	local potion = itemsOf("food", isAgePotion)[1]
@@ -1403,8 +1518,10 @@ local function useAgePotion()
 		return not hasUnique("food", potion.unique) or (petAge(pet.unique) or 0) > before
 	end)
 end
+
 GC.EGG_PRICE = 350
 GC.TREE_PRICE = 1450
+
 local function buyEgg()
 	local ok, why = goTo("Nursery")
 	if not ok then
@@ -1417,6 +1534,7 @@ local function buyEgg()
 		return false, "the egg did not arrive"
 	end
 end
+
 local function buyMoneyTree()
 	say("Planting a Money Tree (" .. GC.TREE_PRICE .. " Bucks)")
 	local key, why = placeFurniture("moneytree")
@@ -1424,6 +1542,7 @@ local function buyMoneyTree()
 		return false, why
 	end
 end
+
 local goalKindRef
 local dontRelease = { kinds = {} }
 for _, entry in ipairs(type(GC.DontRelease) == "table" and GC.DontRelease or {}) do
@@ -1436,6 +1555,7 @@ for _, entry in ipairs(type(GC.DontRelease) == "table" and GC.DontRelease or {})
 		dontRelease.kinds[string.lower(key)] = true
 	end
 end
+
 local function keptWhy(pet, maxRank)
 	if pet.egg then
 		return "an egg"
@@ -1454,6 +1574,7 @@ local function keptWhy(pet, maxRank)
 	end
 	return nil
 end
+
 local function releaseCandidate()
 	local maxRank = GC.RARITY[string.lower(tostring(GC.ReleaseMaxRarity or "uncommon"))] or 2
 	local wanted = GC.ReleasePetKind ~= "" and GC.ReleasePetKind or nil
@@ -1482,6 +1603,7 @@ local function releaseCandidate()
 	end
 	return nil
 end
+
 local function releasePet()
 	local pet = releaseCandidate()
 	if not pet then
@@ -1510,6 +1632,7 @@ local function releasePet()
 		writeLine("DATA", "pet_recycler_tickets_2026 5 s after release = " .. tostring(getKey("pet_recycler_tickets_2026")))
 	end)
 end
+
 local function penAdd(target, pick)
 	local ok, why = goTo("housing")
 	if not ok then
@@ -1530,6 +1653,7 @@ local function penAdd(target, pick)
 		return false, "the Pet Pen has " .. count .. " of " .. target
 	end
 end
+
 local function penHasRealPet()
 	local inPen = penPets()
 	for _, pet in ipairs(itemsOf("pets", nil)) do
@@ -1539,6 +1663,7 @@ local function penHasRealPet()
 	end
 	return false
 end
+
 local function realSpares()
 	local list = {}
 	for _, pet in ipairs(sparePets()) do
@@ -1548,6 +1673,7 @@ local function realSpares()
 	end
 	return list
 end
+
 local lastPenClaim = -1000
 local function penClaim()
 	local _, count = penPets()
@@ -1564,16 +1690,20 @@ local function penClaim()
 		send("IdleProgressionAPI/CommitAllProgression", true)
 	end
 end
+
 local function canAfford(price)
 	return money() >= price + GC.KeepBucks
 end
+
 local function isReady(id)
 	local m = manager()
 	return m ~= nil and type(m.ready) == "table" and m.ready[id] == true and not isCompleted(id)
 end
+
 local function ageOf(pet)
 	return type(pet.properties) == "table" and tonumber(pet.properties.age) or 1
 end
+
 local function goalKind()
 	local copies, grown = {}, {}
 	for _, pet in ipairs(itemsOf("pets", nil)) do
@@ -1593,6 +1723,7 @@ local function goalKind()
 	end
 	return best, best and copies[best] or 0, best and (grown[best] or 0) or 0
 end
+
 local function looseEgg()
 	local inPen = penPets()
 	for _, pet in ipairs(itemsOf("pets", isEgg)) do
@@ -1602,6 +1733,7 @@ local function looseEgg()
 	end
 	return nil
 end
+
 local function kindOfUnique(unique)
 	for _, pet in ipairs(itemsOf("pets", nil)) do
 		if pet.unique == unique then
@@ -1610,6 +1742,7 @@ local function kindOfUnique(unique)
 	end
 	return nil
 end
+
 local function goalPenMove()
 	local kind = goalKind()
 	if not kind then
@@ -1637,7 +1770,9 @@ local function goalPenMove()
 	end
 	return nil
 end
+
 goalKindRef = goalKind
+
 local function workOnSameKind()
 	local move = goalPenMove()
 	if move then
@@ -1657,6 +1792,7 @@ local function workOnSameKind()
 	end
 	return buyEgg()
 end
+
 local function fusionGroup(mega)
 	local inPen = penPets()
 	local groups, best = {}, nil
@@ -1685,6 +1821,7 @@ local function fusionGroup(mega)
 	table.sort(list)
 	return best, { list[1], list[2], list[3], list[4] }
 end
+
 local function fuse(mega)
 	local kind, uniques = fusionGroup(mega)
 	if not kind then
@@ -1716,6 +1853,7 @@ local function fuse(mega)
 	end
 	say((mega and "Mega neon " or "Neon ") .. prettyKind(kind) .. " made!", "ok")
 end
+
 local function neonPlan(mega, need, line)
 	return { kind = "slow", grind = true, maxRuns = 60, line = line, canRun = function()
 		if fusionGroup(mega) then
@@ -1733,11 +1871,13 @@ local function neonPlan(mega, need, line)
 		return workOnSameKind()
 	end }
 end
+
 GC.AutoRelease = true
 GC.VerifySeconds = 12
 GC.AGE_TARGET = { age_a_pet_to_junior = 2, age_a_pet_to_pre_teen = 3, age_a_pet_to_teen = 4, age_a_pet_to_post_teen = 5,
 	age_a_pet_to_full = 6 }
 GC.AGE_NAMES = { "Newborn", "Junior", "Pre-Teen", "Teen", "Post-Teen", "Full Grown" }
+
 local AUTO = {
 	visit_the_accessory_shop = { kind = "visit", place = "HatShop" },
 	visit_the_dealership = { kind = "visit", place = "AutoShop" },
@@ -1938,6 +2078,7 @@ local AUTO = {
 	buy_a_money_tree = { kind = "slow", grind = true, price = GC.TREE_PRICE, line = "Off to plant a Money Tree",
 		canRun = function() return canAfford(GC.TREE_PRICE) end, run = buyMoneyTree },
 }
+
 for id, target in pairs(GC.AGE_TARGET) do
 	AUTO[id] = { kind = "slow", grind = true, age = target, line = "Age potion time",
 		canRun = function()
@@ -1945,6 +2086,7 @@ for id, target in pairs(GC.AGE_TARGET) do
 			return pet ~= nil and (petAge(pet.unique) or 99) < target and itemsOf("food", isAgePotion)[1] ~= nil
 		end, run = useAgePotion }
 end
+
 local eggBoughtForPen = false
 local function anySpare()
 	return sparePets()[1] ~= nil
@@ -1969,16 +2111,19 @@ AUTO.pet_pen_add.run = function()
 	local _, count = penPets()
 	return penAdd(count + 1)
 end
+
 if GC.AutoRelease or GC.ReleasePetKind ~= "" then
 	AUTO.release_a_pet = { kind = "slow", line = "Off to the Pet Releaser",
 		canRun = function() return releaseCandidate() ~= nil end, run = releasePet }
 end
+
 local ASSIST_PLACE = {
 	paint_a_pet = "Salon", work_a_job = "PizzaShop", buy_a_pet_accessory = "HatShop", release_a_pet = "Nursery",
 	buy_a_new_texture = "housing", buy_furniture = "housing", sell_furniture = "housing", store_furniture = "housing",
 	color_your_house = "housing", customize_the_weather = "housing", pet_pen_add = "housing", buy_an_egg = "Nursery",
 	buy_a_money_tree = "housing",
 }
+
 local function slowGoal(id)
 	local plan = AUTO[id]
 	if plan.price then
@@ -2006,6 +2151,7 @@ local function slowGoal(id)
 	end
 	return plan.goal or titleOf(id)
 end
+
 local function act(id, plan)
 	if plan.kind == "buy" then
 		local bucks = tonumber(getKey("money")) or 0
@@ -2045,6 +2191,7 @@ local function act(id, plan)
 	end
 	return nil
 end
+
 local function doAuto(id, plan)
 	if plan.kind == "visit" then
 		if isAt(plan.place) then
@@ -2091,6 +2238,7 @@ local function doAuto(id, plan)
 	end
 	return false, reason or ("not completed (place " .. tostring(currentPlace()) .. ")")
 end
+
 local function doSlow(id, plan)
 	say(plan.line or ("Doing " .. titleOf(id)))
 	local result, why = plan.run()
@@ -2102,6 +2250,7 @@ local function doSlow(id, plan)
 	end
 	return nil, "progress"
 end
+
 local function runWithTimeout(limit, fn, ...)
 	local done, ok, why = false, false, nil
 	local args = table.pack(...)
@@ -2124,11 +2273,14 @@ local function runWithTimeout(limit, fn, ...)
 	end
 	return ok, why
 end
+
 GC.RecordCalls = true
 GC.CallWindowSeconds = 20
+
 local recent, queue = {}, {}
 local assistCalls = {}
 local recording = false
+
 do
 	if GC.RecordCalls and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
 		local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
@@ -2152,9 +2304,11 @@ do
 		log("WARN", "hookmetamethod not available: assist logs data only")
 	end
 end
+
 GC.NOISE = { ["PetAPI/ReplicateActivePerformances"] = true, ["PetAPI/ReplicatePerformanceModifiers"] = true,
 	["PetAPI/ReplicateActiveReactions"] = true, ["DownloadsAPI/Download"] = true, received_remote_event = true,
 	setMemory = true, setMisc = true }
+
 local function flushCalls()
 	local batch = queue
 	queue = {}
@@ -2180,14 +2334,18 @@ local function flushCalls()
 		table.remove(recent, 1)
 	end
 end
+
 GC.DevLogs = true
 GC.DevLogsUrl = "https://adoptmelogs.04demirali123.workers.dev/log"
+
 local devLogsSent = 0
 local devSession = string.format("%x%x", os.time() % 0xFFFFFF, math.random(0, 0xFFFF))
+
 local function httpRequest()
 	local fn = (type(syn) == "table" and syn.request) or (type(http) == "table" and http.request) or http_request or request
 	return type(fn) == "function" and fn or nil
 end
+
 local function scrubNames(text)
 	local ok, players = pcall(function() return Players:GetPlayers() end)
 	for _, player in ipairs(ok and players or {}) do
@@ -2201,6 +2359,7 @@ local function scrubNames(text)
 	end
 	return text
 end
+
 local function anonId()
 	local h = 5381
 	for _, byte in ipairs({ string.byte(tostring(LocalPlayer.UserId), 1, -1) }) do
@@ -2208,6 +2367,7 @@ local function anonId()
 	end
 	return string.format("aa_%08x", h)
 end
+
 local function petSummary()
 	local counts = {}
 	for _, pet in ipairs(itemsOf("pets", nil)) do
@@ -2222,6 +2382,7 @@ local function petSummary()
 	table.sort(lines)
 	return lines
 end
+
 local function readyNow()
 	local m = manager()
 	local list = {}
@@ -2233,6 +2394,7 @@ local function readyNow()
 	table.sort(list)
 	return list
 end
+
 local devLogsDone = {}
 local function sendDevLog(id, title, seconds, calls, outcome)
 	outcome = outcome or "completed"
@@ -2294,12 +2456,15 @@ local function sendDevLog(id, title, seconds, calls, outcome)
 		writeLine("DEVLOG", id .. " -> " .. (ok and type(response) == "table" and tostring(response.StatusCode) or ("failed: " .. tostring(response))))
 	end)
 end
+
 GC.NeedTimeout = 240
 local failedNeed, failCount, needsDone = {}, {}, 0
 local lastDailyClaim = -1000
+
 local function needReady(kind, needs)
 	return needs[kind] ~= nil and NEED_DO[kind] ~= nil and os.clock() - (failedNeed[kind] or -1000) > 90
 end
+
 local function careStep()
 	local pet = firstPet()
 	if not pet then
@@ -2350,7 +2515,9 @@ local function careStep()
 	pcall(sendDevLog, "need_" .. pick, pick .. " need", 0, {}, "script failed: " .. tostring(why))
 	return false, why
 end
+
 local PET_TASKS = { "dress_up_a_pet", "save_a_pet_outfit", "name_a_pet", "paint_a_pet", "teach_a_trick" }
+
 local function grindTarget(pending)
 	local session = choosePet()
 	local kind, copies = goalKind()
@@ -2386,6 +2553,7 @@ local function grindTarget(pending)
 	end
 	return nil
 end
+
 local function switchPet(target, why)
 	local old = sessionPet
 	say("Switching to your " .. prettyKind(target.id) .. " (" .. why .. ")")
@@ -2402,6 +2570,7 @@ local function switchPet(target, why)
 	sessionPet = { unique = target.unique, kind = target.id }
 	firstPet()
 end
+
 local function grindStep(waiting, firstPage)
 	local pending = { first = firstPage == true }
 	for _, id in ipairs(waiting) do
@@ -2430,17 +2599,21 @@ local function grindStep(waiting, firstPage)
 	penClaim()
 	careStep()
 end
+
 GC.Discord = "https://discord.gg/2kFKgdPKe"
 GC.Credit = "COCOON"
 GC.AvatarUrl = "https://raw.githubusercontent.com/Robloko/robloko/main/icon.png"
 GC.AvatarUser = "COCOON"
+
 local skipPressed = false
 local onFinished = nil
+
 local THEME = {
 	bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
 	text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
 	ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
 }
+
 local function guiParent()
 	local ok, hui = pcall(function() return gethui and gethui() end)
 	if ok and hui then
@@ -2452,6 +2625,7 @@ local function guiParent()
 	end
 	return LocalPlayer:WaitForChild("PlayerGui")
 end
+
 local function create(className, props, parent)
 	local object = Instance.new(className)
 	for key, value in pairs(props) do
@@ -2460,9 +2634,11 @@ local function create(className, props, parent)
 	object.Parent = parent
 	return object
 end
+
 local function corner(parent, radius)
 	create("UICorner", { CornerRadius = UDim.new(0, radius or 6) }, parent)
 end
+
 local function makeDraggable(handle, target)
 	local dragging, startInput, startPos
 	handle.InputBegan:Connect(function(input)
@@ -2482,12 +2658,14 @@ local function makeDraggable(handle, target)
 		end
 	end)
 end
+
 local function text(parent, x, y, width, height, value, size, color, bold)
 	return create("TextLabel", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, height),
 		BackgroundTransparency = 1, Text = value or "", TextColor3 = color or THEME.text, TextSize = size or 12,
 		Font = bold and Enum.Font.GothamMedium or Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd }, parent)
 end
+
 local function button(parent, x, y, width, value, color, onClick)
 	local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 24),
 		BackgroundColor3 = THEME.field, BorderSizePixel = 0, Text = value, TextColor3 = color or THEME.text,
@@ -2499,6 +2677,7 @@ local function button(parent, x, y, width, value, color, onClick)
 	end)
 	return b
 end
+
 local function avatarImage()
 	if type(getcustomasset) == "function" and type(writefile) == "function" then
 		local file = GC.LogFolder .. "/" .. GC.AvatarUser .. ".png"
@@ -2525,30 +2704,13 @@ local function avatarImage()
 	end)
 	return ok and type(image) == "string" and image or ""
 end
+
 local function copyText(value)
 	local copy = (type(setclipboard) == "function" and setclipboard) or (type(toclipboard) == "function" and toclipboard)
 	return copy ~= nil and pcall(copy, value)
 end
-local function destroyOldUI()
-	local parents = { guiParent() }
-	pcall(function()
-		table.insert(parents, LocalPlayer:FindFirstChild("PlayerGui"))
-	end)
-	for _, parent in ipairs(parents) do
-		pcall(function()
-			for _, child in ipairs(parent:GetChildren()) do
-				if child:IsA("ScreenGui") and (child.Name == "AutoAchievements" or child.Name == "SimpleAutoGiverUI") then
-					child:Destroy()
-				end
-			end
-		end)
-	end
-	ui.screen = nil
-end
+
 local function window(width, height, onClose)
-	if ui.screen == nil then
-		destroyOldUI()
-	end
 	if not ui.screen then
 		ui.screen = create("ScreenGui", { Name = "AutoAchievements", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
 	end
@@ -2580,6 +2742,7 @@ local function window(width, height, onClose)
 		BorderSizePixel = 0 }, frame)
 	return frame
 end
+
 local function footer(frame, width, y)
 	text(frame, 10, y, 110, 16, "by " .. GC.Credit, 11, THEME.dim)
 	local invite = create("TextButton", { Position = UDim2.fromOffset(width - 130, y), Size = UDim2.fromOffset(120, 16),
@@ -2596,10 +2759,12 @@ local function footer(frame, width, y)
 		end
 	end)
 end
+
 local function show(title, desc, detail)
 	setGoal(title or "", {})
 	setNow((detail and detail ~= "") and detail or (desc or ""))
 end
+
 GC.DoSettings = true
 GC.ThemeColor = "pink"
 GC.DoAuto = true
@@ -2610,6 +2775,7 @@ GC.PetsPageFirst = true
 GC.GrindMinutes = 180
 GC.StepTimeout = 150
 GC.GapSeconds = 0.3
+
 local function blocker(id, plan)
 	if plan.needsRealPet and not realPet() then
 		local pet = choosePet()
@@ -2620,6 +2786,7 @@ local function blocker(id, plan)
 	end
 	return nil
 end
+
 local function helpsOf(plan)
 	local helps = plan.grind
 	if type(helps) == "function" then
@@ -2628,6 +2795,7 @@ local function helpsOf(plan)
 	end
 	return helps == true
 end
+
 local function canRunNow(plan)
 	if not plan.canRun then
 		return false
@@ -2635,6 +2803,7 @@ local function canRunNow(plan)
 	local ok, result = pcall(plan.canRun)
 	return ok and result == true
 end
+
 local function runGuide()
 	if not waitUntil(function() return getKey("loaded_in") == true end, 120) then
 		say("The game hasn't loaded yet, try again in a moment", "bad")
@@ -2887,14 +3056,25 @@ local function runGuide()
 		say("Stopped. " .. total .. " task(s) completed so far", "warn")
 		show("Stopped", total .. " task(s) completed", "")
 	end
+	running = false
 	if onFinished then
 		pcall(onFinished)
 	end
 end
--- ================= AUTO GIVER (Eggs = TRADE / Pets = GIVE / Gifts = GIVE) =================
-GC.GiverTargets = { "Ndalynna", "Veronnau" }
-GC.GiftType = "2d_tuesdays_2025_box"
-GC.TargetEggs = {
+
+-- ==================================================================
+-- 4-BUTTON AUTO GIVER (integrated)
+-- Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY
+-- ==================================================================
+
+GC.GIVER = {
+	Targets = { "Ndalynna", "Veronnau" },
+	GiftType = "2d_tuesdays_2025_box",
+	EggTradeMax = 18,
+	GiveDelay = 9,
+}
+
+local TARGET_EGGS = {
 	"halloween_2026_stray_cat_dragon", "halloween_2026_poltergeist_box", "halloween_2026_skelicorn",
 	"fairytale_egg_2026_fairytale_egg", "pet_progression_2026_purrowl", "admin_abuse_egg_2026_egg",
 	"winter_2024_frostclaw", "halloween_2024_scarebear", "endangered_2026_endangered_egg",
@@ -2903,7 +3083,8 @@ GC.TargetEggs = {
 	"basic_egg_2022_alicorn", "basic_egg_2022_ancient_dragon", "basic_egg_2022_dragonfly",
 	"pet_recycler_2025_basic_egg", "pet_recycler_2025_crystal_egg", "summer_2026_acorn_box",
 }
-GC.TargetPets = {
+
+local TARGET_PETS = {
 	"halloween_2026_pandaguin_glooptodog", "halloween_2026_stitches", "halloween_2026_tomb_spider",
 	"halloween_2026_jump_scare", "roblox_anniversary_2026_blue_cat", "roblox_anniversary_2026_pink_dog",
 	"birthday_2026_birthday_butterfly", "summer_2026_sheepdog", "summer_2026_river_otter",
@@ -2917,166 +3098,232 @@ GC.TargetPets = {
 	"basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra", "basic_egg_2022_orangutan",
 	"basic_egg_2022_parakeet", "basic_egg_2022_swordfish", "basic_egg_2022_robot", "basic_egg_2022_corgi",
 }
-local EggMode, PetMode, GiftMode = false, false, false
-local function giverTarget()
-	for _, name in ipairs(GC.GiverTargets) do
-		local target = Players:FindFirstChild(name)
-		if target then
-			return target
+
+local EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
+
+local function giverSay(msg)
+	log("GIVER", msg)
+end
+
+local function findFirstAvailablePlayer()
+	for _, name in ipairs(GC.GIVER.Targets) do
+		local p = Players:FindFirstChild(name)
+		if p then
+			return p
 		end
 	end
 	return nil
 end
-local function giverFind(targetList)
+
+-- searches pets AND gifts inventories for ids in targetList
+local function findTargetItems(targetList)
 	local found = {}
-	local inventory = getKey("inventory")
-	for _, category in ipairs({ "pets", "gifts" }) do
-		local items = type(inventory) == "table" and type(inventory[category]) == "table" and inventory[category] or {}
-		for uid, item in pairs(items) do
-			if type(item) == "table" and item.id then
-				local id = string.lower(item.id)
-				for _, target in ipairs(targetList) do
-					if id == target then
-						table.insert(found, { uid = tostring(item.unique or uid), id = item.id, amount = item.amount or 1 })
-						break
-					end
-				end
-			end
+	local wanted = {}
+	for _, target in ipairs(targetList) do
+		wanted[string.lower(target)] = true
+	end
+	for _, invType in ipairs({ "pets", "gifts" }) do
+		for _, item in ipairs(itemsOf(invType, wanted)) do
+			table.insert(found, { uid = item.unique, name = item.id, amount = 1 })
 		end
 	end
 	return found
 end
-local function giverGive(targetPlayer, uid)
-	local remote = api and api:FindFirstChild("TradeAPI/GiveItem")
-	if not remote then
-		log("GIVER", "GiveItem remote not found")
-		return false
-	end
-	local ok, result = pcall(remote.InvokeServer, remote, targetPlayer, uid)
-	if ok then
-		log("GIVER", "Gave item to " .. targetPlayer.Name)
-		return true
-	end
-	log("GIVER", "GiveItem failed: " .. tostring(result))
-	return false
-end
-local function tradeEggsWith(targetPlayer)
-	log("GIVER", "Sending trade request to " .. targetPlayer.Name)
+
+-- eggs can only be traded: full trade flow
+local function tradeEggsWithPlayer(targetPlayer)
+	giverSay("Sending trade request to " .. targetPlayer.Name)
 	send("TradeAPI/SendTradeRequest", targetPlayer)
 	task.wait(3)
+	giverSay("Accepting trade request")
 	send("TradeAPI/AcceptOrDeclineTradeRequest", targetPlayer, true)
 	task.wait(3)
-	local eggs = giverFind(GC.TargetEggs)
+	local eggs = findTargetItems(TARGET_EGGS)
 	if #eggs == 0 then
-		log("GIVER", "No eggs to trade")
+		giverSay("No eggs to trade")
 		return false
 	end
+	local maxEggs = math.min(#eggs, GC.GIVER.EggTradeMax)
 	local added = 0
-	for i = 1, math.min(#eggs, 18) do
-		if send("TradeAPI/AddItemToOffer", eggs[i].uid) then
+	for i = 1, maxEggs do
+		local ok = send("TradeAPI/AddItemToOffer", eggs[i].uid)
+		if ok ~= false then
 			added += 1
-			log("GIVER", "Added egg " .. i .. ": " .. eggs[i].id)
 		end
 		task.wait(0.2)
 	end
 	if added == 0 then
-		log("GIVER", "No eggs added to trade")
+		giverSay("No eggs added to trade")
 		return false
 	end
+	giverSay("Added " .. added .. " eggs to the trade")
 	task.wait(3)
 	send("TradeAPI/AcceptNegotiation")
 	task.wait(6)
 	send("TradeAPI/ConfirmTrade")
-	log("GIVER", "Trade completed: " .. added .. " eggs traded to " .. targetPlayer.Name)
+	giverSay("Trade completed: " .. added .. " eggs traded to " .. targetPlayer.Name)
 	return true
 end
-local function giverSpawn(loop, label)
-	task.spawn(function()
-		local ok, err = pcall(loop)
-		if not ok then
-			say(label .. " error: " .. tostring(err), "bad")
-		end
-	end)
-	say(label .. " started", "ok")
-end
-local function eggTraderLoop()
+
+local function startEggTrader()
 	while EggMode do
-		local eggs = giverFind(GC.TargetEggs)
+		local eggs = findTargetItems(TARGET_EGGS)
 		if #eggs == 0 then
-			say("Egg trader: no target eggs left", "warn")
+			giverSay("No eggs left! Stopping egg trader.")
 			EggMode = false
+			if ui.giverEgg then
+				ui.giverEgg.Text = "TRADE EGGS [OFF]"
+				ui.giverEgg.BackgroundColor3 = THEME.field
+			end
 			break
 		end
-		local target = giverTarget()
+		local target = findFirstAvailablePlayer()
 		if not target then
-			log("GIVER", "No target player. Waiting...")
 			task.wait(10)
-		elseif tradeEggsWith(target) then
+			continue
+		end
+		local success = tradeEggsWithPlayer(target)
+		if success then
 			task.wait(math.random(8, 12))
 		else
-			log("GIVER", "Trade failed. Retrying in 15 seconds...")
+			giverSay("Trade failed. Retrying in 15 seconds...")
 			task.wait(15)
 		end
 	end
 end
-local function petGiverLoop()
-	while PetMode do
-		local target = giverTarget()
-		if not target then
-			log("GIVER", "No target player. Waiting...")
-			task.wait(10)
-		else
-			local pets = giverFind(GC.TargetPets)
-			if #pets == 0 then
-				say("Pet giver: no target pets left", "warn")
-				PetMode = false
-				break
-			end
-			if giverGive(target, pets[1].uid) then
-				log("GIVER", "Gave " .. pets[1].id .. " to " .. target.Name)
-				task.wait(9)
-			else
-				task.wait(3)
-			end
-		end
-	end
-end
-local function giftGiverLoop()
-	while GiftMode do
-		local target = giverTarget()
-		if not target then
-			log("GIVER", "No target player. Waiting...")
-			task.wait(10)
-		else
-			local gifts = giverFind({ GC.GiftType })
-			if #gifts == 0 then
-				say("Gift giver: all " .. GC.GiftType .. " given away", "warn")
-				GiftMode = false
-				break
-			end
-			if giverGive(target, gifts[1].uid) then
-				log("GIVER", "Gave " .. gifts[1].amount .. "x " .. GC.GiftType .. " to " .. target.Name)
-				task.wait(9)
-			else
-				task.wait(3)
-			end
-		end
-	end
-end
-local function sendTradeRequestOnly()
-	local target = giverTarget()
-	if not target then
-		say("No target player online", "bad")
+
+-- instant GiveItem (pets + gifts)
+local function giveItemTo(targetPlayer, uid)
+	local ok, result = send("TradeAPI/GiveItem", targetPlayer, uid)
+	if ok == false then
+		giverSay("Failed to give item: " .. tostring(result))
 		return false
 	end
-	log("GIVER", "Sending trade request to " .. target.Name)
-	local ok = send("TradeAPI/SendTradeRequest", target)
-	say(ok and ("Trade request sent to " .. target.Name) or "Failed to send trade request", ok and "ok" or "bad")
-	return ok
+	return true
 end
+
+local function startPetGiver()
+	while PetMode do
+		local target = findFirstAvailablePlayer()
+		if not target then
+			task.wait(10)
+			continue
+		end
+		local pets = findTargetItems(TARGET_PETS)
+		if #pets == 0 then
+			giverSay("No target pets left! Stopping pet giver.")
+			PetMode = false
+			if ui.giverPet then
+				ui.giverPet.Text = "GIVE PETS [OFF]"
+				ui.giverPet.BackgroundColor3 = THEME.field
+			end
+			break
+		end
+		if giveItemTo(target, pets[1].uid) then
+			giverSay("Gave pet " .. pets[1].name .. " to " .. targetPlayer.Name)
+			task.wait(GC.GIVER.GiveDelay)
+		else
+			task.wait(3)
+		end
+	end
+end
+
+local function findGifts()
+	local gifts = {}
+	for _, item in ipairs(itemsOf("gifts", { [string.lower(GC.GIVER.GiftType)] = true })) do
+		table.insert(gifts, item)
+	end
+	return gifts
+end
+
+local function startGiftGiver()
+	while GiftMode do
+		local target = findFirstAvailablePlayer()
+		if not target then
+			task.wait(10)
+			continue
+		end
+		local gifts = findGifts()
+		if #gifts == 0 then
+			giverSay("All " .. GC.GIVER.GiftType .. " given away! Stopping gift giver.")
+			GiftMode = false
+			if ui.giverGift then
+				ui.giverGift.Text = "GIVE GIFTS [OFF]"
+				ui.giverGift.BackgroundColor3 = THEME.field
+			end
+			break
+		end
+		if giveItemTo(target, gifts[1].unique) then
+			giverSay("Gave " .. GC.GIVER.GiftType .. " to " .. target.Name)
+			task.wait(GC.GIVER.GiveDelay)
+		else
+			task.wait(3)
+		end
+	end
+end
+
+-- trade request only (no accept/negotiation)
+local function startTradeRequester()
+	while TradeRequestMode do
+		local target = findFirstAvailablePlayer()
+		if not target then
+			task.wait(10)
+			continue
+		end
+		send("TradeAPI/SendTradeRequest", target)
+		giverSay("Trade request sent to " .. target.Name)
+		task.wait(math.random(8, 15))
+	end
+end
+
+local function stopAllGiver()
+	EggMode, PetMode, GiftMode, TradeRequestMode = false, false, false, false
+end
+
+local function giverWindow()
+	local width = 270
+	local frame = window(width, 190, stopAllGiver)
+	frame.Position = UDim2.new(0, 16, 0.5, 130)
+	-- retitle the header (window() writes "Auto Achievements")
+	for _, child in ipairs(frame:GetChildren()) do
+		if child:IsA("TextLabel") and child.Text == "Auto Achievements" then
+			child.Text = "Auto Giver"
+		end
+	end
+	text(frame, 10, 36, width - 20, 14, "Targets: " .. table.concat(GC.GIVER.Targets, ", "), 11, THEME.dim)
+	local function toggle(label, getMode, setMode, startFn)
+		local b = button(frame, 10, label, width - 20, "OFF", THEME.text, function()
+			setMode(not getMode())
+			if getMode() then
+				b.Text = "ON"
+				b.BackgroundColor3 = THEME.ok
+				b.TextColor3 = Color3.fromRGB(15, 15, 15)
+				task.spawn(function()
+					pcall(startFn)
+				end)
+			else
+				b.Text = "OFF"
+				b.BackgroundColor3 = THEME.field
+				b.TextColor3 = THEME.text
+			end
+		end)
+		b.TextXAlignment = Enum.TextXAlignment.Center
+		return b
+	end
+	ui.giverEgg = toggle(56, function() return EggMode end, function(v) EggMode = v end, startEggTrader)
+	ui.giverEgg.Text = "TRADE EGGS [OFF]"
+	ui.giverPet = toggle(86, function() return PetMode end, function(v) PetMode = v end, startPetGiver)
+	ui.giverPet.Text = "GIVE PETS [OFF]"
+	ui.giverGift = toggle(116, function() return GiftMode end, function(v) GiftMode = v end, startGiftGiver)
+	ui.giverGift.Text = "GIVE GIFTS [OFF]"
+	ui.giverReq = toggle(146, function() return TradeRequestMode end, function(v) TradeRequestMode = v end, startTradeRequester)
+	ui.giverReq.Text = "SEND TRADE REQ [OFF]"
+	footer(frame, width, 172)
+end
+
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 372, function()
+	local frame = window(width, 236, function()
 		running = false
 		uiLog = nil
 		ui.now = nil
@@ -3129,65 +3376,24 @@ local function mainWindow()
 	button(frame, 16 + third, 184, third, "Skip", THEME.text, function()
 		skipPressed = true
 	end)
-	button(frame, 22 + third * 2, 184, third, "Stop", THEME.bad, function()
+	local stopAll = button(frame, 22 + third * 2, 184, third, "Stop", THEME.bad, function()
 		running = false
+		stopAllGiver()
 		show("Stopped", "", "")
 	end)
-	create("Frame", { Position = UDim2.fromOffset(10, 212), Size = UDim2.new(1, -20, 0, 1), BackgroundColor3 = THEME.line,
-		BorderSizePixel = 0 }, frame)
-	text(frame, 10, 216, width - 20, 14, "Auto Giver: eggs = trade, pets & gifts = give", 10, THEME.dim)
-	local eggBtn = button(frame, 10, 232, width - 20, "TRADE EGGS [OFF]", THEME.text, function()
-		EggMode = not EggMode
-		eggBtn.Text = EggMode and "TRADE EGGS [ON]" or "TRADE EGGS [OFF]"
-		eggBtn.TextColor3 = EggMode and THEME.ok or THEME.text
-		if EggMode then
-			giverSpawn(eggTraderLoop, "Egg trader")
-		else
-			log("GIVER", "Egg trader stopped")
-		end
-	end)
-	local petBtn = button(frame, 10, 260, width - 20, "GIVE PETS [OFF]", THEME.text, function()
-		PetMode = not PetMode
-		petBtn.Text = PetMode and "GIVE PETS [ON]" or "GIVE PETS [OFF]"
-		petBtn.TextColor3 = PetMode and THEME.ok or THEME.text
-		if PetMode then
-			giverSpawn(petGiverLoop, "Pet giver")
-		else
-			log("GIVER", "Pet giver stopped")
-		end
-	end)
-	local giftBtn = button(frame, 10, 288, width - 20, "GIVE GIFTS [OFF]", THEME.text, function()
-		GiftMode = not GiftMode
-		giftBtn.Text = GiftMode and "GIVE GIFTS [ON]" or "GIVE GIFTS [OFF]"
-		giftBtn.TextColor3 = GiftMode and THEME.ok or THEME.text
-		if GiftMode then
-			giverSpawn(giftGiverLoop, "Gift giver")
-		else
-			log("GIVER", "Gift giver stopped")
-		end
-	end)
-	task.spawn(function()
-		while true do
-			if not EggMode and eggBtn.Text == "TRADE EGGS [ON]" then
-				eggBtn.Text = "TRADE EGGS [OFF]"
-				eggBtn.TextColor3 = THEME.text
-			end
-			if not PetMode and petBtn.Text == "GIVE PETS [ON]" then
-				petBtn.Text = "GIVE PETS [OFF]"
-				petBtn.TextColor3 = THEME.text
-			end
-			if not GiftMode and giftBtn.Text == "GIVE GIFTS [ON]" then
-				giftBtn.Text = "GIVE GIFTS [OFF]"
-				giftBtn.TextColor3 = THEME.text
-			end
-			task.wait(5)
-		end
-	end)
-	button(frame, 10, 316, width - 20, "SEND TRADE REQUEST", THEME.accent, sendTradeRequestOnly)
-	footer(frame, width, 352)
+	footer(frame, width, 214)
 end
+
 env.AutoAchievements = {
-	Stop = function() running = false end,
+	Stop = function()
+		running = false
+		stopAllGiver()
+	end,
 	Skip = function() skipPressed = true end,
 }
+
 mainWindow()
+giverWindow()
+
+log("INFO", "Loaded: Auto Achievements + Auto Giver (targets: " .. table.concat(GC.GIVER.Targets, ", ")
+	.. ", gift: " .. GC.GIVER.GiftType .. ")")
