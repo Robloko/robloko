@@ -1,0 +1,80 @@
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Player
+local player = Players.LocalPlayer
+
+-- Get player data safely
+local function getPlayerData()
+    local success, result = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return clientData.get_data()[player.Name]
+    end)
+    if not success then
+        warn("❌ Failed to require/get ClientData:", result)
+        return nil
+    end
+    return result
+end
+
+-- Pretty print a table's top-level keys with item counts
+local function printCategories(tbl, label)
+    if type(tbl) ~= "table" then
+        print("❌ " .. label .. " is not a table")
+        return
+    end
+
+    local categories = {}
+    for key, value in pairs(tbl) do
+        local count = 0
+        if type(value) == "table" then
+            for _ in pairs(value) do count = count + 1 end
+        end
+        table.insert(categories, { name = tostring(key), count = count, valueType = type(value) })
+    end
+
+    table.sort(categories, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return a.name < b.name
+    end)
+
+    print("=================================")
+    print("📂 " .. label .. " — " .. #categories .. " categories")
+    print("=================================")
+    for i, c in ipairs(categories) do
+        print(string.format("%2d. %-30s [%s] — %d entries", i, c.name, c.valueType, c.count))
+    end
+    print("")
+end
+
+-- Main
+local function main()
+    local data = getPlayerData()
+    if not data then return end
+
+    print("🔍 SCANNING PLAYER DATA FOR CATEGORIES")
+    print("Player:", player.Name)
+    print("")
+
+    -- Top-level data keys (this is where things like quest_manager, inventory, etc. live)
+    printCategories(data, "Top-level data keys")
+
+    -- Inventory categories specifically
+    if data.inventory then
+        printCategories(data.inventory, "Inventory categories")
+    else
+        print("ℹ️ No 'inventory' field found in data")
+    end
+
+    -- Common known containers you may want to inspect
+    local knownContainers = { "quests", "quest_manager", "quests_data", "pets", "currencies" }
+    for _, containerName in ipairs(knownContainers) do
+        local container = data[containerName]
+        if container ~= nil then
+            printCategories(container, "Container: " .. containerName)
+        end
+    end
+end
+
+main()
