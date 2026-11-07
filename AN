@@ -1,0 +1,874 @@
+-- ==================================================================
+-- COCOON (compact GUI + giver/trader functions, with avatar icon)
+-- Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY
+-- + Potion Releaser (ages target pets to age 6 with pet_age_potion)
+-- + Pet Recycler (goes to Nursery, recycles pets, collects tickets)
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+
+local env = getgenv and getgenv() or {}
+if env.COCOON and env.COCOON.Stop then
+    pcall(env.COCOON.Stop)
+end
+
+-- ================= CONFIG =================
+local TARGET_PLAYER_NAMES = {"Ndalynna", "Veronnau"}
+local GIFT_TYPE = "2d_tuesdays_2025_box"
+local POTION_TARGET_AGE = 6
+
+-- Releaser position in your Nursery (set "auto" to search for the block, or a Vector3)
+local NURSERY_POSITION = "auto"
+
+local TARGET_EGGS = {
+    "halloween_2026_stray_cat_dragon", "halloween_2026_poltergeist_box", "halloween_2026_skelicorn",
+    "fairytale_egg_2026_fairytale_egg", "pet_progression_2026_purrowl", "admin_abuse_egg_2026_egg",
+    "winter_2024_frostclaw", "halloween_2024_scarebear", "endangered_2026_endangered_egg",
+    "lny_2026_fire_foal", "lny_2026_fire_mare", "lny_2026_fire_stallion",
+    "aztec_egg_2025_aztec_egg", "winter_2025_angus_cow", "winter_2025_angus_calf", "winter_2025_angus_bull",
+    "halloween_2025_bat_cat", "basic_egg_2022_alicorn", "basic_egg_2022_ancient_dragon",
+    "basic_egg_2022_dragonfly", "pet_recycler_2025_basic_egg", "pet_recycler_2025_crystal_egg",
+    "summer_2026_acorn_box",
+}
+
+local TARGET_PETS = {
+    "halloween_2026_pandaguin_glooptodog", "halloween_2026_stitches", "halloween_2026_tomb_spider",
+    "halloween_2026_jump_scare", "roblox_anniversary_2026_blue_cat", "roblox_anniversary_2026_pink_dog",
+    "birthday_2026_birthday_butterfly", "summer_2026_sheepdog", "summer_2026_river_otter",
+    "summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck", "journey_2026_pilot_gull",
+    "summerfest_2024_cow_calf", "halloween_2023_slime", "sugarfest_2026_jiggly_jerboa",
+    "sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile", "egg_teaser_2026_dire_wolf",
+    "lny_2026_fire_foal", "valentines_2026_cherub_chipmunk", "inspector_shepherd_2026_magpie",
+    "winter_2024_frostbite_cub", "winter_2025_angus_cow", "winter_2025_angus_calf",
+    "winter_2025_maine_coon", "winter_2025_turtle_doves", "winter_2025_xmas_tree_sasquatch",
+    "winter_2025_humbug", "basic_egg_2022_ant", "basic_egg_2022_mouse", "basic_egg_2022_camel",
+    "basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",
+    "basic_egg_2022_robot", "basic_egg_2022_corgi",
+}
+
+local TARGET_PETS_FOR_POTIONS = {
+    "halloween_2026_stitches", "halloween_2026_tomb_spider", "halloween_2026_jump_scare",
+    "basic_egg_2022_ant", "basic_egg_2022_mouse", "roblox_anniversary_2026_blue_cat",
+    "roblox_anniversary_2026_pink_dog", "birthday_2026_birthday_butterfly", "summer_2026_sheepdog",
+    "summer_2026_river_otter", "summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck",
+    "journey_2026_pilot_gull", "summerfest_2024_cow_calf", "halloween_2023_slime",
+    "sugarfest_2026_jiggly_jerboa", "sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile",
+    "winter_2024_frostclaw", "halloween_2024_scarebear", "egg_teaser_2026_dire_wolf",
+    "lny_2026_fire_foal", "lny_2026_fire_mare", "valentines_2026_cherub_chipmunk",
+    "inspector_shepherd_2026_magpie", "winter_2024_frostbite_cub", "winter_2025_angus_cow",
+    "winter_2025_angus_calf", "winter_2025_xmas_tree_sasquatch",
+}
+
+local TARGET_PETS_FOR_RECYCLE = {
+    "basic_egg_2022_ant", "basic_egg_2022_mouse", "basic_egg_2022_camel",
+    "basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",
+    "basic_egg_2022_robot", "basic_egg_2022_corgi",
+}
+local RECYCLE_MIN_PETS = 4
+
+-- ================= MODES =================
+local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+
+-- ================= STATUS / LOG =================
+local ui = {}
+local uiLog = nil
+local status = { now = "Ready", goal = "Pick a mode and press a button", queue = {} }
+
+local function renderStatus()
+    if ui.now then
+        pcall(function()
+            ui.now.Text = status.now
+            ui.goal.Text = status.goal
+            ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
+        end)
+    end
+end
+
+local function setGoal(text, queue)
+    status.goal = text or ""
+    status.queue = queue or {}
+    renderStatus()
+end
+
+local function setNow(text)
+    status.now = text or ""
+    renderStatus()
+end
+
+local function say(text, tone)
+    setNow(text)
+    if uiLog then
+        pcall(uiLog, tone or "info", text)
+    end
+    print("[COCOON] " .. tostring(text))
+end
+
+-- ================= HELPERS =================
+local function findFirstAvailablePlayer()
+    for _, name in ipairs(TARGET_PLAYER_NAMES) do
+        local p = Players:FindFirstChild(name)
+        if p then
+            return p
+        end
+    end
+    return nil
+end
+
+local function getPlayerData()
+    local ok, clientData = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData)
+    end)
+    if not ok then
+        return nil
+    end
+    local ok2, data = pcall(function() return clientData.get_data() end)
+    if not ok2 then
+        return nil
+    end
+    return data and data[player.Name] or nil
+end
+
+local function findTargetItems(targetList)
+    local found = {}
+    local data = getPlayerData()
+    if not data or not data.inventory then
+        return found
+    end
+    for _, invType in ipairs({ "pets", "gifts" }) do
+        if data.inventory[invType] then
+            for uid, itemData in pairs(data.inventory[invType]) do
+                if itemData.id then
+                    local id = string.lower(itemData.id)
+                    for _, target in ipairs(targetList) do
+                        if id == target then
+                            table.insert(found, { uid = uid, name = itemData.id, amount = itemData.amount or 1 })
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+local function findGifts()
+    local gifts = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.gifts then
+        for uid, giftData in pairs(data.inventory.gifts) do
+            if giftData.id and string.lower(giftData.id) == GIFT_TYPE then
+                table.insert(gifts, { uid = uid, amount = giftData.amount or 1 })
+            end
+        end
+    end
+    return gifts
+end
+
+local function giveItem(targetPlayer, uid)
+    local ok, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(targetPlayer, uid)
+    end)
+    if ok then
+        say("Gave item to " .. targetPlayer.Name, "ok")
+        return true
+    end
+    say("Failed to give item: " .. tostring(result), "bad")
+    return false
+end
+
+-- ================= POTION RELEASER =================
+local function findPetAgePotion()
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.food then
+        for uniqueId, itemData in pairs(data.inventory.food) do
+            if itemData.id == "pet_age_potion" then
+                return uniqueId
+            end
+        end
+    end
+    return nil
+end
+
+local function safelyUnequipFood(itemId)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(itemId)
+    end)
+end
+
+local function equipTool(itemId)
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(itemId, {
+            use_sound_delay = true,
+            equip_as_last = false
+        })
+    end)
+    return ok
+end
+
+local function findPetsNeedingPotions()
+    local petsNeedingPotions = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for petUniqueId, petData in pairs(data.inventory.pets) do
+            if petData.id and petData.properties then
+                local petName = string.lower(petData.id)
+                local petAge = petData.properties.age or 0
+                for _, targetPet in ipairs(TARGET_PETS_FOR_POTIONS) do
+                    if petName == targetPet and petAge < POTION_TARGET_AGE then
+                        table.insert(petsNeedingPotions, {
+                            uid = petUniqueId,
+                            name = petData.id,
+                            age = petAge,
+                        })
+                        break
+                    end
+                end
+            end
+        end
+    end
+    table.sort(petsNeedingPotions, function(a, b)
+        return a.age < b.age
+    end)
+    return petsNeedingPotions
+end
+
+local function getPetAge(petUniqueId)
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for uid, petData in pairs(data.inventory.pets) do
+            if uid == petUniqueId or petData.unique == petUniqueId then
+                return petData.properties and petData.properties.age or 0, petData.id or "Unknown"
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function usePotionOnPet(petUniqueId)
+    local currentAge, petName = getPetAge(petUniqueId)
+    if not currentAge or currentAge >= POTION_TARGET_AGE then
+        say("Pet no longer needs potion: " .. tostring(petName), "warn")
+        return false
+    end
+
+    -- Equip the pet
+    if not equipTool(petUniqueId) then
+        say("Failed to equip pet: " .. tostring(petName), "bad")
+        return false
+    end
+    say("Equipped pet: " .. tostring(petName))
+    task.wait(1)
+
+    -- Find and equip potion
+    local potionId = findPetAgePotion()
+    if not potionId then
+        say("No potions found!", "bad")
+        return false
+    end
+    if not equipTool(potionId) then
+        say("Failed to equip potion", "bad")
+        return false
+    end
+    task.wait(1)
+
+    -- Start using potion
+    local startOk = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(potionId, "START")
+    end)
+    if not startOk then
+        safelyUnequipFood(potionId)
+        say("Failed to start using potion", "bad")
+        return false
+    end
+    task.wait(1)
+
+    -- Create pet object for consumption
+    local consumeOk = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
+            "__Enum_PetObjectCreatorType_2",
+            {
+                additional_consume_uniques = {},
+                pet_unique = petUniqueId,
+                unique_id = potionId,
+            }
+        )
+    end)
+    if not consumeOk then
+        safelyUnequipFood(potionId)
+        say("Failed to create pet object for consumption", "bad")
+        return false
+    end
+
+    -- Guaranteed 9 second feed wait
+    say("Waiting 9 s for potion to feed " .. tostring(petName) .. "...")
+    local startTime = tick()
+    repeat
+        task.wait(0.1)
+    until tick() - startTime >= 9
+    say("Potion feed complete for " .. tostring(petName), "ok")
+
+    safelyUnequipFood(potionId)
+    return true
+end
+
+local function startPotionReleaser()
+    while PotionMode do
+        local petsNeedingPotions = findPetsNeedingPotions()
+        if #petsNeedingPotions == 0 then
+            say("No pets need potions. Waiting 30 s...", "warn")
+            task.wait(30)
+            continue
+        end
+        if not findPetAgePotion() then
+            say("No potions available", "bad")
+            task.wait(30)
+            continue
+        end
+
+        say(#petsNeedingPotions .. " pets need potions")
+        for _, petData in ipairs(petsNeedingPotions) do
+            if not PotionMode then
+                break
+            end
+            local currentAge = getPetAge(petData.uid)
+            if currentAge and currentAge >= POTION_TARGET_AGE then
+                say(petData.name .. " no longer needs potion (age: " .. currentAge .. ")", "warn")
+                continue
+            end
+            if not usePotionOnPet(petData.uid) then
+                task.wait(2)
+            end
+        end
+        task.wait(5)
+    end
+end
+
+-- ================= PET RECYCLER =================
+local function findReleaserBlock()
+    -- search workspace for a releaser-looking part (house model name varies per client)
+    for _, model in ipairs(workspace:GetChildren()) do
+        if model:IsA("Model") then
+            for _, part in ipairs(model:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    local name = string.lower(part.Name)
+                    if string.find(name, "releaser") or part.Name == "f-3" then
+                        return part
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function goToNursery()
+    local character = player.Character
+    if not (character and character.PrimaryPart) then
+        say("No character found", "bad")
+        return false
+    end
+
+    if NURSERY_POSITION == "auto" then
+        local block = findReleaserBlock()
+        if block then
+            character:PivotTo(block.CFrame + Vector3.new(0, 4, 6))
+            say("Went to Nursery (releaser block found)", "ok")
+            task.wait(2)
+            return true
+        end
+        say("Releaser block not found. Set NURSERY_POSITION to a Vector3.", "bad")
+        return false
+    end
+
+    if typeof(NURSERY_POSITION) == "Vector3" then
+        character:PivotTo(CFrame.new(NURSERY_POSITION + Vector3.new(0, 4, 0)))
+        say("Went to Nursery (saved position)", "ok")
+        task.wait(2)
+        return true
+    end
+
+    say("Invalid NURSERY_POSITION config", "bad")
+    return false
+end
+
+local function findPetsToRecycle()
+    local toRecycle = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for petUniqueId, petData in pairs(data.inventory.pets) do
+            if petData.id then
+                local id = string.lower(petData.id)
+                for _, target in ipairs(TARGET_PETS_FOR_RECYCLE) do
+                    if id == target then
+                        table.insert(toRecycle, { uid = petUniqueId, name = petData.id })
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return toRecycle
+end
+
+local function collectTickets()
+    pcall(function()
+        ReplicatedStorage:WaitForChild("adoptme_new_net")
+            :WaitForChild("adoptme_new.modules.Logging.LogCollectorNet:7")
+            :FireServer({ messages = {} })
+    end)
+end
+
+local function recyclePets(pets)
+    local character = player.Character
+    if not character then
+        say("No character found", "bad")
+        return false
+    end
+
+    -- 1. GO TO NURSERY FIRST
+    if not goToNursery() then
+        return false
+    end
+
+    -- 2. trigger releaser visit / backpack open (as in capture)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("AchievementsAPI/CompleteAchievement"):FireServer("visit_the_pet_releaser")
+    end)
+    task.wait(0.5)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("AchievementsAPI/CompleteAchievement"):FireServer("open_backpack")
+    end)
+    task.wait(0.5)
+
+    -- 3. build uniques dict
+    local uniques = {}
+    for _, pet in ipairs(pets) do
+        uniques[pet.uid] = true
+    end
+
+    -- 4. use the releaser block
+    local ok, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):FindFirstChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+            "f-3", "UseBlock", { uniques = uniques }, character)
+    end)
+    if not ok then
+        say("Recycle failed: " .. tostring(result), "bad")
+        return false
+    end
+
+    -- 5. collect tickets
+    say("Recycled " .. #pets .. " pets. Collecting tickets...", "ok")
+    task.wait(3)
+    collectTickets()
+    task.wait(2)
+    collectTickets()
+    say("Tickets collected", "ok")
+    return true
+end
+
+local function startPetRecycler()
+    while RecycleMode do
+        local pets = findPetsToRecycle()
+        if #pets < RECYCLE_MIN_PETS then
+            say(#pets .. "/" .. RECYCLE_MIN_PETS .. " recycle pets found. Waiting 30 s...", "warn")
+            task.wait(30)
+            continue
+        end
+        if not recyclePets(pets) then
+            say("Retrying recycle in 10 s...", "warn")
+            task.wait(10)
+        else
+            task.wait(5)
+        end
+    end
+end
+
+-- ================= EGG TRADING =================
+local function addEggsToTrade(eggs)
+    local maxEggs = math.min(#eggs, 18)
+    local added = 0
+    for i = 1, maxEggs do
+        local success = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AddItemToOffer"):FireServer(eggs[i].uid)
+        end)
+        if success then
+            added += 1
+            say("Added egg " .. i .. "/" .. maxEggs .. ": " .. eggs[i].name)
+        end
+        task.wait(0.2)
+    end
+    return added
+end
+
+local function tradeEggsWithPlayer(targetPlayer)
+    say("Sending trade request to " .. targetPlayer.Name)
+    local ok1 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(targetPlayer)
+    end)
+    if not ok1 then
+        return false
+    end
+    task.wait(3)
+    local ok2 = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptOrDeclineTradeRequest"):InvokeServer(targetPlayer, true)
+    end)
+    if not ok2 then
+        say("Failed to accept trade request", "bad")
+        return false
+    end
+    task.wait(3)
+    local eggs = findTargetItems(TARGET_EGGS)
+    if #eggs == 0 then
+        return false
+    end
+    local added = addEggsToTrade(eggs)
+    if added == 0 then
+        return false
+    end
+    task.wait(3)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptNegotiation"):FireServer()
+    end)
+    task.wait(6)
+    local ok4 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
+    end)
+    if ok4 then
+        say("Trade completed: " .. added .. " eggs to " .. targetPlayer.Name, "ok")
+        return true
+    end
+    say("Failed to confirm trade", "bad")
+    return false
+end
+
+local function startEggTrader()
+    while EggMode do
+        local eggs = findTargetItems(TARGET_EGGS)
+        if #eggs == 0 then
+            say("No eggs left! Stopping.", "warn")
+            EggMode = false
+            break
+        end
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        if tradeEggsWithPlayer(target) then
+            task.wait(math.random(8, 12))
+        else
+            say("Trade failed. Retrying in 15 s...", "warn")
+            task.wait(15)
+        end
+    end
+end
+
+-- ================= PET GIVER =================
+local function startPetGiver()
+    while PetMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local pets = findTargetItems(TARGET_PETS)
+        if #pets == 0 then
+            say("No target pets left! Stopping.", "warn")
+            PetMode = false
+            break
+        end
+        if giveItem(target, pets[1].uid) then
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+-- ================= GIFT GIVER =================
+local function startGiftGiver()
+    while GiftMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local gifts = findGifts()
+        if #gifts == 0 then
+            say("All " .. GIFT_TYPE .. " given away! Stopping.", "warn")
+            GiftMode = false
+            break
+        end
+        local stack = gifts[1]
+        if giveItem(target, stack.uid) then
+            say("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name, "ok")
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+-- ================= TRADE REQUEST ONLY =================
+local function startTradeRequester()
+    while TradeRequestMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local ok = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(target)
+        end)
+        if ok then
+            say("Trade request sent to " .. target.Name, "ok")
+        else
+            say("Failed to send trade request", "bad")
+        end
+        task.wait(math.random(8, 15))
+    end
+end
+
+-- ================= UI =================
+local GC = GC or {}
+GC.LogFolder = "COCOON"
+GC.AvatarUrl = "https://raw.githubusercontent.com/Robloko/robloko/main/icon.png"
+GC.AvatarUser = "COCOON"
+
+local THEME = {
+    bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
+    text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
+    ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
+}
+local MODE_COLORS = {
+    egg = Color3.fromRGB(200, 150, 0), pet = Color3.fromRGB(0, 120, 200),
+    gift = Color3.fromRGB(200, 100, 200), req = Color3.fromRGB(150, 100, 50),
+    potion = Color3.fromRGB(200, 100, 0), recycle = Color3.fromRGB(100, 180, 80),
+}
+
+local function guiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then
+        return hui
+    end
+    local okCore, core = pcall(function() return game:GetService("CoreGui") end)
+    if okCore and core then
+        return core
+    end
+    return player:WaitForChild("PlayerGui")
+end
+
+local function create(className, props, parent)
+    local object = Instance.new(className)
+    for key, value in pairs(props) do
+        object[key] = value
+    end
+    object.Parent = parent
+    return object
+end
+
+local function corner(parent, radius)
+    create("UICorner", { CornerRadius = UDim.new(0, radius or 6) }, parent)
+end
+
+local function makeDraggable(handle, target)
+    local dragging, startInput, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, startInput, startPos = true, input.Position, target.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - startInput
+            target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+local function text(parent, x, y, width, height, value, size, color, bold)
+    return create("TextLabel", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, height),
+        BackgroundTransparency = 1, Text = value or "", TextColor3 = color or THEME.text, TextSize = size or 12,
+        Font = bold and Enum.Font.GothamMedium or Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd }, parent)
+end
+
+local function toggleButton(parent, x, y, width, label, color, onClick)
+    local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 24),
+        BackgroundColor3 = color, BorderSizePixel = 0, Text = label, TextColor3 = THEME.text,
+        Font = Enum.Font.GothamMedium, TextSize = 11, AutoButtonColor = true }, parent)
+    corner(b, 4)
+    create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
+    b.MouseButton1Click:Connect(function()
+        pcall(onClick, b)
+    end)
+    return b
+end
+
+local function avatarImage()
+    if type(getcustomasset) == "function" and type(writefile) == "function" then
+        local file = GC.LogFolder .. "/" .. GC.AvatarUser .. ".png"
+        local ok, image = pcall(function()
+            if not (type(isfile) == "function" and isfile(file)) then
+                if type(isfolder) == "function" and not isfolder(GC.LogFolder) then
+                    makefolder(GC.LogFolder)
+                end
+                local data = game:HttpGet(GC.AvatarUrl)
+                if type(data) ~= "string" or (string.sub(data, 1, 8) ~= "\137PNG\r\n\26\n" and string.sub(data, 1, 3) ~= "\255\216\255") then
+                    error("not a picture")
+                end
+                writefile(file, data)
+            end
+            return getcustomasset(file)
+        end)
+        if ok and type(image) == "string" and image ~= "" then
+            return image
+        end
+    end
+    local ok, image = pcall(function()
+        local userId = Players:GetUserIdFromNameAsync(GC.AvatarUser)
+        return (Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48))
+    end)
+    return ok and type(image) == "string" and image or ""
+end
+
+local function window(width, height)
+    if ui.screen and ui.screen.Parent then
+        ui.screen:Destroy()
+    end
+    ui.screen = create("ScreenGui", { Name = "COCOON", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
+    local frame = create("Frame", { Size = UDim2.fromOffset(width, height), Position = UDim2.new(0, 16, 0.5, -height / 2),
+        BackgroundColor3 = THEME.bg, BorderSizePixel = 0 }, ui.screen)
+    corner(frame, 8)
+    create("UIStroke", { Color = THEME.line, Thickness = 1 }, frame)
+    local header = create("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1 }, frame)
+    makeDraggable(header, frame)
+    local avatar = create("ImageLabel", { Position = UDim2.fromOffset(8, 5), Size = UDim2.fromOffset(16, 16),
+        BackgroundColor3 = THEME.field, BorderSizePixel = 0, Image = "" }, header)
+    corner(avatar, 8)
+    task.spawn(function()
+        local image = avatarImage()
+        if avatar.Parent then
+            avatar.Image = image
+        end
+    end)
+    text(header, 30, 0, width - 58, 26, "COCOON", 13, THEME.text, true)
+    local close = create("TextButton", { Position = UDim2.fromOffset(width - 26, 1), Size = UDim2.fromOffset(22, 22),
+        BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, header)
+    close.MouseButton1Click:Connect(function()
+        EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+        uiLog = nil
+        ui.now = nil
+        frame:Destroy()
+    end)
+    create("Frame", { Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+    return frame
+end
+
+local function mainWindow()
+    local width = 210
+    local frame = window(width, 230)
+    -- status lines
+    text(frame, 8, 29, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now = text(frame, 34, 29, width - 42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 44, width - 16, 12, status.goal, 10, THEME.dim)
+    -- log box
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8, 58), Size = UDim2.fromOffset(width - 16, 40),
+        BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim, Font = Enum.Font.Gotham, TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false,
+        ClipsDescendants = true }, frame)
+    renderStatus()
+    local shown = {}
+    local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
+    uiLog = function(tone, message)
+        local safe = string.gsub(string.gsub(string.gsub(tostring(message), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+        table.insert(shown, '<font color="' .. (TONES[tone] or TONES.info) .. '">' .. safe .. "</font>")
+        while #shown > 3 do
+            table.remove(shown, 1)
+        end
+        logBox.Text = table.concat(shown, "\n")
+    end
+    create("Frame", { Position = UDim2.fromOffset(8, 101), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+
+    -- compact button grid (2x3)
+    local half = (width - 20) / 2
+    local function gridButton(x, y, label, color, modeGet, starter, setName)
+        local btn = toggleButton(frame, x, y, half, label .. " [OFF]", color, function(b)
+            local on = not modeGet()
+            setName(on)
+            b.Text = label .. (on and " [ON]" or " [OFF]")
+            b.BackgroundColor3 = on and THEME.ok or color
+            if on then
+                task.spawn(starter)
+                say(label .. " started", "ok")
+            else
+                say(label .. " stopped", "warn")
+            end
+            return b
+        end)
+        return btn
+    end
+
+    local eggButton = gridButton(8, 108, "EGGS", MODE_COLORS.egg, function() return EggMode end, startEggTrader,
+        function(on) EggMode = on end)
+    local petButton = gridButton(12 + half, 108, "PETS", MODE_COLORS.pet, function() return PetMode end, startPetGiver,
+        function(on) PetMode = on end)
+    local giftButton = gridButton(8, 137, "GIFTS", MODE_COLORS.gift, function() return GiftMode end, startGiftGiver,
+        function(on) GiftMode = on end)
+    local reqButton = gridButton(12 + half, 137, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end,
+        startTradeRequester, function(on) TradeRequestMode = on end)
+    local potionButton = gridButton(8, 166, "POTIONS", MODE_COLORS.potion, function() return PotionMode end, startPotionReleaser,
+        function(on) PotionMode = on end)
+    local recycleButton = gridButton(12 + half, 166, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end,
+        startPetRecycler, function(on) RecycleMode = on end)
+
+    -- keep buttons in sync when a loop stops itself (out of items)
+    task.spawn(function()
+        local labels = { { eggButton, "EGGS", MODE_COLORS.egg, function() return EggMode end },
+            { petButton, "PETS", MODE_COLORS.pet, function() return PetMode end },
+            { giftButton, "GIFTS", MODE_COLORS.gift, function() return GiftMode end },
+            { reqButton, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end },
+            { potionButton, "POTIONS", MODE_COLORS.potion, function() return PotionMode end },
+            { recycleButton, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end } }
+        while true do
+            task.wait(2)
+            for _, entry in ipairs(labels) do
+                local btn, label, color, get = entry[1], entry[2], entry[3], entry[4]
+                if not get() and string.find(btn.Text, "ON", 1, true) then
+                    btn.Text = label .. " [OFF]"
+                    btn.BackgroundColor3 = color
+                end
+            end
+        end
+    end)
+
+    -- footer
+    text(frame, 8, 197, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 214), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+end
+
+env.COCOON = {
+    Stop = function()
+        EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+    end,
+}
+
+mainWindow()
+say("Loaded. Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), "ok")
