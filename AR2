@@ -309,7 +309,6 @@ local function usePotionOnPet(petUniqueId)
         return false
     end
 
-    -- Equip the pet
     if not equipTool(petUniqueId) then
         say("Failed to equip pet: " .. tostring(petName), "bad")
         return false
@@ -317,7 +316,6 @@ local function usePotionOnPet(petUniqueId)
     say("Equipped pet: " .. tostring(petName))
     task.wait(1)
 
-    -- Find and equip potion
     local potionId = findPetAgePotion()
     if not potionId then
         say("No potions found!", "bad")
@@ -329,7 +327,6 @@ local function usePotionOnPet(petUniqueId)
     end
     task.wait(1)
 
-    -- Start using potion
     local startOk = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(potionId, "START")
     end)
@@ -340,7 +337,6 @@ local function usePotionOnPet(petUniqueId)
     end
     task.wait(1)
 
-    -- Create pet object for consumption
     local consumeOk = pcall(function()
         ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
             "__Enum_PetObjectCreatorType_2",
@@ -357,7 +353,6 @@ local function usePotionOnPet(petUniqueId)
         return false
     end
 
-    -- Guaranteed 9 second feed wait
     say("Waiting 9 s for potion to feed " .. tostring(petName) .. "...")
     local startTime = tick()
     repeat
@@ -440,14 +435,12 @@ local function recyclePets(pets)
         return false
     end
 
-    -- Must be at the Nursery or the releaser will not respond
     local ok, why = goTo("Nursery")
     if not ok then
         say("Could not reach the Nursery: " .. tostring(why), "bad")
         return false
     end
 
-    -- trigger releaser visit / backpack open (as in capture)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):FindFirstChild("AchievementsAPI/CompleteAchievement"):FireServer("visit_the_pet_releaser")
     end)
@@ -457,7 +450,6 @@ local function recyclePets(pets)
     end)
     task.wait(0.5)
 
-    -- build uniques dict
     local uniques = {}
     for _, pet in ipairs(pets) do
         uniques[pet.uid] = true
@@ -476,7 +468,7 @@ local function recyclePets(pets)
     task.wait(3)
     if collectTickets() then
         task.wait(1)
-        collectTickets() -- second call in case the first only returns partial
+        collectTickets()
     end
     return true
 end
@@ -801,4 +793,107 @@ local function mainWindow()
         BackgroundColor3 = THEME.field, BorderSizePixel = 0 }, frame)
     corner(statsBg, 4)
     local moneyLabel = text(statsBg, 5, 1, (width - 26) / 2, 16, "💵 $0", 11, THEME.money, true)
-    local ticketLabel = text(statsBg, (width - 16) / 2 + 3, 1, (width - 26) / 2, 16, "
+    local ticketLabel = text(statsBg, (width - 16) / 2 + 3, 1, (width - 26) / 2, 16, "🎟️ 0", 11, THEME.ticket, true)
+
+    task.spawn(function()
+        while frame.Parent do
+            local ok, d = pcall(function()
+                local cd = require(ReplicatedStorage.ClientModules.Core.ClientData)
+                return cd.get_data()[player.Name] or {}
+            end)
+            if ok and d then
+                local money = d.money or 0
+                local tickets = d.pet_recycler_tickets_2026 or 0
+                moneyLabel.Text = "💵 $" .. tostring(money)
+                ticketLabel.Text = "🎟️ " .. tostring(tickets)
+            end
+            task.wait(2)
+        end
+    end)
+
+    -- ============ STATUS ============
+    text(frame, 8, 51, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now = text(frame, 34, 51, width - 42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 66, width - 16, 12, status.goal, 10, THEME.dim)
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8, 80), Size = UDim2.fromOffset(width - 16, 40),
+        BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim, Font = Enum.Font.Gotham, TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false,
+        ClipsDescendants = true }, frame)
+    renderStatus()
+    local shown = {}
+    local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
+    uiLog = function(tone, message)
+        local safe = string.gsub(string.gsub(string.gsub(tostring(message), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+        table.insert(shown, '<font color="' .. (TONES[tone] or TONES.info) .. '">' .. safe .. "</font>")
+        while #shown > 3 do
+            table.remove(shown, 1)
+        end
+        logBox.Text = table.concat(shown, "\n")
+    end
+    create("Frame", { Position = UDim2.fromOffset(8, 123), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+
+    -- ============ COMPACT BUTTON GRID (2x3) ============
+    local half = (width - 20) / 2
+    local function gridButton(x, y, label, color, modeGet, starter, setName)
+        local btn = toggleButton(frame, x, y, half, label .. " [OFF]", color, function(b)
+            local on = not modeGet()
+            setName(on)
+            b.Text = label .. (on and " [ON]" or " [OFF]")
+            b.BackgroundColor3 = on and THEME.ok or color
+            if on then
+                task.spawn(starter)
+                say(label .. " started", "ok")
+            else
+                say(label .. " stopped", "warn")
+            end
+            return b
+        end)
+        return btn
+    end
+
+    local eggButton = gridButton(8, 130, "EGGS", MODE_COLORS.egg, function() return EggMode end, startEggTrader,
+        function(on) EggMode = on end)
+    local petButton = gridButton(12 + half, 130, "PETS", MODE_COLORS.pet, function() return PetMode end, startPetGiver,
+        function(on) PetMode = on end)
+    local giftButton = gridButton(8, 159, "GIFTS", MODE_COLORS.gift, function() return GiftMode end, startGiftGiver,
+        function(on) GiftMode = on end)
+    local reqButton = gridButton(12 + half, 159, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end,
+        startTradeRequester, function(on) TradeRequestMode = on end)
+    local potionButton = gridButton(8, 188, "POTIONS", MODE_COLORS.potion, function() return PotionMode end, startPotionReleaser,
+        function(on) PotionMode = on end)
+    local recycleButton = gridButton(12 + half, 188, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end,
+        startPetRecycler, function(on) RecycleMode = on end)
+
+    task.spawn(function()
+        local labels = { { eggButton, "EGGS", MODE_COLORS.egg, function() return EggMode end },
+            { petButton, "PETS", MODE_COLORS.pet, function() return PetMode end },
+            { giftButton, "GIFTS", MODE_COLORS.gift, function() return GiftMode end },
+            { reqButton, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end },
+            { potionButton, "POTIONS", MODE_COLORS.potion, function() return PotionMode end },
+            { recycleButton, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end } }
+        while frame.Parent do
+            task.wait(2)
+            for _, entry in ipairs(labels) do
+                local btn, label, color, get = entry[1], entry[2], entry[3], entry[4]
+                if not get() and string.find(btn.Text, "ON", 1, true) then
+                    btn.Text = label .. " [OFF]"
+                    btn.BackgroundColor3 = color
+                end
+            end
+        end
+    end)
+
+    text(frame, 8, 219, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 236), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+end
+
+env.COCOON = {
+    Stop = function()
+        EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+    end,
+}
+
+mainWindow()
+say("Loaded. Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), "ok")
