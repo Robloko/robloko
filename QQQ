@@ -5,7 +5,7 @@
 -- + Pet Recycler (travels to Nursery, recycles pets, collects tickets)
 -- + Neon Fuser (4x full-grown same-species pets -> neon)
 -- + Mega Fuser (4x age-6 same-species neons -> mega)
--- + Lure Game (places lightning bottles at preset positions)
+-- + Lure Game (places forked lightning bottles to capture lightning)
 -- + Money & Ticket Display
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -24,15 +24,13 @@ local GIFT_TYPE = "2d_tuesdays_2025_box"
 local POTION_TARGET_AGE = 6
 local ARRIVAL_TIMEOUT = 35
 
-local LURE_BOTTLE_ID = "lightning_dimension_2026_captured_lightning"
+-- Lure Game: we PLACE forked bottles to CAPTURE lightning bottles
+local LURE_PLACE_BOTTLE_ID = "lightning_dimension_2026_forked_bottle"
+local LURE_TARGET_BOTTLE_ID = "lightning_dimension_2026_captured_lightning"
 local LURE_NET_COLLECT = "adoptme_legacy_shared.ContentPacks.LightningDimension2026.Game.LightningDimensionNet:8"
 local LURE_NET_PLACE = "adoptme_legacy_shared.ContentPacks.LightningDimension2026.Game.LightningDimensionNet:15"
 local LURE_PLACE_POSITIONS = {
-    Vector3.new(9099.9873046875, 7003.580078125, -2852.93505859375),
-    Vector3.new(9109.1865234375, 7003.580078125, -2857.806884765625),
-    Vector3.new(9094.095703125, 7003.580078125, -2866.443603515625),
-    Vector3.new(9090.998046875, 7003.580078125, -2856.2333984375),
-    Vector3.new(9111.65234375, 7003.580078125, -2849.85400390625),
+    Vector3.new(9104.85546875, 7003.580078125, -2859.604248046875),
 }
 local LURE_CAPTURE_WAIT = 12
 
@@ -792,6 +790,8 @@ local function startMegaFuser()
 end
 
 -- ================= LURE GAME =================
+-- We place forked bottles to CAPTURE lightning bottles.
+-- Captured-lightning bottles are our TARGET and are NEVER placed.
 local function findLureBottles()
     local bottles = {}
     local data = getPlayerData()
@@ -802,7 +802,7 @@ local function findLureBottles()
         local inv = data.inventory[invType]
         if inv then
             for uid, itemData in pairs(inv) do
-                if itemData.id and string.lower(itemData.id) == LURE_BOTTLE_ID then
+                if itemData.id and string.lower(itemData.id) == LURE_PLACE_BOTTLE_ID then
                     table.insert(bottles, { uid = uid, name = itemData.id })
                 end
             end
@@ -880,20 +880,20 @@ local function placeLureBottle(bottleUid, position)
     pcall(function()
         ReplicatedStorage:WaitForChild("API"):FindFirstChild("ToolAPI/ServerUseTool"):InvokeServer(bottleUid, "END")
     end)
-    say("Placed bottle at " .. tostring(position), "ok")
+    say("Placed forked bottle at " .. tostring(position), "ok")
     return true
 end
 
 local function doLurePass()
     local bottles = findLureBottles()
     if #bottles == 0 then
-        say("No captured lightning bottles. Requesting collection...", "warn")
+        say("No forked bottles. Requesting collection...", "warn")
         collectLureBottles()
         task.wait(3)
         bottles = findLureBottles()
     end
     if #bottles == 0 then
-        say("Still no bottles after collection request", "warn")
+        say("Still no forked bottles after collection request", "warn")
         return 0
     end
 
@@ -901,7 +901,8 @@ local function doLurePass()
     for i, bottle in ipairs(bottles) do
         if not LureMode then break end
         local pos = LURE_PLACE_POSITIONS[((i - 1) % #LURE_PLACE_POSITIONS) + 1]
-        say("Placing bottle " .. i .. "/" .. #bottles .. " (" .. bottle.uid:sub(1, 12) .. "...)")
+        say("Placing forked bottle " .. i .. "/" .. #bottles ..
+            " (" .. bottle.uid:sub(1, 12) .. "...)")
         if placeLureBottle(bottle.uid, pos) then
             placed += 1
         end
@@ -921,7 +922,7 @@ local function startLureGame()
             say("Lure pass idle. Waiting 30 s...", "warn")
             task.wait(30)
         else
-            say("Lure pass complete: " .. placed .. " bottles placed", "ok")
+            say("Lure pass complete: " .. placed .. " forked bottles placed", "ok")
             task.wait(5)
         end
     end
