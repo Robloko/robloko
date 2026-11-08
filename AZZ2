@@ -1,9 +1,8 @@
 -- ==================================================================
--- COCOON v3.3 — Concurrent Hold/Place/Eject worker pool
+-- COCOON v3.5 — Continuous concurrent Hold/Place/Eject
+-- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
--- - holdWithRetry: verifies pickup actually succeeded, retries until
---   the server accepts (pet no longer busy on food/drink)
--- - Per-furniture dwell times (food/drink longer)
+-- - Position-verified detach from food/drink (no stuck pets)
 -- - Guaranteed eject on stop/error
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -16,27 +15,29 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- default seconds per furniture
+local FURNITURE_DWELL   = 20      -- seconds per furniture
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local HOLD_TIMEOUT      = 45      -- max seconds to keep retrying a pickup
+local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
+local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
+local PASS_COOLDOWN     = 2       -- seconds between full passes
 
--- Furniture for PETS. dwell = seconds on this piece (food/drink longer)
+-- Furniture for PETS (HousingAPI/ActivateFurniture)
 local PET_FURNITURE = {
-    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty", dwell = 20 },
-    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food",  dwell = 30 },
-    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink", dwell = 30 },
-    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet", dwell = 20 },
-    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep",  dwell = 20 },
-    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored",  dwell = 20 },
+    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
+    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
+    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
+    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
+    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
+    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
 
 -- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
 local BABY_FURNITURE = {
-    { id = "f-23", mode = "UseBlock", label = "dirty", dwell = 20 },
-    { id = "f-32", mode = "Seat1",    label = "bored", dwell = 20 },
+    { id = "f-23", mode = "UseBlock", label = "dirty" },
+    { id = "f-32", mode = "Seat1",    label = "bored" },
 }
 
 -- ================= STATUS / LOG =================
@@ -89,6 +90,20 @@ local function callAPI(name, args, fire)
     return ok
 end
 
+local function getPosition(obj)
+    if not obj or not obj.Parent then return nil end
+    local ok, pos = pcall(function() return obj:GetPivot().Position end)
+    if ok then return pos end
+    return nil
+end
+
+local function stillOnFurniture(obj, fCframe)
+    if not fCframe then return false end
+    local pos = getPosition(obj)
+    if not pos then return false end
+    return (pos - fCframe.Position).Magnitude < DETACH_RADIUS
+end
+
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
 local FamilyMode = false
 local function createFamilyAndInvite()
@@ -112,39 +127,17 @@ local function createFamilyAndInvite()
     FamilyMode = false
 end
 
--- ================= BUTTON 2: CONCURRENT WORKER POOL =================
+-- ================= BUTTON 2: CONTINUOUS WORKER POOL =================
 local TasksMode = false
 local queue = {}
-local heldSubjects = {}     -- [workerIndex] = object currently held by that worker
+local heldSubjects = {}
 local activeWorkers = 0
-local doneCount, totalCount = 0, 0
+local passNumber, passDone, passTotal = 0, 0, 0
 
--- Invoke HoldBaby and CHECK THE RESULT. The server refuses while the pet is
--- still busy on food/drink or the hold cap (2) is full, so keep retrying
--- until it accepts, up to HOLD_TIMEOUT seconds.
-local function holdWithRetry(obj, why)
-    if not obj then return false end
-    local node = api("AdoptAPI/HoldBaby")
-    if not node then say("API missing: AdoptAPI/HoldBaby", "bad"); return false end
-
-    local waited = 0
-    while waited < HOLD_TIMEOUT do
-        if not TasksMode then return false end
-        local ok, res = pcall(node.InvokeServer, node, obj)
-        if ok and res ~= false and res ~= nil then
-            task.wait(0.5)
-            return true
-        end
-        -- refused: show why, wait and try again
-        setNow(string.format("%s: pickup refused (%d/%ds), retrying...",
-            why, waited, HOLD_TIMEOUT))
-        task.wait(1.5)
-        waited += 1.5
-    end
-    say(why .. ": pickup FAILED after " .. HOLD_TIMEOUT .. "s", "bad")
-    return false
+local function hold(obj)
+    callAPI("AdoptAPI/HoldBaby", { obj })
+    task.wait(0.5)
 end
-
 local function eject(obj)
     if obj then
         callAPI("AdoptAPI/EjectBaby", { obj }, true)
@@ -152,7 +145,6 @@ local function eject(obj)
     task.wait(EJECT_TIME)
 end
 
--- force-eject anything still held (stop button, X button, loop end)
 local function ejectAllHeld()
     for id, obj in pairs(heldSubjects) do
         if obj then
@@ -163,58 +155,72 @@ local function ejectAllHeld()
     end
 end
 
--- Worker: hold subject, run it through furniture list, ALWAYS eject at the end.
--- offset staggers which furniture this worker starts on so concurrent
--- subjects never sit on the same furniture at the same time.
+-- POSITION-VERIFIED pickup: fire HoldBaby, check the subject's actual
+-- position, retry until it has really left the furniture.
+local function pickupFromFurniture(obj, fCframe, why)
+    local waited = 0
+    while waited < UNSTICK_TIMEOUT do
+        if not TasksMode then return false end
+        if obj and not obj.Parent then return true end
+
+        callAPI("AdoptAPI/HoldBaby", { obj })
+        task.wait(1.5)
+
+        if not stillOnFurniture(obj, fCframe) then
+            return true
+        end
+        setNow(string.format("%s: still on furniture (%d/%ds), retrying pickup...",
+            why, waited, UNSTICK_TIMEOUT))
+        waited += 1.5
+    end
+    say(why .. ": could not detach after " .. UNSTICK_TIMEOUT .. "s", "bad")
+    return false
+end
+
 local function processSubject(kind, obj, fList, offset, workerIndex)
     if not obj or not obj.Parent then return end
     local name = obj.Name or "?"
-    heldSubjects[workerIndex] = obj   -- register so ejectAllHeld can free it
+    heldSubjects[workerIndex] = obj
 
     say(kind .. ": " .. name .. " (held)", "info")
-    if not holdWithRetry(obj, kind .. " " .. name .. " hold") then
-        pcall(eject, obj)
-        heldSubjects[workerIndex] = nil
-        return
-    end
+    hold(obj)
 
     local n = #fList
     for i = 1, n do
         if not TasksMode then break end
         local f = fList[((i - 1 + offset) % n) + 1]
-        setGoal(kind .. " " .. name .. " -> " .. f.label, { f.id })
+        setGoal("Pass " .. passNumber .. " | " .. kind .. " " .. name .. " -> " .. f.label, { f.id })
         if kind == "Pet" then
             callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, obj })
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
-        local seconds = f.dwell or FURNITURE_DWELL
         local t = 0
-        while t < seconds and TasksMode do
-            setNow(string.format("%s %s on %s — %.0f/%ds", kind, name, f.label, t, seconds))
+        while t < FURNITURE_DWELL and TasksMode do
+            setNow(string.format("P%d %s %s on %s — %.0f/%ds",
+                passNumber, kind, name, f.label, t, FURNITURE_DWELL))
             task.wait(1); t += 1
         end
         task.wait(BETWEEN_FURNITURE)
 
-        -- UNSTICK: pick the subject back up before moving to next furniture.
-        -- Retries automatically if the server says it's still busy.
-        if i < n then   -- no pickup needed before the final eject
-            if not holdWithRetry(obj, kind .. " " .. name .. " unstick from " .. f.label) then
-                -- couldn't pick it up: eject so the worker doesn't stall forever
-                say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
-                break
+        if kind == "Pet" and i < n and f.cframe then
+            if stillOnFurniture(obj, f.cframe) then
+                say(kind .. " " .. name .. ": waiting to detach from " .. f.label, "warn")
+                if not pickupFromFurniture(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
+                    say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
+                    break
+                end
+                say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
             end
             task.wait(0.3)
         end
     end
-    -- ALWAYS eject, even if we broke out early (stopped / error)
     eject(obj)
     say(kind .. ": " .. name .. " ejected", "ok")
     heldSubjects[workerIndex] = nil
     task.wait(BETWEEN_SUBJECTS)
 end
 
--- Worker loop: pull next subject from the shared queue
 local function workerLoop(workerIndex)
     while TasksMode do
         local item = table.remove(queue, 1)
@@ -225,23 +231,22 @@ local function workerLoop(workerIndex)
         end)
         if not ok then
             say("Worker error: " .. tostring(err), "bad")
-            -- safety net: make sure it got ejected even after an error
             pcall(eject, item.obj)
             heldSubjects[workerIndex] = nil
         end
         activeWorkers -= 1
-        doneCount += 1
-        say(string.format("Done %d/%d", doneCount, totalCount), "ok")
+        passDone += 1
+        say(string.format("Pass %d: %d/%d done", passNumber, passDone, passTotal), "ok")
     end
 end
 
-local function startAllTasks()
-    TasksMode = true
-    doneCount, totalCount = 0, 0
+-- One pass = process every baby + pet currently on the server
+local function runOnePass()
+    passNumber += 1
+    passDone, passTotal = 0, 0
     table.clear(queue)
     table.clear(heldSubjects)
 
-    -- build queue: babies first, then pets
     local babies = otherPlayers()
     for _, p in ipairs(babies) do
         if p.Character then
@@ -251,27 +256,43 @@ local function startAllTasks()
     for _, pet in ipairs(petsOnServer()) do
         table.insert(queue, { kind = "Pet", obj = pet, flist = PET_FURNITURE })
     end
-    totalCount = #queue
-    say(string.format("Queued %d subjects (%d babies, %d pets), %d workers",
-        totalCount, #babies, totalCount - #babies, MAX_CONCURRENT), "info")
+    passTotal = #queue
 
-    -- spawn workers
+    if passTotal == 0 then
+        say("Pass " .. passNumber .. ": nobody on server, waiting...", "warn")
+        return
+    end
+
+    say(string.format("Pass %d: %d subjects (%d babies, %d pets), %d workers",
+        passNumber, passTotal, #babies, passTotal - #babies, MAX_CONCURRENT), "info")
+
     for i = 1, MAX_CONCURRENT do
         task.spawn(workerLoop, i)
     end
 
-    -- wait until queue empty and all workers idle
+    -- wait for this pass to drain
     while TasksMode and (#queue > 0 or activeWorkers > 0) do
-        setNow(string.format("Active: %d | Queue: %d | Done: %d/%d",
-            activeWorkers, #queue, doneCount, totalCount))
+        setNow(string.format("Pass %d | Active: %d | Left: %d | Done: %d/%d",
+            passNumber, activeWorkers, #queue, passDone, passTotal))
         task.wait(1)
     end
+    ejectAllHeld()
+end
 
-    -- always run cleanup, whether finished normally or stopped
-    TasksMode = false
+-- NON-STOP: keep doing passes until the button is switched OFF
+local function startAllTasks()
+    TasksMode = true
+    while TasksMode do
+        runOnePass()
+        if TasksMode then
+            say("Pass " .. passNumber .. " finished, next pass in " .. PASS_COOLDOWN .. "s", "ok")
+            local t = 0
+            while t < PASS_COOLDOWN and TasksMode do task.wait(0.5); t += 0.5 end
+        end
+    end
     table.clear(queue)
     ejectAllHeld()
-    say("Task loop finished, all subjects ejected", "ok")
+    say("Task runner stopped, all subjects ejected", "ok")
 end
 
 -- ================= UI =================
@@ -330,7 +351,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.3", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.5", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -395,30 +416,30 @@ local function mainWindow()
         end)
     end)
 
-    local taskBtn = toggleButton(frame, 8, 178, width-16, "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [OFF]", THEME.task, function(b)
+    local taskBtn = toggleButton(frame, 8, 178, width-16, "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [OFF]", THEME.task, function(b)
         if TasksMode then
             TasksMode = false
             table.clear(queue)
-            b.Text = "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [OFF]"; b.BackgroundColor3 = THEME.task
+            b.Text = "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [OFF]"; b.BackgroundColor3 = THEME.task
             say("Stopping... ejecting held subjects", "warn")
-            task.spawn(ejectAllHeld)   -- frees subjects immediately
+            task.spawn(ejectAllHeld)
             return
         end
-        b.Text = "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [ON]"; b.BackgroundColor3 = THEME.ok
+        b.Text = "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [ON]"; b.BackgroundColor3 = THEME.ok
         task.spawn(startAllTasks)
         task.spawn(function()
             while TasksMode and frame.Parent do task.wait(0.5) end
-            if b.Parent then b.Text = "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [OFF]"; b.BackgroundColor3 = THEME.task end
+            if b.Parent then b.Text = "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [OFF]"; b.BackgroundColor3 = THEME.task end
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, ("Concurrent: %d subjects held at once"):format(MAX_CONCURRENT), 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Verified pickup w/ retry (no more stuck pets)", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Food/drink dwell 30s, others 20s", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Position-verified detach (no stuck pets)", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.3 — concurrent hold/place/eject", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.5 — nonstop concurrent tasks", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -432,8 +453,7 @@ env.COCOON = {
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
     EjectAllHeld = ejectAllHeld,
-    HoldWithRetry = holdWithRetry,
 }
 
 mainWindow()
-say("Loaded v3.3. Verified pickup with retry.", "ok")
+say("Loaded v3.5. Nonstop passes until button OFF.", "ok")
