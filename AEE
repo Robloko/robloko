@@ -1,10 +1,12 @@
 -- ==================================================================
--- COCOON v4.0 — Continuous concurrent Hold/Place/Eject
--- Uses Adopt Victims' proven detach flow:
---   1. Read interior.furniture[].occupied to see if pet is seated
---   2. Send PetAPI/ExitFurnitureUseStates(petUnique)
---   3. Wait for occupied[] to clear (data-verified, not position)
---   4. Then HoldBaby via AdoptAPI/HoldBaby
+-- COCOON v3.6 — Continuous concurrent Hold/Place/Eject
+-- - NON-STOP: repeats passes over all players+pets until button OFF
+-- - 2 workers (game cap: 2 held objects)
+-- - Movement-verified detach for pets (fixes stuck pets)
+-- - Larger radius + re-hold attempts + parent/weld fallback
+-- - Guaranteed eject on stop/error
+-- - ORDER: every subject starts with sleep -> bath -> bored, then rest
+-- - Players are processed before pets
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,27 +18,38 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20
+local FURNITURE_DWELL   = 20      -- seconds per furniture
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local DETACH_TIMEOUT    = 8       -- seconds to wait for occupied[] to clear (data-verified)
-local DETACH_RETRIES    = 3       -- ExitFurnitureUseStates retries
+local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
+local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture (babies)
+local PET_DETACH_RADIUS = 20      -- studs: wider tolerance for pet models
+local PET_UNSTICK_ATTEMPTS = 40   -- max re-hold attempts for pets
 local EJECT_TIME        = 0.4
-local MAX_CONCURRENT    = 2
-local PASS_COOLDOWN     = 2
+local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
+local PASS_COOLDOWN     = 2       -- seconds between full passes
 
+-- Furniture for PETS (HousingAPI/ActivateFurniture)
+-- Order: sleep -> dirty -> food -> drink -> toilet -> bored
 local PET_FURNITURE = {
+    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
     { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
     { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
-    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
 
+-- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
+-- Order: sleep -> bath -> bored -> dirty
+-- NOTE: "bath" requires a real furniture id. If your game has no baby
+-- bath furniture, delete the bath line below. Replace "f-BATH" with the
+-- actual id and correct mode.
 local BABY_FURNITURE = {
-    { id = "f-23", mode = "UseBlock", label = "dirty" },
-    { id = "f-32", mode = "Seat1",    label = "bored" },
+    { id = "f-31",   mode = "Seat1",    label = "sleep" },
+    { id = "f-BATH", mode = "UseBlock", label = "bath"  }, -- ⚠ replace with real bath id/mode
+    { id = "f-32",   mode = "Seat1",    label = "bored" },
+    { id = "f-23",   mode = "UseBlock", label = "dirty" },
 }
 
 -- ================= STATUS / LOG =================
@@ -96,191 +109,33 @@ local function getPosition(obj)
     return nil
 end
 
--- ================= NEW: INTERIOR / OCCUPIED DATA READER =================
--- Adopt Victims' AilmentTracker reads the interior furniture list from DataAPI/DataChanged
--- ("house_interior" -> interior.furniture[key].occupied[] contains the pet's StreamingId
--- while it is seated). We need the same data to verify detach.
+-- Movement-verified detach. For pets we use a much wider radius and
+-- also fall back to checking whether the model is still parented
+-- under the furniture / has an active weld to it.
+local function stillOnFurniture(obj, fCframe, radius)
+    if not fCframe then return false end
+    if not obj or not obj.Parent then return false end
+    local pos = getPosition(obj)
+    if not pos then return true end -- can't read position => assume stuck
+    return (pos - fCframe.Position).Magnitude < (radius or DETACH_RADIUS)
+end
 
-local GameConstants = {
-    DataKeys = {
-        Interior = "house_interior",
-        PetWrappers = "pet_char_wrappers_raw",
-        StateManager = "state_manager_raw",
-        Money = "money",
-    },
-    Remotes = {
-        Folder = "API",
-        DataChanged = "DataAPI/DataChanged",
-        DataPartiallyChanged = "DataAPI/DataPartiallyChanged",
-    },
-}
-
-local gameData = { _data = {} }
-
-local function startDataListener()
-    local apiFolder = ReplicatedStorage:WaitForChild(GameConstants.Remotes.Folder, 30)
-    if not apiFolder then
-        say("DataAPI folder not found; occupied-check disabled", "warn")
+-- Extra heuristic for pets: are they welded/attached to furniture?
+local function hasAttachmentToFurniture(obj)
+    if not obj then return false end
+    local ok, result = pcall(function()
+        -- Check for welds/motor6d whose Part0/Part1 is not part of the pet
+        for _, d in ipairs(obj:GetDescendants()) do
+            if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("AlignPosition") or d:IsA("AlignOrientation") then
+                local p0, p1 = d.Part0, d.Part1
+                if (p0 and not p0:IsDescendantOf(obj)) or (p1 and not p1:IsDescendantOf(obj)) then
+                    return true
+                end
+            end
+        end
         return false
-    end
-    local dataChanged = apiFolder:FindFirstChild(GameConstants.Remotes.DataChanged)
-    local partialChanged = apiFolder:FindFirstChild(GameConstants.Remotes.DataPartiallyChanged)
-    local myName = player.Name
-    if dataChanged and dataChanged:IsA("RemoteEvent") then
-        dataChanged.OnClientEvent:Connect(function(playerName, key, value)
-            if playerName == myName then gameData._data[key] = value end
-        end)
-    end
-    if partialChanged and partialChanged:IsA("RemoteEvent") then
-        partialChanged.OnClientEvent:Connect(function(playerName, changes)
-            if playerName ~= myName or type(changes) ~= "table" then return end
-            for _, change in ipairs(changes) do
-                if type(change) == "table" and type(change.replicated_key_path) == "table" then
-                    local path = change.replicated_key_path
-                    local rootKey = path[1]
-                    if #path == 1 then
-                        gameData._data[rootKey] = change.serialized_partial_value
-                    else
-                        if type(gameData._data[rootKey]) ~= "table" then gameData._data[rootKey] = {} end
-                        local node = gameData._data[rootKey]
-                        for i = 2, #path - 1 do
-                            if type(node[path[i]]) ~= "table" then node[path[i]] = {} end
-                            node = node[path[i]]
-                        end
-                        node[path[#path]] = change.serialized_partial_value
-                    end
-                end
-            end
-        end)
-    end
-    -- Snapshot from ClientData (Adopt Victims GameData:_loadSnapshot)
-    pcall(function()
-        local moduleScript = ReplicatedStorage
-        for _, name in ipairs({ "ClientModules", "Core", "ClientData" }) do
-            moduleScript = moduleScript and moduleScript:FindFirstChild(name)
-        end
-        if moduleScript then
-            local clientData = require(moduleScript)
-            if type(clientData) == "table" and type(clientData.get_data) == "function" then
-                local all = clientData.get_data()
-                local mine = type(all) == "table" and all[myName]
-                if type(mine) == "table" then
-                    for _, k in pairs(GameConstants.DataKeys) do
-                        if mine[k] ~= nil then gameData._data[k] = mine[k] end
-                    end
-                end
-            end
-        end
     end)
-    return true
-end
-
--- pet wrapper: pet_unique -> char (StreamingId), from pet_char_wrappers_raw
-local function getStreamingId(petUnique)
-    local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
-    if type(wrappers) ~= "table" then return nil end
-    for _, wrapper in pairs(wrappers) do
-        if type(wrapper) == "table" and wrapper.pet_unique == petUnique and type(wrapper.char) == "string" then
-            return wrapper.char
-        end
-    end
-    return nil
-end
-
--- is my pet still seated in ANY furniture piece in my house?
--- (Adopt Victims Tasks.petOffFurniture -> isOn())
-local function isPetOnFurniture(petUnique)
-    local interior = gameData._data[GameConstants.DataKeys.Interior]
-    if type(interior) ~= "table" or type(interior.furniture) ~= "table" then
-        return nil -- unknown
-    end
-    local pid = getStreamingId(petUnique)
-    if not pid then return nil end -- no wrapper yet: can't check
-    for _, piece in pairs(interior.furniture) do
-        if type(piece) == "table" and type(piece.occupied) == "table" then
-            for _, who in pairs(piece.occupied) do
-                if who == pid then return true end
-            end
-        end
-    end
-    return false
-end
-
--- the pet model in workspace.Pets, matched by StreamingId attribute
-local function findPetModel(petUnique)
-    local pid = getStreamingId(petUnique)
-    if not pid then return nil end
-    local folder = workspace:FindFirstChild("Pets")
-    if not folder then return nil end
-    for _, model in ipairs(folder:GetChildren()) do
-        local ok, v = pcall(function() return model:GetAttribute("StreamingId") end)
-        if ok and v == pid then return model end
-    end
-    return nil
-end
-
--- ================= NEW: DETACH VERIFIED VIA DATA =================
--- The real fix. Adopt Victims sends PetAPI/ExitFurnitureUseStates(petUnique), then waits for
--- interior.furniture[*].occupied[] to stop containing the pet. Only then does it hold the pet.
-
-local function detachPetByData(petUnique, why)
-    local seated = isPetOnFurniture(petUnique)
-    if seated == false then return true end -- already off
-    if seated == nil then
-        -- no interior data: fall back to position check (best effort)
-        local model = findPetModel(petUnique)
-        if not model then return false, "no wrapper / interior data" end
-    end
-
-    for attempt = 1, DETACH_RETRIES do
-        if not TasksMode then return false end
-
-        say(string.format("%s: sending ExitFurnitureUseStates (try %d/%d)", why, attempt, DETACH_RETRIES), "info")
-        callAPI("PetAPI/ExitFurnitureUseStates", { petUnique })
-
-        -- Data-verified wait: occupied[] must clear
-        local deadline = os.clock() + DETACH_TIMEOUT
-        local cleared = false
-        while os.clock() < deadline do
-            if not TasksMode then return false end
-            local still = isPetOnFurniture(petUnique)
-            if still == false then cleared = true; break end
-            task.wait(0.25)
-        end
-
-        if cleared then
-            say(why .. ": detached (occupied[] cleared)", "ok")
-            return true
-        end
-
-        -- Last attempt: also try position fallback
-        if attempt == DETACH_RETRIES then
-            local model = findPetModel(petUnique)
-            if model then
-                local still = isPetOnFurniture(petUnique)
-                if still == nil then
-                    -- no data to verify: use a generous position check
-                    local pos = getPosition(model)
-                    if pos then
-                        -- if it moved away from all furniture CFrames, consider it detached
-                        local nearest = math.huge
-                        for _, f in ipairs(PET_FURNITURE) do
-                            if f.cframe then
-                                local d = (pos - f.cframe.Position).Magnitude
-                                if d < nearest then nearest = d end
-                            end
-                        end
-                        if nearest > 15 then
-                            say(why .. ": detached (position fallback, nearest furniture " .. math.floor(nearest) .. " studs)", "warn")
-                            return true
-                        end
-                    end
-                end
-            end
-        end
-        task.wait(0.5)
-    end
-    return false, "occupied[] still contains the pet after " .. DETACH_RETRIES .. " ExitFurnitureUseStates"
+    return ok and result or false
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -334,41 +189,42 @@ local function ejectAllHeld()
     end
 end
 
+-- Movement-verified pickup for pets. Repeatedly fires HoldBaby and
+-- checks that the pet has actually moved off the furniture. Returns
+-- true when detached (or gone), false if it timed out.
+local function detachPet(obj, fCframe, why)
+    if not obj or not obj.Parent then return true end
+    if not fCframe then return true end
+
+    local startPos = getPosition(obj)
+    for attempt = 1, PET_UNSTICK_ATTEMPTS do
+        if not TasksMode then return false end
+        if not obj.Parent then return true end
+
+        callAPI("AdoptAPI/HoldBaby", { obj })
+        task.wait(1.5)
+
+        local pos = getPosition(obj)
+        local moved = pos and startPos and (pos - startPos).Magnitude > 2
+        local farEnough = pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS
+        local noWeld = not hasAttachmentToFurniture(obj)
+
+        if farEnough or (moved and noWeld) then
+            return true
+        end
+
+        setNow(string.format("%s: detaching (attempt %d/%d)...",
+            why, attempt, PET_UNSTICK_ATTEMPTS))
+        task.wait(0.2)
+    end
+    return false
+end
+
 local function processSubject(kind, obj, fList, offset, workerIndex)
     if not obj or not obj.Parent then return end
     local name = obj.Name or "?"
-
-    if kind == "Pet" then
-        -- Pets: use the verified detach flow (ExitFurnitureUseStates -> occupied[] clear)
-        -- BEFORE holding. Pets don't have a petUnique here (obj.Name is the model name), so we
-        -- match by the pet wrapper whose char StreamingId == the model's StreamingId.
-        local petUnique = nil
-        local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
-        if type(wrappers) == "table" then
-            local modelStream = obj:GetAttribute("StreamingId")
-            if modelStream then
-                for _, w in pairs(wrappers) do
-                    if type(w) == "table" and w.char == modelStream then
-                        petUnique = w.pet_unique; break
-                    end
-                end
-            end
-        end
-
-        if petUnique then
-            -- First: detach from ANY furniture (data-verified)
-            local okDetach, whyDetach = detachPetByData(petUnique, "Pet " .. name)
-            if not okDetach then
-                say("Pet " .. name .. ": could not detach — " .. tostring(whyDetach), "bad")
-                -- Don't proceed; leave the pet where it is (better than breaking the interior state)
-                return
-            end
-        else
-            say("Pet " .. name .. ": no pet wrapper (can't verify detach via occupied[]), falling back to position check", "warn")
-        end
-    end
-
     heldSubjects[workerIndex] = obj
+
     say(kind .. ": " .. name .. " (held)", "info")
     hold(obj)
 
@@ -390,26 +246,34 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
         task.wait(BETWEEN_FURNITURE)
 
-        -- Detach for the next furniture
         if kind == "Pet" and i < n and f.cframe then
-            -- find the petUnique again (holding may have updated wrappers)
-            local petUnique = nil
-            local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
-            if type(wrappers) == "table" then
-                local modelStream = obj:GetAttribute("StreamingId")
-                if modelStream then
-                    for _, w in pairs(wrappers) do
-                        if type(w) == "table" and w.char == modelStream then
-                            petUnique = w.pet_unique; break
-                        end
-                    end
-                end
+            -- ALWAYS attempt detach for pets after dwell. Position check
+            -- alone is unreliable for pet models, so we re-hold and verify
+            -- movement instead of trusting stillOnFurniture().
+            if detachPet(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
+                say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
+            else
+                say(kind .. " " .. name .. ": could not detach from " .. f.label, "warn")
+                break
             end
-            if petUnique then
-                if not detachPetByData(petUnique, "Pet " .. name .. " @ " .. f.label) then
-                    say("Pet " .. name .. ": could not detach from " .. f.label .. ", ejecting", "warn")
+            task.wait(0.3)
+        elseif kind == "Baby" and i < n then
+            -- Babies use the original position check; they work reliably.
+            local fC = f.cframe
+            if fC and stillOnFurniture(obj, fC, DETACH_RADIUS) then
+                say(kind .. " " .. name .. ": waiting to detach from " .. f.label, "warn")
+                local waited = 0
+                local detached = false
+                while waited < UNSTICK_TIMEOUT and TasksMode do
+                    callAPI("AdoptAPI/HoldBaby", { obj })
+                    task.wait(1.5); waited += 1.5
+                    if not stillOnFurniture(obj, fC, DETACH_RADIUS) then detached = true; break end
+                end
+                if not detached then
+                    say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
                     break
                 end
+                say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
             end
             task.wait(0.3)
         end
@@ -426,7 +290,8 @@ local function workerLoop(workerIndex)
         if not item then break end
         activeWorkers += 1
         local ok, err = pcall(function()
-            processSubject(item.kind, item.obj, item.flist, workerIndex, workerIndex)
+            -- offset 0: every subject begins at the first furniture (sleep)
+            processSubject(item.kind, item.obj, item.flist, 0, workerIndex)
         end)
         if not ok then
             say("Worker error: " .. tostring(err), "bad")
@@ -439,6 +304,8 @@ local function workerLoop(workerIndex)
     end
 end
 
+-- One pass = process every baby + pet currently on the server
+-- Players (babies) are queued BEFORE pets.
 local function runOnePass()
     passNumber += 1
     passDone, passTotal = 0, 0
@@ -468,6 +335,7 @@ local function runOnePass()
         task.spawn(workerLoop, i)
     end
 
+    -- wait for this pass to drain
     while TasksMode and (#queue > 0 or activeWorkers > 0) do
         setNow(string.format("Pass %d | Active: %d | Left: %d | Done: %d/%d",
             passNumber, activeWorkers, #queue, passDone, passTotal))
@@ -476,6 +344,7 @@ local function runOnePass()
     ejectAllHeld()
 end
 
+-- NON-STOP: keep doing passes until the button is switched OFF
 local function startAllTasks()
     TasksMode = true
     while TasksMode do
@@ -547,7 +416,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v4.0", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.6", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -562,7 +431,7 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 250, 340
+    local width, height = 250, 320
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
@@ -629,14 +498,14 @@ local function mainWindow()
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, "Uses PetAPI/ExitFurnitureUseStates + occupied[] check", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "(Adopt Victims' verified detach — no stuck pets)", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Order: sleep -> bath -> bored -> rest", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Players processed before pets", 10, THEME.dim)
     text(frame, 8, 244, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Data-verified, not position-guessed", 10, THEME.dim)
-    create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
+    text(frame, 8, 258, width-16, 14, "Movement-verified pet detach (no stuck pets)", 10, THEME.dim)
+    text(frame, 8, 272, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 288), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v4.0 — Adopt Victims detach flow", 10, THEME.dim)
-    text(frame, 8, 298, width-16, 14, "pet_char_wrappers_raw + house_interior.occupied", 10, THEME.dim)
+    text(frame, 8, 294, width-16, 14, "COCOON v3.6 — sleep-first ordering", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -650,14 +519,7 @@ env.COCOON = {
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
     EjectAllHeld = ejectAllHeld,
-    -- expose for debugging
-    IsPetOnFurniture = isPetOnFurniture,
-    DetachPet = detachPetByData,
-    GameData = gameData,
 }
 
--- start data listener before UI so occupied[] tracking is live
-startDataListener()
-
 mainWindow()
-say("Loaded v4.0. Adopt Victims detach flow (ExitFurnitureUseStates + data-verified).", "ok")
+say("Loaded v3.6. Sleep-first ordering + players before pets.", "ok")
