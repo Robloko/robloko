@@ -1,7 +1,8 @@
 -- ==================================================================
--- COCOON v3 — Concurrent Hold/Place/Eject worker pool
--- While subject A dwells 20s on furniture, workers B, C... hold &
--- place other subjects on DIFFERENT furniture in parallel.
+-- COCOON v3.1 — Concurrent Hold/Place/Eject worker pool (fixed)
+-- - 2 workers hold 2 subjects at once (game cap: 2 objects)
+-- - Guaranteed eject: subjects are ALWAYS ejected, even on stop/error
+-- - Stop button / X button force-eject everything still held
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,12 +14,12 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- seconds per furniture (unchanged, but now overlaps)
+local FURNITURE_DWELL   = 20      -- seconds per furniture (overlaps between workers)
 local BETWEEN_SUBJECTS  = 0.8     -- pause after eject before worker takes next
 local BETWEEN_FURNITURE = 0.4
 local HOLD_TIME         = 0.5
 local EJECT_TIME        = 0.4
-local MAX_CONCURRENT    = 2       -- how many subjects held/processed at once
+local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
 local MAX_TASK_PASSES   = 1
 
 -- Furniture for PETS (HousingAPI/ActivateFurniture)
@@ -112,7 +113,8 @@ end
 
 -- ================= BUTTON 2: CONCURRENT WORKER POOL =================
 local TasksMode = false
-local queue = {}            -- shared subject queue
+local queue = {}
+local heldSubjects = {}     -- [workerIndex] = object currently held by that worker
 local activeWorkers = 0
 local doneCount, totalCount = 0, 0
 
@@ -121,16 +123,31 @@ local function hold(obj)
     task.wait(HOLD_TIME)
 end
 local function eject(obj)
-    callAPI("AdoptAPI/EjectBaby", { obj }, true)
+    if obj then
+        callAPI("AdoptAPI/EjectBaby", { obj }, true)
+    end
     task.wait(EJECT_TIME)
 end
 
--- A worker holds one subject and runs it through the furniture list.
--- `offset` staggers which furniture this worker starts on so concurrent
+-- force-eject anything still held (stop button, X button, loop end)
+local function ejectAllHeld()
+    for id, obj in pairs(heldSubjects) do
+        if obj then
+            say("Force eject: " .. (obj.Name or "?"), "warn")
+            pcall(eject, obj)
+        end
+        heldSubjects[id] = nil
+    end
+end
+
+-- Worker: hold subject, run it through furniture list, ALWAYS eject at the end.
+-- offset staggers which furniture this worker starts on so concurrent
 -- subjects never sit on the same furniture at the same time.
-local function processSubject(kind, obj, fList, offset)
+local function processSubject(kind, obj, fList, offset, workerIndex)
     if not obj or not obj.Parent then return end
     local name = obj.Name or "?"
+    heldSubjects[workerIndex] = obj   -- register so ejectAllHeld can free it
+
     say(kind .. ": " .. name .. " (held)", "info")
     hold(obj)
     local n = #fList
@@ -143,7 +160,6 @@ local function processSubject(kind, obj, fList, offset)
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
-        -- dwell, but keep it interruptible
         local t = 0
         while t < FURNITURE_DWELL and TasksMode do
             setNow(string.format("%s %s on %s — %.0f/%ds", kind, name, f.label, t, FURNITURE_DWELL))
@@ -151,8 +167,10 @@ local function processSubject(kind, obj, fList, offset)
         end
         task.wait(BETWEEN_FURNITURE)
     end
+    -- ALWAYS eject, even if we broke out early (stopped / error)
     eject(obj)
     say(kind .. ": " .. name .. " ejected", "ok")
+    heldSubjects[workerIndex] = nil
     task.wait(BETWEEN_SUBJECTS)
 end
 
@@ -163,9 +181,14 @@ local function workerLoop(workerIndex)
         if not item then break end
         activeWorkers += 1
         local ok, err = pcall(function()
-            processSubject(item.kind, item.obj, item.flist, workerIndex)
+            processSubject(item.kind, item.obj, item.flist, workerIndex, workerIndex)
         end)
-        if not ok then say("Worker error: " .. tostring(err), "bad") end
+        if not ok then
+            say("Worker error: " .. tostring(err), "bad")
+            -- safety net: make sure it got ejected even after an error
+            pcall(eject, item.obj)
+            heldSubjects[workerIndex] = nil
+        end
         activeWorkers -= 1
         doneCount += 1
         say(string.format("Done %d/%d", doneCount, totalCount), "ok")
@@ -176,6 +199,7 @@ local function startAllTasks()
     TasksMode = true
     doneCount, totalCount = 0, 0
     table.clear(queue)
+    table.clear(heldSubjects)
 
     -- build queue: babies first, then pets
     local babies = otherPlayers()
@@ -192,9 +216,8 @@ local function startAllTasks()
         totalCount, #babies, totalCount - #babies, MAX_CONCURRENT), "info")
 
     -- spawn workers
-    local workers = {}
     for i = 1, MAX_CONCURRENT do
-        workers[i] = task.spawn(workerLoop, i)
+        task.spawn(workerLoop, i)
     end
 
     -- wait until queue empty and all workers idle
@@ -204,8 +227,11 @@ local function startAllTasks()
         task.wait(1)
     end
 
-    if TasksMode then say("Task loop finished", "ok") end
+    -- always run cleanup, whether finished normally or stopped
     TasksMode = false
+    table.clear(queue)
+    ejectAllHeld()
+    say("Task loop finished, all subjects ejected", "ok")
 end
 
 -- ================= UI =================
@@ -264,11 +290,13 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.1", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
         FamilyMode, TasksMode = false, false
+        table.clear(queue)
+        ejectAllHeld()
         uiLog = nil; ui.now = nil; f:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
@@ -329,9 +357,12 @@ local function mainWindow()
 
     local taskBtn = toggleButton(frame, 8, 178, width-16, "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [OFF]", THEME.task, function(b)
         if TasksMode then
-            TasksMode = false; table.clear(queue)
+            TasksMode = false
+            table.clear(queue)
             b.Text = "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [OFF]"; b.BackgroundColor3 = THEME.task
-            say("Task runner stopped", "warn"); return
+            say("Stopping... ejecting held subjects", "warn")
+            task.spawn(ejectAllHeld)   -- frees subjects immediately
+            return
         end
         b.Text = "RUN ALL TASKS — CONCURRENT x" .. MAX_CONCURRENT .. " [ON]"; b.BackgroundColor3 = THEME.ok
         task.spawn(startAllTasks)
@@ -342,24 +373,26 @@ local function mainWindow()
     end)
 
     text(frame, 8, 216, width-16, 14, ("Concurrent: %d subjects held at once"):format(MAX_CONCURRENT), 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Workers stagger furniture (no clashes)", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     text(frame, 8, 244, width-16, 14, "Pets: 6 furniture | Babies: 2 furniture", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Targets: every other player + pet on server", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3 — concurrent hold/place/eject", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.1 — concurrent hold/place/eject", 10, THEME.dim)
 end
 
 env.COCOON = {
     Stop = function()
         FamilyMode, TasksMode = false, false
         table.clear(queue)
+        ejectAllHeld()
     end,
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
+    EjectAllHeld = ejectAllHeld,
 }
 
 mainWindow()
-say("Loaded. Concurrent worker pool active.", "ok")
+say("Loaded v3.1. Concurrent pool x2, guaranteed eject.", "ok")
