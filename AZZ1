@@ -1,6 +1,6 @@
 -- ==================================================================
--- COCOON v3.1 — Stats + Family + Parallel Baby/Pet farm
--- Skips missing subjects; re-validates before each hold; no deadlock
+-- COCOON v3.2 — Continuous parallel farm
+-- Workers never drop a subject: they re-scan and retry every cycle.
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,10 +15,9 @@ local INVITE_DELAY       = 1.0
 local FURNITURE_DWELL    = 20
 local BETWEEN_PIECES     = 0.8
 local BETWEEN_SUBJECTS   = 1.2
-local MAX_TASK_PASSES    = 1
-local HOLD_TIMEOUT       = 8      -- max seconds to wait for a hold to "take"
+local RETRY_GAP          = 3       -- seconds before re-attempting a skipped subject
+local IDLE_GAP           = 4       -- seconds between rescans when nothing left
 
--- Furniture for PETS
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
@@ -27,7 +26,6 @@ local PET_FURNITURE = {
     { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
--- Furniture for BABIES
 local BABY_FURNITURE = {
     { id = "f-23", mode = "UseBlock", label = "dirty" },
     { id = "f-32", mode = "Seat1",    label = "bored" },
@@ -67,28 +65,28 @@ local function petsOnServer()
     local f = workspace:FindFirstChild("Pets"); if not f then return {} end; return f:GetChildren()
 end
 
--- ================= VALIDATION =================
+-- ================= VALIDATION (loosened) =================
 local function validPet(pet)
     if not pet or not pet.Parent then return false end
     local folder = workspace:FindFirstChild("Pets")
-    if not folder then return false end
-    return pet:IsDescendantOf(folder)
+    return folder and pet:IsDescendantOf(folder) or false
 end
 local function validBaby(char)
+    -- Accept a character that exists and belongs to a current player.
+    -- Don't require Humanoid yet: it may stream in shortly; retries handle it.
     if not char or not char.Parent then return false end
-    if not char:FindFirstChild("Humanoid") then return false end
-    -- character must belong to a player still in game
-    local ok = false
     for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character == char then ok = true; break end
+        if p.Character == char then return true end
     end
-    return ok
+    return false
 end
--- refresh subject lists each cycle so leaving/joining players are picked up
 local function liveBabies()
     local list = {}
     for _, p in ipairs(otherPlayers()) do
-        if p.Character and validBaby(p.Character) then table.insert(list, p.Character) end
+        local char = p.Character
+        if char and char.Parent and validBaby(char) then
+            table.insert(list, char)
+        end
     end
     return list
 end
@@ -113,23 +111,14 @@ local function acquireCarry()
 end
 local function releaseCarry() carrying = false end
 
--- Hold with timeout: if server doesn't hold within HOLD_TIMEOUT, bail
-local function holdWithTimeout(subject, label)
-    if not acquireCarry() then return false end
-    setNow("Hold " .. label)
-    local ok = callAPI("AdoptAPI/HoldBaby", { subject })
-    if not ok then releaseCarry(); return false end
-    task.wait(1)
-    return true
-end
-
+-- ================= PIECE RUNNERS =================
 local function runPetPiece(pet, furn)
-    if not validPet(pet) then say("Pet gone, skipping: "..(pet and pet.Name or "?"), "warn"); return false end
-    if not holdWithTimeout(pet, "PET "..pet.Name) then return false end
-    -- re-check after hold: pet may have been removed
-    if not validPet(pet) then
-        say("Pet removed mid-task: "..pet.Name, "warn"); releaseCarry(); return false
-    end
+    if not validPet(pet) then return false end
+    if not acquireCarry() then return false end
+    setNow("Hold PET "..pet.Name)
+    if not callAPI("AdoptAPI/HoldBaby", { pet }) then releaseCarry(); return false end
+    task.wait(1)
+    if not validPet(pet) then releaseCarry(); return false end
     callAPI("HousingAPI/ActivateFurniture",
         { player, furn.id, furn.mode, { cframe = furn.cframe }, pet })
     local t = 0
@@ -139,15 +128,16 @@ local function runPetPiece(pet, furn)
     end
     if validPet(pet) then callAPI("AdoptAPI/EjectBaby", { pet }, true) end
     task.wait(0.8); releaseCarry()
-    return TasksMode
+    return true
 end
 
 local function runBabyPiece(char, furn)
-    if not validBaby(char) then say("Baby gone, skipping", "warn"); return false end
-    if not holdWithTimeout(char, "BABY "..char.Name) then return false end
-    if not validBaby(char) then
-        say("Baby removed mid-task: "..char.Name, "warn"); releaseCarry(); return false
-    end
+    if not validBaby(char) then return false end
+    if not acquireCarry() then return false end
+    setNow("Hold BABY "..char.Name)
+    if not callAPI("AdoptAPI/HoldBaby", { char }) then releaseCarry(); return false end
+    task.wait(1)
+    if not validBaby(char) then releaseCarry(); return false end
     callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, furn.id, furn.mode }, true)
     local t = 0
     while t < FURNITURE_DWELL and TasksMode and validBaby(char) do
@@ -156,7 +146,7 @@ local function runBabyPiece(char, furn)
     end
     if validBaby(char) then callAPI("AdoptAPI/EjectBaby", { char }, true) end
     task.wait(0.8); releaseCarry()
-    return TasksMode
+    return true
 end
 
 -- ================= FAMILY BUTTON =================
@@ -184,70 +174,88 @@ local function createFamilyAndInvite()
     FamilyMode = false
 end
 
--- ================= PARALLEL WORKERS =================
+-- ================= CONTINUOUS WORKERS =================
 local TasksMode = false
 
+-- Track subjects we've fully processed to avoid re-looping the same one
+-- non-stop. Once everyone in the live list has been done, we clear the set
+-- and start a new round. Skipped subjects are retried next round.
+local doneBabies, donePets = {}, {}
+
 local function babyWorker()
-    local babies = liveBabies()
-    say("Baby worker: ".. #babies .." player(s)", "info")
-    for _, char in ipairs(babies) do
-        if not TasksMode then return end
-        if validBaby(char) then
+    while TasksMode do
+        local babies = liveBabies()
+        local pending = {}
+        for _, char in ipairs(babies) do
+            if not doneBabies[char] then table.insert(pending, char) end
+        end
+        if #pending == 0 then
+            -- finished a full round of everyone currently here; start over
+            doneBabies = {}
+            say("Baby worker: new round (".. #babies .." player(s))", "info")
+            if #babies == 0 then task.wait(IDLE_GAP); continue end
+        else
+            local char = pending[1]
+            say("Baby -> ".. char.Name, "info")
             for _, f in ipairs(BABY_FURNITURE) do
                 if not TasksMode then return end
-                if not runBabyPiece(char, f) then break end
+                local ok = runBabyPiece(char, f)
+                if not ok then break end
                 task.wait(BETWEEN_PIECES)
             end
-        else
-            say("Baby vanished, skipping", "warn")
+            -- only mark done if the subject still exists at the end
+            if validBaby(char) then
+                doneBabies[char] = true
+            else
+                say("Baby vanished, will retry next round: "..tostring(char.Name), "warn")
+            end
+            task.wait(BETWEEN_SUBJECTS)
         end
-        task.wait(BETWEEN_SUBJECTS)
     end
 end
 
 local function petWorker()
-    local pets = petsOnServer()
-    say("Pet worker: ".. #pets .." pet(s)", "info")
-    for _, pet in ipairs(pets) do
-        if not TasksMode then return end
-        if validPet(pet) then
+    while TasksMode do
+        local pets = petsOnServer()
+        local pending = {}
+        for _, pet in ipairs(pets) do
+            if not donePets[pet] then table.insert(pending, pet) end
+        end
+        if #pending == 0 then
+            donePets = {}
+            say("Pet worker: new round (".. #pets .." pet(s))", "info")
+            if #pets == 0 then task.wait(IDLE_GAP); continue end
+        else
+            local pet = pending[1]
+            say("Pet -> ".. pet.Name, "info")
             for _, f in ipairs(PET_FURNITURE) do
                 if not TasksMode then return end
-                if not runPetPiece(pet, f) then break end
+                local ok = runPetPiece(pet, f)
+                if not ok then break end
                 task.wait(BETWEEN_PIECES)
             end
-        else
-            say("Pet vanished, skipping", "warn")
+            if validPet(pet) then
+                donePets[pet] = true
+            else
+                say("Pet vanished, will retry next round: "..tostring(pet.Name), "warn")
+            end
+            task.wait(BETWEEN_SUBJECTS)
         end
-        task.wait(BETWEEN_SUBJECTS)
     end
 end
 
 local function startAllTasks()
     TasksMode = true
-    for pass = 1, MAX_TASK_PASSES do
-        if not TasksMode then break end
-        setGoal("Parallel pass "..pass.."/"..MAX_TASK_PASSES)
-        local doneBaby, donePet = false, false
-        task.spawn(function()
-            local ok, err = pcall(babyWorker)
-            if not ok then say("Baby worker error: "..tostring(err), "bad") end
-            doneBaby = true
-        end)
-        task.spawn(function()
-            local ok, err = pcall(petWorker)
-            if not ok then say("Pet worker error: "..tostring(err), "bad") end
-            donePet = true
-        end)
-        while TasksMode and not (doneBaby and donePet) do
-            setNow("Interleaving baby + pet furniture tasks...")
-            task.wait(0.5)
-        end
-        if pass < MAX_TASK_PASSES then task.wait(3) end
-    end
-    say("Parallel task loop finished", "ok")
-    TasksMode = false
-    carrying = false
+    doneBabies, donePets = {}, {}
+    say("Parallel farm running (continuous).", "ok")
+    task.spawn(function()
+        local ok, err = pcall(babyWorker)
+        if not ok then say("Baby worker error: "..tostring(err), "bad") end
+    end)
+    task.spawn(function()
+        local ok, err = pcall(petWorker)
+        if not ok then say("Pet worker error: "..tostring(err), "bad") end
+    end)
 end
 
 -- ================= UI =================
@@ -304,7 +312,7 @@ local function window(w,h)
         BackgroundColor3=THEME.bg,BorderSizePixel=0},ui.screen)
     corner(f,8); create("UIStroke",{Color=THEME.line,Thickness=1},f)
     local hd=create("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1},f); makeDraggable(hd,f)
-    text(hd,10,0,w-40,26,"COCOON v3.1",13,THEME.text,true)
+    text(hd,10,0,w-40,26,"COCOON v3.2",13,THEME.text,true)
     local cl=create("TextButton",{Position=UDim2.fromOffset(w-26,1),Size=UDim2.fromOffset(22,22),
         BackgroundTransparency=1,Text="×",TextColor3=THEME.dim,Font=Enum.Font.GothamMedium,TextSize=16},hd)
     cl.MouseButton1Click:Connect(function()
@@ -379,14 +387,14 @@ local function mainWindow()
         end)
     end)
 
-    text(frame,8,216,width-16,14,"Skips vanished players/pets automatically",10,THEME.dim)
-    text(frame,8,230,width-16,14,"Carry token: one hold at a time, 20s each",10,THEME.dim)
+    text(frame,8,216,width-16,14,"Continuous farm: retries skipped subjects",10,THEME.dim)
+    text(frame,8,230,width-16,14,"Full round of everyone → new round starts",10,THEME.dim)
     text(frame,8,244,width-16,14,"Pet: f-5, f-24, f-9, f-28, f-31, f-32",10,THEME.dim)
     text(frame,8,258,width-16,14,"Baby: f-23 dirty, f-32 bored",10,THEME.dim)
-    text(frame,8,272,width-16,14,"Refreshes lists each pass",10,THEME.dim)
+    text(frame,8,272,width-16,14,"Re-scans server every round",10,THEME.dim)
     create("Frame",{Position=UDim2.fromOffset(8,290),Size=UDim2.new(1,-16,0,1),
         BackgroundColor3=THEME.line,BorderSizePixel=0},frame)
-    text(frame,8,296,width-16,14,"COCOON v3.1 — resilient parallel farm",10,THEME.dim)
+    text(frame,8,296,width-16,14,"COCOON v3.2 — always-on parallel farm",10,THEME.dim)
 end
 
 env.COCOON = {
@@ -399,4 +407,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded. Vanished subjects are skipped automatically.", "ok")
+say("Loaded. Continuous parallel farm active.", "ok")
