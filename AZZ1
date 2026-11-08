@@ -1,0 +1,354 @@
+-- ==================================================================
+-- COCOON v3 — Stats + Family + Parallel Baby/Pet Hold/Place/Eject farm
+-- One carry token: only one subject is held at a time; the other
+-- worker immediately takes the token for its own 20s furniture piece.
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+
+local env = getgenv and getgenv() or {}
+if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
+
+-- ================= CONFIG =================
+local INVITE_DELAY       = 1.0
+local FURNITURE_DWELL    = 20
+local BETWEEN_PIECES     = 0.8
+local BETWEEN_SUBJECTS   = 1.2
+local MAX_TASK_PASSES    = 1
+
+-- Furniture for PETS (HousingAPI/ActivateFurniture)
+local PET_FURNITURE = {
+    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
+    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
+    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
+    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
+    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
+    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
+}
+-- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
+local BABY_FURNITURE = {
+    { id = "f-23", mode = "UseBlock", label = "dirty" },
+    { id = "f-32", mode = "Seat1",    label = "bored" },
+}
+
+-- ================= STATUS / LOG =================
+local ui = {}
+local uiLog = nil
+local status = { now = "Ready", goal = "Pick an action", queue = {} }
+
+local function renderStatus()
+    if ui.now then
+        pcall(function()
+            ui.now.Text = status.now
+            ui.goal.Text = status.goal
+            ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
+        end)
+    end
+end
+local function setGoal(t, q) status.goal = t or ""; status.queue = q or {}; renderStatus() end
+local function setNow(t) status.now = t or ""; renderStatus() end
+local function say(text, tone)
+    setNow(text); if uiLog then pcall(uiLog, tone or "info", text) end
+    print("[COCOON] " .. tostring(text))
+end
+
+-- ================= COUNTERS =================
+local function countPlayers() local n=0; for _ in Players:GetPlayers() do n+=1 end; return n end
+local function countPets()
+    local f = workspace:FindFirstChild("Pets"); if not f then return 0 end
+    local n=0; for _ in f:GetChildren() do n+=1 end; return n
+end
+local function otherPlayers()
+    local l = {}; for _,p in ipairs(Players:GetPlayers()) do if p~=player then table.insert(l,p) end end; return l
+end
+local function petsOnServer()
+    local f = workspace:FindFirstChild("Pets"); if not f then return {} end; return f:GetChildren()
+end
+
+-- ================= API HELPERS =================
+local function api(name) return ReplicatedStorage:WaitForChild("API"):FindFirstChild(name) end
+local function callAPI(name, args, fire)
+    local node = api(name); if not node then say("API missing: "..name,"bad"); return false end
+    local ok, err = pcall(function()
+        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
+    end)
+    if not ok then say("Call failed "..name..": "..tostring(err),"bad") end
+    return ok
+end
+
+-- ================= CARRY TOKEN =================
+-- The game only allows holding ONE object at a time. This lock makes
+-- the two workers take turns holding so their 20s dwells interleave
+-- but never collide.
+local carrying = false
+local function acquireCarry() while TasksMode and carrying do task.wait(0.15) end; if not TasksMode then return false end; carrying = true; return true end
+local function releaseCarry() carrying = false end
+
+local function holdAndPlacePet(pet, furn)
+    if not acquireCarry() then return false end
+    setNow(string.format("PET %s → %s", pet.Name, furn.label))
+    callAPI("AdoptAPI/HoldBaby", { pet })
+    task.wait(1)
+    callAPI("HousingAPI/ActivateFurniture",
+        { player, furn.id, furn.mode, { cframe = furn.cframe }, pet })
+    local t = 0
+    while t < FURNITURE_DWELL and TasksMode do
+        setNow(string.format("PET %s on %s — %d/%ds", pet.Name, furn.label, t, FURNITURE_DWELL))
+        task.wait(1); t += 1
+    end
+    callAPI("AdoptAPI/EjectBaby", { pet }, true)
+    task.wait(0.8)
+    releaseCarry()
+    return TasksMode
+end
+
+local function holdAndPlaceBaby(char, furn)
+    if not acquireCarry() then return false end
+    setNow(string.format("BABY %s → %s", char.Name, furn.label))
+    callAPI("AdoptAPI/HoldBaby", { char })
+    task.wait(1)
+    callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, furn.id, furn.mode }, true)
+    local t = 0
+    while t < FURNITURE_DWELL and TasksMode do
+        setNow(string.format("BABY %s on %s — %d/%ds", char.Name, furn.label, t, FURNITURE_DWELL))
+        task.wait(1); t += 1
+    end
+    callAPI("AdoptAPI/EjectBaby", { char }, true)
+    task.wait(0.8)
+    releaseCarry()
+    return TasksMode
+end
+
+-- ================= FAMILY BUTTON =================
+local FamilyMode = false
+local function createFamilyAndInvite()
+    FamilyMode = true
+    say("Creating family...", "info")
+    if not callAPI("FamilyAPI/CreateFamily", {}) then
+        say("Family creation failed (already in family?)", "bad"); FamilyMode = false; return
+    end
+    say("Family created. Inviting everyone...", "ok")
+    task.wait(1)
+    local targets = otherPlayers()
+    setGoal("Inviting ".. #targets .." player(s)")
+    for _, p in ipairs(targets) do
+        if not FamilyMode then break end
+        setGoal("Inviting ".. #targets, { p.Name })
+        callAPI("FamilyAPI/InvitePlayer", { p })
+        say("Family invite -> "..p.Name, "ok")
+        task.wait(INVITE_DELAY)
+    end
+    say("Family invite pass finished", "ok")
+    FamilyMode = false
+end
+
+-- ================= PARALLEL WORKERS =================
+local TasksMode = false
+
+local function babyWorker()
+    local babies = otherPlayers()
+    say("Baby worker: ".. #babies .." player(s)", "info")
+    for _, p in ipairs(babies) do
+        if not TasksMode then return end
+        local char = p.Character
+        if char and char.Parent then
+            for _, f in ipairs(BABY_FURNITURE) do
+                if not TasksMode then return end
+                holdAndPlaceBaby(char, f)
+                task.wait(BETWEEN_PIECES)
+            end
+        else
+            say("No character for "..p.Name, "warn")
+        end
+        task.wait(BETWEEN_SUBJECTS)
+    end
+end
+
+local function petWorker()
+    local pets = petsOnServer()
+    say("Pet worker: ".. #pets .." pet(s)", "info")
+    for _, pet in ipairs(pets) do
+        if not TasksMode then return end
+        if pet and pet.Parent then
+            for _, f in ipairs(PET_FURNITURE) do
+                if not TasksMode then return end
+                holdAndPlacePet(pet, f)
+                task.wait(BETWEEN_PIECES)
+            end
+        end
+        task.wait(BETWEEN_SUBJECTS)
+    end
+end
+
+local function startAllTasks()
+    TasksMode = true
+    for pass = 1, MAX_TASK_PASSES do
+        if not TasksMode then break end
+        setGoal("Parallel pass "..pass.."/"..MAX_TASK_PASSES)
+        -- Both workers run in their own threads; the carry token serializes holds.
+        local doneBaby, donePet = false, false
+        task.spawn(function() babyWorker(); doneBaby = true end)
+        task.spawn(function() petWorker();  donePet  = true end)
+        while TasksMode and not (doneBaby and donePet) do
+            setNow("Interleaving baby + pet furniture tasks...")
+            task.wait(0.5)
+        end
+        if pass < MAX_TASK_PASSES then task.wait(3) end
+    end
+    say("Parallel task loop finished", "ok")
+    TasksMode = false
+    carrying = false
+end
+
+-- ================= UI =================
+GC = GC or {}; GC.LogFolder = "COCOON"
+local THEME = {
+    bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
+    text = Color3.fromRGB(230,230,235), dim = Color3.fromRGB(130,130,145), accent = Color3.fromRGB(150,120,255),
+    ok = Color3.fromRGB(90,200,120), bad = Color3.fromRGB(230,90,90),
+    fam = Color3.fromRGB(80,180,120), task = Color3.fromRGB(200,130,60),
+}
+local function guiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then return hui end
+    local ok2, core = pcall(function() return game:GetService("CoreGui") end)
+    if ok2 and core then return core end
+    return player:WaitForChild("PlayerGui")
+end
+local function create(cls, props, parent)
+    local o = Instance.new(cls); for k,v in pairs(props) do o[k]=v end; o.Parent=parent; return o
+end
+local function corner(p,r) create("UICorner",{CornerRadius=UDim.new(0,r or 6)},p) end
+local function makeDraggable(h,t)
+    local d,si,sp
+    h.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+            d,si,sp=true,i.Position,t.Position
+            i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then d=false end end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if d and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+            local dl=i.Position-si
+            t.Position=UDim2.new(sp.X.Scale,sp.X.Offset+dl.X,sp.Y.Scale,sp.Y.Offset+dl.Y)
+        end
+    end)
+end
+local function text(p,x,y,w,h,v,s,c,b)
+    return create("TextLabel",{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+        BackgroundTransparency=1,Text=v or "",TextColor3=c or THEME.text,TextSize=s or 12,
+        Font=b and Enum.Font.GothamMedium or Enum.Font.Gotham,TextXAlignment=Enum.TextXAlignment.Left,
+        TextTruncate=Enum.TextTruncate.AtEnd},p)
+end
+local function toggleButton(p,x,y,w,label,color,onClick)
+    local b=create("TextButton",{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,30),
+        BackgroundColor3=color,BorderSizePixel=0,Text=label,TextColor3=THEME.text,
+        Font=Enum.Font.GothamMedium,TextSize=12,AutoButtonColor=true},p)
+    corner(b,4); create("UIStroke",{Color=THEME.line,Thickness=1},b)
+    b.MouseButton1Click:Connect(function() pcall(onClick,b) end); return b
+end
+local function window(w,h)
+    if ui.screen and ui.screen.Parent then ui.screen:Destroy() end
+    ui.screen=create("ScreenGui",{Name="COCOON",ResetOnSpawn=false,DisplayOrder=999},guiParent())
+    local f=create("Frame",{Size=UDim2.fromOffset(w,h),Position=UDim2.new(0,16,0.5,-h/2),
+        BackgroundColor3=THEME.bg,BorderSizePixel=0},ui.screen)
+    corner(f,8); create("UIStroke",{Color=THEME.line,Thickness=1},f)
+    local hd=create("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1},f); makeDraggable(hd,f)
+    text(hd,10,0,w-40,26,"COCOON v3",13,THEME.text,true)
+    local cl=create("TextButton",{Position=UDim2.fromOffset(w-26,1),Size=UDim2.fromOffset(22,22),
+        BackgroundTransparency=1,Text="×",TextColor3=THEME.dim,Font=Enum.Font.GothamMedium,TextSize=16},hd)
+    cl.MouseButton1Click:Connect(function()
+        FamilyMode,TasksMode=false,false; carrying=false
+        uiLog=nil; ui.now=nil; f:Destroy()
+    end)
+    create("Frame",{Position=UDim2.fromOffset(0,26),Size=UDim2.new(1,0,0,1),
+        BackgroundColor3=THEME.line,BorderSizePixel=0},f)
+    return f
+end
+
+local function mainWindow()
+    local width, height = 250, 330
+    local frame = window(width, height)
+
+    local statsBg=create("Frame",{Position=UDim2.fromOffset(8,29),Size=UDim2.fromOffset(width-16,22),
+        BackgroundColor3=THEME.field,BorderSizePixel=0},frame); corner(statsBg,4)
+    local playersLabel=text(statsBg,6,3,(width-26)/2,16,"👥 Players: 0",12,THEME.accent,true)
+    local petsLabel=text(statsBg,(width-16)/2+3,3,(width-26)/2,16,"🐾 Pets: 0",12,THEME.ok,true)
+    task.spawn(function()
+        while frame.Parent do
+            pcall(function()
+                playersLabel.Text="👥 Players: "..countPlayers()
+                petsLabel.Text="🐾 Pets: "..countPets()
+            end)
+            task.wait(1.5)
+        end
+    end)
+
+    text(frame,8,57,26,13,"Now",10,THEME.accent,true)
+    ui.now=text(frame,34,57,width-42,13,status.now,11,THEME.text,true)
+    ui.goal=text(frame,8,72,width-16,12,status.goal,10,THEME.dim)
+    local logBox=create("TextLabel",{Position=UDim2.fromOffset(8,86),Size=UDim2.fromOffset(width-16,40),
+        BackgroundTransparency=1,Text="",RichText=true,TextColor3=THEME.dim,
+        Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
+        TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=false,ClipsDescendants=true},frame)
+    renderStatus()
+    local shown={}
+    local TONES={ok="#5ac878",bad="#e65a5a",warn="#d6a046",info="#9a9aae"}
+    uiLog=function(tone,msg)
+        local safe=string.gsub(string.gsub(string.gsub(tostring(msg),"&","&amp;"),"<","&lt;"),">","&gt;")
+        table.insert(shown,'<font color="'..(TONES[tone] or TONES.info)..'">'..safe..'</font>')
+        while #shown>3 do table.remove(shown,1) end
+        logBox.Text=table.concat(shown,"\n")
+    end
+    create("Frame",{Position=UDim2.fromOffset(8,129),Size=UDim2.new(1,-16,0,1),
+        BackgroundColor3=THEME.line,BorderSizePixel=0},frame)
+
+    local famBtn=toggleButton(frame,8,140,width-16,"CREATE FAMILY + INVITE ALL [OFF]",THEME.fam,function(b)
+        if FamilyMode then
+            FamilyMode=false; b.Text="CREATE FAMILY + INVITE ALL [OFF]"; b.BackgroundColor3=THEME.fam
+            say("Family builder stopped","warn"); return
+        end
+        b.Text="CREATE FAMILY + INVITE ALL [ON]"; b.BackgroundColor3=THEME.ok
+        task.spawn(createFamilyAndInvite)
+        task.spawn(function()
+            while FamilyMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then b.Text="CREATE FAMILY + INVITE ALL [OFF]"; b.BackgroundColor3=THEME.fam end
+        end)
+    end)
+
+    local taskBtn=toggleButton(frame,8,178,width-16,"DO ALL TASKS (PARALLEL) [OFF]",THEME.task,function(b)
+        if TasksMode then
+            TasksMode=false; b.Text="DO ALL TASKS (PARALLEL) [OFF]"; b.BackgroundColor3=THEME.task
+            say("Task runner stopped","warn"); return
+        end
+        b.Text="DO ALL TASKS (PARALLEL) [ON]"; b.BackgroundColor3=THEME.ok
+        task.spawn(startAllTasks)
+        task.spawn(function()
+            while TasksMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then b.Text="DO ALL TASKS (PARALLEL) [OFF]"; b.BackgroundColor3=THEME.task end
+        end)
+    end)
+
+    text(frame,8,216,width-16,14,"Parallel: baby on one furniture, pet on another",10,THEME.dim)
+    text(frame,8,230,width-16,14,"Carry token: one hold at a time, 20s each",10,THEME.dim)
+    text(frame,8,244,width-16,14,"Pet: f-5, f-24, f-9, f-28, f-31, f-32",10,THEME.dim)
+    text(frame,8,258,width-16,14,"Baby: f-23 dirty, f-32 bored",10,THEME.dim)
+    text(frame,8,272,width-16,14,"Targets: every other player + pet",10,THEME.dim)
+    create("Frame",{Position=UDim2.fromOffset(8,290),Size=UDim2.new(1,-16,0,1),
+        BackgroundColor3=THEME.line,BorderSizePixel=0},frame)
+    text(frame,8,296,width-16,14,"COCOON v3 — parallel hold/place/eject farm",10,THEME.dim)
+end
+
+env.COCOON = {
+    Stop = function() FamilyMode,TasksMode=false,false; carrying=false end,
+    CountPlayers = countPlayers,
+    CountPets = countPets,
+    CreateFamilyAndInvite = createFamilyAndInvite,
+    StartAllTasks = startAllTasks,
+    GetCarryState = function() return carrying end,
+}
+
+mainWindow()
+say("Loaded. Parallel baby/pet farm ready.", "ok")
