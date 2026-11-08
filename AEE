@@ -1,11 +1,13 @@
 -- ==================================================================
--- COCOON v3.9 — Continuous concurrent Hold/Place/Eject
+-- COCOON v3.9 — Continuous concurrent Hold/Place/Eject + direct feed
 -- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
--- - Explicit HoldBaby after every pet furniture use
+-- - Explicit HoldBaby after every pet furniture use (SimpleSpy-style)
 -- - Explicit EjectBaby on stop/finish
--- - NEW: Pets FED by EQUIPPING food then using feed interaction
---        (food/drink furniture removed)
+-- - Movement-verified detach still used as a safety check
+-- - NEW: Feed/drink = ensure inventory (buy fallback) -> equip tool
+--        -> PetObjectAPI/CreatePetObject (PetObjectCreatorType_2)
+--        NO MORE routing pets to f-24 / f-9 furniture.
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,6 +20,7 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
 local FURNITURE_DWELL   = 20
+local FEED_DWELL        = 3          -- short wait after feed before continuing
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
 local UNSTICK_TIMEOUT   = 60
@@ -27,9 +30,15 @@ local PET_UNSTICK_ATTEMPTS = 40
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2
 local PASS_COOLDOWN     = 2
-local FEED_SETTLE       = 1.0   -- wait after equip before feeding
 
--- Food/drink furniture (f-24, f-9) removed — pets fed via equip+feed
+-- Fallback item names if inventory is empty (SimpleSpy-confirmed)
+local FALLBACK_FOOD  = { "healing_apple", "schospital_refresh_2023_cafeteria_sandwich" }
+local FALLBACK_DRINK = { "healing_apple" } -- replace with real drink name if known
+
+-- PetObjectCreatorType_2 == "consume" creator (confirmed from SimpleSpy dump)
+local PET_OBJECT_CONSUME = "__Enum_PetObjectCreatorType_2"
+
+-- f-24 / f-9 are REMOVED — pets are fed/drunk directly via CreatePetObject
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
@@ -40,12 +49,6 @@ local PET_FURNITURE = {
 local BABY_FURNITURE = {
     { id = "f-23", mode = "UseBlock", label = "dirty" },
     { id = "f-32", mode = "Seat1",    label = "bored" },
-}
-
--- Fallback food items (SimpleSpy-confirmed buyable)
-local FALLBACK_FOODS = {
-    "healing_apple",
-    "schospital_refresh_2023_cafeteria_sandwich",
 }
 
 -- ================= STATUS / LOG =================
@@ -129,185 +132,129 @@ local function hasAttachmentToFurniture(obj)
     return ok and result or false
 end
 
--- ================= FOOD / EQUIP / FEED HELPERS =================
-
--- Find a remote by trying candidate names; returns first that exists
-local function findAnyAPI(candidates)
-    for _, name in ipairs(candidates) do
-        local node = api(name)
-        if node then return node, name end
-    end
-    return nil, nil
-end
-
--- Read food inventory via ClientData
-local function getFoodInventory()
-    local foods = {}
-    local ok = pcall(function()
+-- ================= INVENTORY / FEED HELPERS =================
+local function getInventory(category)
+    local items = {}
+    local ok, err = pcall(function()
         local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
         local playerData = clientData.get_data()[player.Name]
-        if playerData and playerData.inventory and playerData.inventory.food then
-            for foodId, foodData in pairs(playerData.inventory.food) do
-                if foodData.id then
-                    table.insert(foods, {
-                        id = foodId,
-                        name = foodData.id,
-                        amount = foodData.amount or 1,
+        if playerData and playerData.inventory and playerData.inventory[category] then
+            for itemId, itemData in pairs(playerData.inventory[category]) do
+                if itemData.id then
+                    table.insert(items, {
+                        id = itemId,                 -- instance id (used for ToolAPI/Equip)
+                        name = itemData.id,          -- item name
+                        amount = itemData.amount or 1,
                     })
                 end
             end
         end
     end)
-    if not ok then say("Could not read food inventory", "warn") end
-    return foods
+    if not ok then say("Inventory read failed (" .. category .. "): " .. tostring(err), "warn") end
+    return items
 end
 
-local function buyFood(foodName, count)
-    return callAPI("ShopAPI/BuyItem", { "food", foodName, { buy_count = count or 1 } })
+local function buyItem(category, itemName, count)
+    return callAPI("ShopAPI/BuyItem", { category, itemName, { buy_count = count or 1 } })
 end
 
--- Pick a food item: prefer inventory, buy fallback if empty
-local function pickFood()
-    local inv = getFoodInventory()
+-- Ensure we have at least one item of the given category; return {id, name} or nil
+local function ensureItem(category, fallbackList)
+    local inv = getInventory(category)
     if #inv > 0 then
         table.sort(inv, function(a, b) return a.amount > b.amount end)
-        return inv[1].name, inv[1].amount, inv[1].id
+        return inv[1]
     end
-    for _, name in ipairs(FALLBACK_FOODS) do
-        if buyFood(name, 1) then
-            say("Bought fallback food: " .. name, "info")
-            task.wait(0.4)
-            return name, 1, nil
-        end
-    end
-    return nil, 0, nil
-end
-
--- Equip a food item into the player's hand.
--- Tries common remote paths, then fires with several arg shapes.
-local function equipFood(foodName, foodId)
-    local node, used = findAnyAPI({
-        "InventoryAPI/EquipItem",
-        "AdoptAPI/EquipItem",
-        "InteractablesAPI/EquipItem",
-        "InventoryAPI/Equip",
-        "AdoptAPI/Equip",
-    })
-    if not node then
-        say("No EquipItem API found", "warn")
-        return false
-    end
-
-    -- Try arg shapes commonly used by Adopt Me-style remotes
-    local shapes = {
-        { "food", foodName },                 -- category, id
-        { foodName },                         -- id only
-        { foodId or foodName, "food" },       -- id, category
-        { { id = foodName, type = "food" } }, -- table
-        { "food", foodName, 1 },              -- category, id, slot
-    }
-    for _, args in ipairs(shapes) do
-        local ok = pcall(function() node:InvokeServer(unpack(args)) end)
-        if ok then
-            say("Equipped " .. tostring(foodName) .. " via " .. used, "ok")
-            task.wait(FEED_SETTLE)
-            return true
-        end
-    end
-    -- Try FireServer variants too
-    for _, args in ipairs(shapes) do
-        local ok = pcall(function() node:FireServer(unpack(args)) end)
-        if ok then
-            say("Equipped(Fire) " .. tostring(foodName) .. " via " .. used, "ok")
-            task.wait(FEED_SETTLE)
-            return true
-        end
-    end
-    say("Equip attempts failed for " .. tostring(foodName), "warn")
-    return false
-end
-
--- Unequip whatever is in hand (so next equip works cleanly)
-local function unequipFood()
-    local node = findAnyAPI({
-        "InventoryAPI/UnequipItem",
-        "AdoptAPI/UnequipItem",
-        "InteractablesAPI/UnequipItem",
-        "InventoryAPI/Unequip",
-        "AdoptAPI/Unequip",
-    })
-    if node then
-        pcall(function() node:InvokeServer() end)
-        pcall(function() node:FireServer() end)
-        task.wait(0.3)
-    end
-end
-
--- Feed a pet: equip food -> feed interaction -> unequip
-local function feedPet(pet)
-    if not pet or not pet.Parent then return false end
-
-    local foodName, amount, foodId = pickFood()
-    if not foodName then
-        say("No food available to feed " .. pet.Name, "warn")
-        return false
-    end
-    say("Feeding " .. pet.Name .. " with " .. foodName .. " (have " .. amount .. ")", "info")
-
-    -- 1) Equip the food into hand
-    if not equipFood(foodName, foodId) then
-        -- Even if equip API not found, try direct feed below
-        say("Equip step skipped — trying direct feed", "warn")
-    end
-
-    -- 2) Trigger feed on the pet (try several remotes/arg shapes)
-    local feedNode, feedName = findAnyAPI({
-        "AdoptAPI/FeedPet",
-        "HousingAPI/FeedPet",
-        "PetAPI/Feed",
-        "InteractablesAPI/FeedPet",
-        "InteractablesAPI/Feed",
-        "AdoptAPI/Feed",
-    })
-    local fed = false
-    if feedNode then
-        local shapes = {
-            { pet },
-            { pet, foodName },
-            { pet, foodId or foodName },
-            { pet, "food", foodName },
-        }
-        for _, args in ipairs(shapes) do
-            local ok = pcall(function() feedNode:InvokeServer(unpack(args)) end)
-            if ok then fed = true; break end
-        end
-        if not fed then
-            for _, args in ipairs(shapes) do
-                local ok = pcall(function() feedNode:FireServer(unpack(args)) end)
-                if ok then fed = true; break end
+    for _, name in ipairs(fallbackList or {}) do
+        if buyItem(category, name, 1) then
+            say("Bought fallback " .. category .. ": " .. name, "info")
+            task.wait(0.5)
+            local inv2 = getInventory(category)
+            if #inv2 > 0 then
+                table.sort(inv2, function(a, b) return a.amount > b.amount end)
+                return inv2[1]
             end
         end
-        if fed then say("Fed " .. pet.Name .. " via " .. feedName, "ok") end
     end
+    return nil
+end
 
-    -- 3) If no feed remote or it failed, try using the food furniture
-    --    (pet bowl) as a fallback path since that's how the game usually eats.
-    if not fed then
-        -- try the original food furniture as fallback ONLY if food is equipped
-        local okPlace = callAPI("HousingAPI/ActivateFurniture",
-            { player, "f-24", "UseBlock", { cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0) }, pet })
-        if okPlace then
-            say("Fallback: fed via food furniture with equipped item", "info")
-            task.wait(1.5)
-            fed = true
+-- Equip a tool by its instance id (SimpleSpy-confirmed signature)
+local function equipTool(instanceId)
+    return callAPI("ToolAPI/Equip", { instanceId, { equip_as_last = false, use_sound_delay = true } })
+end
+
+-- Feed/drink a pet directly via PetObjectAPI/CreatePetObject
+-- petUnique  = pet's unique id (e.g. "2_41fa5d1f0f3a4dad8025298ab4a45f1b")
+-- foodUnique = the item's unique id   (e.g. "2_53ea253f25ec43f0848958dc8b06461e")
+local function feedPetDirect(petUnique, foodUnique)
+    return callAPI("PetObjectAPI/CreatePetObject", {
+        PET_OBJECT_CONSUME,
+        {
+            additional_consume_uniques = {},
+            pet_unique   = petUnique,
+            unique_id    = foodUnique,
+        },
+    })
+end
+
+-- Extract the pet's "unique" id from the workspace pet model.
+-- Tries common attribute/child names; falls back to the model's own Name.
+local function getPetUnique(pet)
+    if not pet then return nil end
+    -- 1) attribute on model
+    for _, attr in ipairs({ "unique", "unique_id", "UniqueId", "PetUnique" }) do
+        local ok, v = pcall(function() return pet:GetAttribute(attr) end)
+        if ok and type(v) == "string" and v ~= "" then return v end
+    end
+    -- 2) child StringValue / Configuration container
+    local ok, found = pcall(function()
+        for _, d in ipairs(pet:GetDescendants()) do
+            if d:IsA("StringValue") and (d.Name:lower():find("unique") or d.Name:lower():find("id")) then
+                return d.Value
+            end
         end
+        return nil
+    end)
+    if ok and found and found ~= "" then return found end
+    return nil
+end
+
+-- Prepare food or drink: ensure inventory -> equip tool. Returns {id, name} or nil.
+local function prepareConsumable(category)
+    local fallback = (category == "food") and FALLBACK_FOOD or FALLBACK_DRINK
+    local item = ensureItem(category, fallback)
+    if not item then
+        say("No " .. category .. " available (inventory empty + buy failed)", "bad")
+        return nil
     end
+    say("Equipping " .. category .. ": " .. item.name, "info")
+    if not equipTool(item.id) then
+        say("Equip failed for " .. category .. " " .. item.name, "bad")
+        return nil
+    end
+    task.wait(0.6) -- let tool actually appear in hand
+    return item
+end
 
-    -- 4) Unequip afterwards
-    unequipFood()
-
-    task.wait(0.4)
-    return fed
+-- Full feed flow: pick food -> equip -> CreatePetObject. Returns true/false.
+local function feedPet(pet, category)
+    local petUnique = getPetUnique(pet)
+    if not petUnique then
+        say("Could not resolve pet unique id for " .. (pet.Name or "?"), "warn")
+        return false
+    end
+    local item = prepareConsumable(category)
+    if not item then return false end
+    say("Feeding " .. (pet.Name or "?") .. " with " .. item.name, "info")
+    local ok = feedPetDirect(petUnique, item.id)
+    if ok then
+        say("Feed sent: " .. (pet.Name or "?") .. " <- " .. item.name, "ok")
+        task.wait(FEED_DWELL)
+    else
+        say("Feed failed: " .. (pet.Name or "?"), "bad")
+    end
+    return ok
 end
 
 -- ================= BUTTON 1 =================
@@ -368,25 +315,19 @@ end
 
 local function detachPet(obj, fCframe, why)
     if not obj or not obj.Parent then return true end
-
     local startPos = getPosition(obj)
     for attempt = 1, PET_UNSTICK_ATTEMPTS do
         if not TasksMode then return false end
         if not obj.Parent then return true end
-
         hold(obj)
-
         local pos = getPosition(obj)
         local moved      = pos and startPos and (pos - startPos).Magnitude > 2
         local farEnough  = (not fCframe) or (pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS)
         local noWeld     = not hasAttachmentToFurniture(obj)
-
         if farEnough or (moved and noWeld) then
             return true
         end
-
-        setNow(string.format("%s: detaching (attempt %d/%d)...",
-            why, attempt, PET_UNSTICK_ATTEMPTS))
+        setNow(string.format("%s: detaching (attempt %d/%d)...", why, attempt, PET_UNSTICK_ATTEMPTS))
         task.wait(0.2)
     end
     return false
@@ -398,12 +339,16 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
     heldSubjects[workerIndex] = obj
 
     say(kind .. ": " .. name .. " (held)", "info")
-    hold(obj) -- initial pickup (HoldBaby)
+    hold(obj)
 
-    -- NEW: pets get fed once per pass BEFORE furniture tasks
+    -- NEW: pets are fed/drunk directly (no f-24/f-9 furniture) before furniture loop
     if kind == "Pet" then
-        setGoal("Feeding " .. name, { "Equip food", "Feed pet" })
-        feedPet(obj)
+        setGoal("Feeding " .. name .. " (food)", { "PetObjectAPI/CreatePetObject" })
+        feedPet(obj, "food")
+        if TasksMode then
+            setGoal("Drinking " .. name .. " (drink)", { "PetObjectAPI/CreatePetObject" })
+            feedPet(obj, "drink")
+        end
     end
 
     local n = #fList
@@ -606,7 +551,7 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 250, 320
+    local width, height = 250, 340
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
@@ -675,11 +620,12 @@ local function mainWindow()
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pets fed by EQUIPPING food then feeding", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Auto-finds Equip/Feed remotes", 10, THEME.dim)
-    create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
+    text(frame, 8, 244, width-16, 14, "Feed/drink: inventory -> buy -> equip ->", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "  PetObjectAPI/CreatePetObject (no f-24/f-9)", 10, THEME.dim)
+    text(frame, 8, 272, width-16, 14, "Explicit EjectBaby on finish / stop / error", 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 292), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.9 — equip-then-feed", 10, THEME.dim)
+    text(frame, 8, 298, width-16, 14, "COCOON v3.9 — direct PetObjectAPI feed", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -693,26 +639,16 @@ env.COCOON = {
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
     EjectAllHeld = ejectAllHeld,
-    PrintFoodInventory = function()
-        local inv = getFoodInventory()
-        if #inv == 0 then print("[COCOON] No food in inventory."); return end
-        print("=== COCOON FOOD INVENTORY ===")
-        for i, f in ipairs(inv) do
-            print(string.format("%d. %s (ID: %s) - Amount: %d", i, f.name, f.id, f.amount))
-        end
-        print("Total: " .. #inv)
-    end,
-    FeedTest = function(petName)
-        local pets = petsOnServer()
-        local target = pets[1]
-        if petName then
-            for _, p in ipairs(pets) do if p.Name == petName then target = p; break end end
-        end
-        if not target then print("[COCOON] No pet found to test."); return end
-        print("[COCOON] Feed test on: " .. target.Name)
-        feedPet(target)
-    end,
+    GetInventory = getInventory,
+    BuyItem = buyItem,
+    EquipTool = equipTool,
+    PrepareConsumable = prepareConsumable,
+    FeedPetDirect = feedPetDirect,
+    FeedPet = feedPet,
+    GetPetUnique = getPetUnique,
 }
 
+mainWindow()
+say("Loaded v3.9. Feed/drink via PetObjectAPI/CreatePetObject; f-24/f-9 removed.", "ok")
 mainWindow()
 say("Loaded v3.9. Pets fed by equipping food then feeding.", "ok")
