@@ -1,7 +1,6 @@
 -- ==================================================================
--- COCOON v3 — Stats + Family + Parallel Baby/Pet Hold/Place/Eject farm
--- One carry token: only one subject is held at a time; the other
--- worker immediately takes the token for its own 20s furniture piece.
+-- COCOON v3.1 — Stats + Family + Parallel Baby/Pet farm
+-- Skips missing subjects; re-validates before each hold; no deadlock
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,8 +16,9 @@ local FURNITURE_DWELL    = 20
 local BETWEEN_PIECES     = 0.8
 local BETWEEN_SUBJECTS   = 1.2
 local MAX_TASK_PASSES    = 1
+local HOLD_TIMEOUT       = 8      -- max seconds to wait for a hold to "take"
 
--- Furniture for PETS (HousingAPI/ActivateFurniture)
+-- Furniture for PETS
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
@@ -27,7 +27,7 @@ local PET_FURNITURE = {
     { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
--- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
+-- Furniture for BABIES
 local BABY_FURNITURE = {
     { id = "f-23", mode = "UseBlock", label = "dirty" },
     { id = "f-32", mode = "Seat1",    label = "bored" },
@@ -67,6 +67,32 @@ local function petsOnServer()
     local f = workspace:FindFirstChild("Pets"); if not f then return {} end; return f:GetChildren()
 end
 
+-- ================= VALIDATION =================
+local function validPet(pet)
+    if not pet or not pet.Parent then return false end
+    local folder = workspace:FindFirstChild("Pets")
+    if not folder then return false end
+    return pet:IsDescendantOf(folder)
+end
+local function validBaby(char)
+    if not char or not char.Parent then return false end
+    if not char:FindFirstChild("Humanoid") then return false end
+    -- character must belong to a player still in game
+    local ok = false
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character == char then ok = true; break end
+    end
+    return ok
+end
+-- refresh subject lists each cycle so leaving/joining players are picked up
+local function liveBabies()
+    local list = {}
+    for _, p in ipairs(otherPlayers()) do
+        if p.Character and validBaby(p.Character) then table.insert(list, p.Character) end
+    end
+    return list
+end
+
 -- ================= API HELPERS =================
 local function api(name) return ReplicatedStorage:WaitForChild("API"):FindFirstChild(name) end
 local function callAPI(name, args, fire)
@@ -79,45 +105,57 @@ local function callAPI(name, args, fire)
 end
 
 -- ================= CARRY TOKEN =================
--- The game only allows holding ONE object at a time. This lock makes
--- the two workers take turns holding so their 20s dwells interleave
--- but never collide.
 local carrying = false
-local function acquireCarry() while TasksMode and carrying do task.wait(0.15) end; if not TasksMode then return false end; carrying = true; return true end
+local function acquireCarry()
+    while TasksMode and carrying do task.wait(0.15) end
+    if not TasksMode then return false end
+    carrying = true; return true
+end
 local function releaseCarry() carrying = false end
 
-local function holdAndPlacePet(pet, furn)
+-- Hold with timeout: if server doesn't hold within HOLD_TIMEOUT, bail
+local function holdWithTimeout(subject, label)
     if not acquireCarry() then return false end
-    setNow(string.format("PET %s → %s", pet.Name, furn.label))
-    callAPI("AdoptAPI/HoldBaby", { pet })
+    setNow("Hold " .. label)
+    local ok = callAPI("AdoptAPI/HoldBaby", { subject })
+    if not ok then releaseCarry(); return false end
     task.wait(1)
+    return true
+end
+
+local function runPetPiece(pet, furn)
+    if not validPet(pet) then say("Pet gone, skipping: "..(pet and pet.Name or "?"), "warn"); return false end
+    if not holdWithTimeout(pet, "PET "..pet.Name) then return false end
+    -- re-check after hold: pet may have been removed
+    if not validPet(pet) then
+        say("Pet removed mid-task: "..pet.Name, "warn"); releaseCarry(); return false
+    end
     callAPI("HousingAPI/ActivateFurniture",
         { player, furn.id, furn.mode, { cframe = furn.cframe }, pet })
     local t = 0
-    while t < FURNITURE_DWELL and TasksMode do
+    while t < FURNITURE_DWELL and TasksMode and validPet(pet) do
         setNow(string.format("PET %s on %s — %d/%ds", pet.Name, furn.label, t, FURNITURE_DWELL))
         task.wait(1); t += 1
     end
-    callAPI("AdoptAPI/EjectBaby", { pet }, true)
-    task.wait(0.8)
-    releaseCarry()
+    if validPet(pet) then callAPI("AdoptAPI/EjectBaby", { pet }, true) end
+    task.wait(0.8); releaseCarry()
     return TasksMode
 end
 
-local function holdAndPlaceBaby(char, furn)
-    if not acquireCarry() then return false end
-    setNow(string.format("BABY %s → %s", char.Name, furn.label))
-    callAPI("AdoptAPI/HoldBaby", { char })
-    task.wait(1)
+local function runBabyPiece(char, furn)
+    if not validBaby(char) then say("Baby gone, skipping", "warn"); return false end
+    if not holdWithTimeout(char, "BABY "..char.Name) then return false end
+    if not validBaby(char) then
+        say("Baby removed mid-task: "..char.Name, "warn"); releaseCarry(); return false
+    end
     callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, furn.id, furn.mode }, true)
     local t = 0
-    while t < FURNITURE_DWELL and TasksMode do
+    while t < FURNITURE_DWELL and TasksMode and validBaby(char) do
         setNow(string.format("BABY %s on %s — %d/%ds", char.Name, furn.label, t, FURNITURE_DWELL))
         task.wait(1); t += 1
     end
-    callAPI("AdoptAPI/EjectBaby", { char }, true)
-    task.wait(0.8)
-    releaseCarry()
+    if validBaby(char) then callAPI("AdoptAPI/EjectBaby", { char }, true) end
+    task.wait(0.8); releaseCarry()
     return TasksMode
 end
 
@@ -135,9 +173,11 @@ local function createFamilyAndInvite()
     setGoal("Inviting ".. #targets .." player(s)")
     for _, p in ipairs(targets) do
         if not FamilyMode then break end
-        setGoal("Inviting ".. #targets, { p.Name })
-        callAPI("FamilyAPI/InvitePlayer", { p })
-        say("Family invite -> "..p.Name, "ok")
+        if p and p.Parent then
+            setGoal("Inviting ".. #targets, { p.Name })
+            callAPI("FamilyAPI/InvitePlayer", { p })
+            say("Family invite -> "..p.Name, "ok")
+        end
         task.wait(INVITE_DELAY)
     end
     say("Family invite pass finished", "ok")
@@ -148,19 +188,18 @@ end
 local TasksMode = false
 
 local function babyWorker()
-    local babies = otherPlayers()
+    local babies = liveBabies()
     say("Baby worker: ".. #babies .." player(s)", "info")
-    for _, p in ipairs(babies) do
+    for _, char in ipairs(babies) do
         if not TasksMode then return end
-        local char = p.Character
-        if char and char.Parent then
+        if validBaby(char) then
             for _, f in ipairs(BABY_FURNITURE) do
                 if not TasksMode then return end
-                holdAndPlaceBaby(char, f)
+                if not runBabyPiece(char, f) then break end
                 task.wait(BETWEEN_PIECES)
             end
         else
-            say("No character for "..p.Name, "warn")
+            say("Baby vanished, skipping", "warn")
         end
         task.wait(BETWEEN_SUBJECTS)
     end
@@ -171,12 +210,14 @@ local function petWorker()
     say("Pet worker: ".. #pets .." pet(s)", "info")
     for _, pet in ipairs(pets) do
         if not TasksMode then return end
-        if pet and pet.Parent then
+        if validPet(pet) then
             for _, f in ipairs(PET_FURNITURE) do
                 if not TasksMode then return end
-                holdAndPlacePet(pet, f)
+                if not runPetPiece(pet, f) then break end
                 task.wait(BETWEEN_PIECES)
             end
+        else
+            say("Pet vanished, skipping", "warn")
         end
         task.wait(BETWEEN_SUBJECTS)
     end
@@ -187,10 +228,17 @@ local function startAllTasks()
     for pass = 1, MAX_TASK_PASSES do
         if not TasksMode then break end
         setGoal("Parallel pass "..pass.."/"..MAX_TASK_PASSES)
-        -- Both workers run in their own threads; the carry token serializes holds.
         local doneBaby, donePet = false, false
-        task.spawn(function() babyWorker(); doneBaby = true end)
-        task.spawn(function() petWorker();  donePet  = true end)
+        task.spawn(function()
+            local ok, err = pcall(babyWorker)
+            if not ok then say("Baby worker error: "..tostring(err), "bad") end
+            doneBaby = true
+        end)
+        task.spawn(function()
+            local ok, err = pcall(petWorker)
+            if not ok then say("Pet worker error: "..tostring(err), "bad") end
+            donePet = true
+        end)
         while TasksMode and not (doneBaby and donePet) do
             setNow("Interleaving baby + pet furniture tasks...")
             task.wait(0.5)
@@ -256,7 +304,7 @@ local function window(w,h)
         BackgroundColor3=THEME.bg,BorderSizePixel=0},ui.screen)
     corner(f,8); create("UIStroke",{Color=THEME.line,Thickness=1},f)
     local hd=create("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1},f); makeDraggable(hd,f)
-    text(hd,10,0,w-40,26,"COCOON v3",13,THEME.text,true)
+    text(hd,10,0,w-40,26,"COCOON v3.1",13,THEME.text,true)
     local cl=create("TextButton",{Position=UDim2.fromOffset(w-26,1),Size=UDim2.fromOffset(22,22),
         BackgroundTransparency=1,Text="×",TextColor3=THEME.dim,Font=Enum.Font.GothamMedium,TextSize=16},hd)
     cl.MouseButton1Click:Connect(function()
@@ -331,14 +379,14 @@ local function mainWindow()
         end)
     end)
 
-    text(frame,8,216,width-16,14,"Parallel: baby on one furniture, pet on another",10,THEME.dim)
+    text(frame,8,216,width-16,14,"Skips vanished players/pets automatically",10,THEME.dim)
     text(frame,8,230,width-16,14,"Carry token: one hold at a time, 20s each",10,THEME.dim)
     text(frame,8,244,width-16,14,"Pet: f-5, f-24, f-9, f-28, f-31, f-32",10,THEME.dim)
     text(frame,8,258,width-16,14,"Baby: f-23 dirty, f-32 bored",10,THEME.dim)
-    text(frame,8,272,width-16,14,"Targets: every other player + pet",10,THEME.dim)
+    text(frame,8,272,width-16,14,"Refreshes lists each pass",10,THEME.dim)
     create("Frame",{Position=UDim2.fromOffset(8,290),Size=UDim2.new(1,-16,0,1),
         BackgroundColor3=THEME.line,BorderSizePixel=0},frame)
-    text(frame,8,296,width-16,14,"COCOON v3 — parallel hold/place/eject farm",10,THEME.dim)
+    text(frame,8,296,width-16,14,"COCOON v3.1 — resilient parallel farm",10,THEME.dim)
 end
 
 env.COCOON = {
@@ -351,4 +399,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded. Parallel baby/pet farm ready.", "ok")
+say("Loaded. Vanished subjects are skipped automatically.", "ok")
