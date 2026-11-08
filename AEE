@@ -2,8 +2,8 @@
 -- COCOON v3.7 — Continuous concurrent Hold/Place/Eject
 -- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
--- - Pet detach now uses AdoptAPI/EjectBaby (FireServer) — the call
---   that actually pulls pets off furniture (per SimpleSpy capture).
+-- - Pet pickup uses the EXACT SimpleSpy-generated call:
+--     ReplicatedStorage.API["AdoptAPI/HoldBaby"]:InvokeServer(petModel)
 -- - Movement-verified detach for pets (fixes stuck pets)
 -- - Larger radius + re-hold attempts + parent/weld fallback
 -- - Guaranteed eject on stop/error
@@ -24,7 +24,7 @@ local BETWEEN_FURNITURE = 0.4
 local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
 local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture (babies)
 local PET_DETACH_RADIUS = 20      -- studs: wider tolerance for pet models
-local PET_UNSTICK_ATTEMPTS = 40   -- max re-eject attempts for pets
+local PET_UNSTICK_ATTEMPTS = 40   -- max re-hold attempts for pets
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
 local PASS_COOLDOWN     = 2       -- seconds between full passes
@@ -95,6 +95,37 @@ local function callAPI(name, args, fire)
     return ok
 end
 
+-- EXACT SimpleSpy-generated pet pickup:
+--   game:GetService("ReplicatedStorage").API["AdoptAPI/HoldBaby"]:InvokeServer(petModel)
+local function holdPetRaw(petModel)
+    local node = ReplicatedStorage:WaitForChild("API"):FindFirstChild("AdoptAPI/HoldBaby")
+    if not node then say("AdoptAPI/HoldBaby missing", "bad"); return false end
+    local ok, err = pcall(function() node:InvokeServer(petModel) end)
+    if not ok then say("HoldBaby(pet) failed: " .. tostring(err), "bad") end
+    return ok
+end
+
+local function hold(obj)              -- generic hold (used for babies)
+    callAPI("AdoptAPI/HoldBaby", { obj })
+    task.wait(0.5)
+end
+local function eject(obj)
+    if obj then
+        callAPI("AdoptAPI/EjectBaby", { obj }, true)
+    end
+    task.wait(EJECT_TIME)
+end
+
+local function ejectAllHeld()
+    for id, obj in pairs(heldSubjects) do
+        if obj then
+            say("Force eject: " .. (obj.Name or "?"), "warn")
+            pcall(eject, obj)
+        end
+        heldSubjects[id] = nil
+    end
+end
+
 local function getPosition(obj)
     if not obj or not obj.Parent then return nil end
     local ok, pos = pcall(function() return obj:GetPivot().Position end)
@@ -102,9 +133,7 @@ local function getPosition(obj)
     return nil
 end
 
--- Movement-verified detach. For pets we use a much wider radius and
--- also fall back to checking whether the model is still parented
--- under the furniture / has an active weld to it.
+-- Movement-verified detach. Uses the EXACT raw HoldBaby call for pets.
 local function stillOnFurniture(obj, fCframe, radius)
     if not fCframe then return false end
     if not obj or not obj.Parent then return false end
@@ -113,11 +142,9 @@ local function stillOnFurniture(obj, fCframe, radius)
     return (pos - fCframe.Position).Magnitude < (radius or DETACH_RADIUS)
 end
 
--- Extra heuristic for pets: are they welded/attached to furniture?
 local function hasAttachmentToFurniture(obj)
     if not obj then return false end
     local ok, result = pcall(function()
-        -- Check for welds/motor6d whose Part0/Part1 is not part of the pet
         for _, d in ipairs(obj:GetDescendants()) do
             if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("AlignPosition") or d:IsA("AlignOrientation") then
                 local p0, p1 = d.Part0, d.Part1
@@ -129,6 +156,35 @@ local function hasAttachmentToFurniture(obj)
         return false
     end)
     return ok and result or false
+end
+
+local function detachPet(obj, fCframe, why)
+    if not obj or not obj.Parent then return true end
+    if not fCframe then return true end
+
+    local startPos = getPosition(obj)
+    for attempt = 1, PET_UNSTICK_ATTEMPTS do
+        if not TasksMode then return false end
+        if not obj.Parent then return true end
+
+        -- EXACT SimpleSpy call for pet pickup:
+        holdPetRaw(obj)
+        task.wait(1.5)
+
+        local pos = getPosition(obj)
+        local moved = pos and startPos and (pos - startPos).Magnitude > 2
+        local farEnough = pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS
+        local noWeld = not hasAttachmentToFurniture(obj)
+
+        if farEnough or (moved and noWeld) then
+            return true
+        end
+
+        setNow(string.format("%s: detaching (attempt %d/%d)...",
+            why, attempt, PET_UNSTICK_ATTEMPTS))
+        task.wait(0.2)
+    end
+    return false
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -161,71 +217,18 @@ local heldSubjects = {}
 local activeWorkers = 0
 local passNumber, passDone, passTotal = 0, 0, 0
 
-local function hold(obj)
-    callAPI("AdoptAPI/HoldBaby", { obj })
-    task.wait(0.5)
-end
-
--- Eject = the call that actually detaches a pet from furniture.
--- Per SimpleSpy capture:
---   game:GetService("ReplicatedStorage").API
---       :FindFirstChild("AdoptAPI/EjectBaby")
---       :FireServer(workspace.Pets.Mouse)
-local function eject(obj)
-    if obj then
-        callAPI("AdoptAPI/EjectBaby", { obj }, true)  -- fire = true (FireServer)
-    end
-    task.wait(EJECT_TIME)
-end
-
-local function ejectAllHeld()
-    for id, obj in pairs(heldSubjects) do
-        if obj then
-            say("Force eject: " .. (obj.Name or "?"), "warn")
-            pcall(eject, obj)
-        end
-        heldSubjects[id] = nil
-    end
-end
-
--- Movement-verified detach for pets. Fires EjectBaby (FireServer) and
--- checks that the pet has actually moved off the furniture. Returns
--- true when detached (or gone), false if it timed out.
-local function detachPet(obj, fCframe, why)
-    if not obj or not obj.Parent then return true end
-    if not fCframe then return true end
-
-    local startPos = getPosition(obj)
-    for attempt = 1, PET_UNSTICK_ATTEMPTS do
-        if not TasksMode then return false end
-        if not obj.Parent then return true end
-
-        -- EjectBaby is what actually pulls a pet off furniture
-        eject(obj)
-
-        local pos = getPosition(obj)
-        local moved     = pos and startPos and (pos - startPos).Magnitude > 2
-        local farEnough = pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS
-        local noWeld    = not hasAttachmentToFurniture(obj)
-
-        if farEnough or (moved and noWeld) then
-            return true
-        end
-
-        setNow(string.format("%s: detaching (attempt %d/%d)...",
-            why, attempt, PET_UNSTICK_ATTEMPTS))
-        task.wait(0.2)
-    end
-    return false
-end
-
 local function processSubject(kind, obj, fList, offset, workerIndex)
     if not obj or not obj.Parent then return end
     local name = obj.Name or "?"
     heldSubjects[workerIndex] = obj
 
     say(kind .. ": " .. name .. " (held)", "info")
-    hold(obj)
+    if kind == "Pet" then
+        holdPetRaw(obj)   -- EXACT SimpleSpy call
+        task.wait(0.5)
+    else
+        hold(obj)
+    end
 
     local n = #fList
     for i = 1, n do
@@ -246,10 +249,6 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         task.wait(BETWEEN_FURNITURE)
 
         if kind == "Pet" and i < n and f.cframe then
-            -- ALWAYS attempt detach for pets after dwell using EjectBaby.
-            -- Position check alone is unreliable for pet models, so we
-            -- re-eject and verify movement rather than trusting
-            -- stillOnFurniture().
             if detachPet(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
                 say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
             else
@@ -258,7 +257,6 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
             end
             task.wait(0.3)
         elseif kind == "Baby" and i < n then
-            -- Babies use the original position check; they work reliably.
             local fC = f.cframe
             if fC and stillOnFurniture(obj, fC, DETACH_RADIUS) then
                 say(kind .. " " .. name .. ": waiting to detach from " .. f.label, "warn")
@@ -303,7 +301,6 @@ local function workerLoop(workerIndex)
     end
 end
 
--- One pass = process every baby + pet currently on the server
 local function runOnePass()
     passNumber += 1
     passDone, passTotal = 0, 0
@@ -333,7 +330,6 @@ local function runOnePass()
         task.spawn(workerLoop, i)
     end
 
-    -- wait for this pass to drain
     while TasksMode and (#queue > 0 or activeWorkers > 0) do
         setNow(string.format("Pass %d | Active: %d | Left: %d | Done: %d/%d",
             passNumber, activeWorkers, #queue, passDone, passTotal))
@@ -342,7 +338,6 @@ local function runOnePass()
     ejectAllHeld()
 end
 
--- NON-STOP: keep doing passes until the button is switched OFF
 local function startAllTasks()
     TasksMode = true
     while TasksMode do
@@ -498,11 +493,11 @@ local function mainWindow()
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pet detach uses EjectBaby (FireServer)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Pet pickup = exact HoldBaby:InvokeServer(pet)", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — EjectBaby pet detach", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — exact SimpleSpy pet pickup", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -519,4 +514,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v3.7. Pet detach now uses AdoptAPI/EjectBaby (FireServer).", "ok")
+say("Loaded v3.7. Pet pickup uses exact SimpleSpy HoldBaby:InvokeServer(pet).", "ok")
