@@ -1,9 +1,10 @@
 -- ==================================================================
--- COCOON v3.2 — Concurrent Hold/Place/Eject worker pool
--- - 2 workers hold 2 subjects at once (game cap: 2 objects)
--- - Guaranteed eject: subjects are ALWAYS ejected, even on stop/error
--- - UNSTICK: re-holds pets after UseBlock furniture (food/drink) so
---   they don't stay glued to the bowl before the next furniture
+-- COCOON v3.3 — Concurrent Hold/Place/Eject worker pool
+-- - 2 workers (game cap: 2 held objects)
+-- - holdWithRetry: verifies pickup actually succeeded, retries until
+--   the server accepts (pet no longer busy on food/drink)
+-- - Per-furniture dwell times (food/drink longer)
+-- - Guaranteed eject on stop/error
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,29 +16,27 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- seconds per furniture (overlaps between workers)
-local BETWEEN_SUBJECTS  = 0.8     -- pause after eject before worker takes next
+local FURNITURE_DWELL   = 20      -- default seconds per furniture
+local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local HOLD_TIME         = 0.5
+local HOLD_TIMEOUT      = 45      -- max seconds to keep retrying a pickup
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
-local MAX_TASK_PASSES   = 1
-local UNSTICK_USEBLOCK  = true    -- re-hold pet after UseBlock furniture (food/drink) to unstick it
 
--- Furniture for PETS (HousingAPI/ActivateFurniture)
+-- Furniture for PETS. dwell = seconds on this piece (food/drink longer)
 local PET_FURNITURE = {
-    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
-    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
-    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
-    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
-    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
-    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
+    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty", dwell = 20 },
+    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food",  dwell = 30 },
+    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink", dwell = 30 },
+    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet", dwell = 20 },
+    { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep",  dwell = 20 },
+    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored",  dwell = 20 },
 }
 
 -- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
 local BABY_FURNITURE = {
-    { id = "f-23", mode = "UseBlock", label = "dirty" },
-    { id = "f-32", mode = "Seat1",    label = "bored" },
+    { id = "f-23", mode = "UseBlock", label = "dirty", dwell = 20 },
+    { id = "f-32", mode = "Seat1",    label = "bored", dwell = 20 },
 }
 
 -- ================= STATUS / LOG =================
@@ -120,10 +119,32 @@ local heldSubjects = {}     -- [workerIndex] = object currently held by that wor
 local activeWorkers = 0
 local doneCount, totalCount = 0, 0
 
-local function hold(obj)
-    callAPI("AdoptAPI/HoldBaby", { obj })
-    task.wait(HOLD_TIME)
+-- Invoke HoldBaby and CHECK THE RESULT. The server refuses while the pet is
+-- still busy on food/drink or the hold cap (2) is full, so keep retrying
+-- until it accepts, up to HOLD_TIMEOUT seconds.
+local function holdWithRetry(obj, why)
+    if not obj then return false end
+    local node = api("AdoptAPI/HoldBaby")
+    if not node then say("API missing: AdoptAPI/HoldBaby", "bad"); return false end
+
+    local waited = 0
+    while waited < HOLD_TIMEOUT do
+        if not TasksMode then return false end
+        local ok, res = pcall(node.InvokeServer, node, obj)
+        if ok and res ~= false and res ~= nil then
+            task.wait(0.5)
+            return true
+        end
+        -- refused: show why, wait and try again
+        setNow(string.format("%s: pickup refused (%d/%ds), retrying...",
+            why, waited, HOLD_TIMEOUT))
+        task.wait(1.5)
+        waited += 1.5
+    end
+    say(why .. ": pickup FAILED after " .. HOLD_TIMEOUT .. "s", "bad")
+    return false
 end
+
 local function eject(obj)
     if obj then
         callAPI("AdoptAPI/EjectBaby", { obj }, true)
@@ -151,7 +172,12 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
     heldSubjects[workerIndex] = obj   -- register so ejectAllHeld can free it
 
     say(kind .. ": " .. name .. " (held)", "info")
-    hold(obj)
+    if not holdWithRetry(obj, kind .. " " .. name .. " hold") then
+        pcall(eject, obj)
+        heldSubjects[workerIndex] = nil
+        return
+    end
+
     local n = #fList
     for i = 1, n do
         if not TasksMode then break end
@@ -162,19 +188,23 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
+        local seconds = f.dwell or FURNITURE_DWELL
         local t = 0
-        while t < FURNITURE_DWELL and TasksMode do
-            setNow(string.format("%s %s on %s — %.0f/%ds", kind, name, f.label, t, FURNITURE_DWELL))
+        while t < seconds and TasksMode do
+            setNow(string.format("%s %s on %s — %.0f/%ds", kind, name, f.label, t, seconds))
             task.wait(1); t += 1
         end
         task.wait(BETWEEN_FURNITURE)
 
-        -- UNSTICK: pets stay glued to food/drink (UseBlock) after the task.
-        -- Re-invoke HoldBaby to pick the pet back up before the next furniture.
-        if UNSTICK_USEBLOCK and f.mode == "UseBlock" then
-            say(kind .. " " .. name .. ": picking back up from " .. f.label, "info")
-            callAPI("AdoptAPI/HoldBaby", { obj })
-            task.wait(HOLD_TIME)
+        -- UNSTICK: pick the subject back up before moving to next furniture.
+        -- Retries automatically if the server says it's still busy.
+        if i < n then   -- no pickup needed before the final eject
+            if not holdWithRetry(obj, kind .. " " .. name .. " unstick from " .. f.label) then
+                -- couldn't pick it up: eject so the worker doesn't stall forever
+                say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
+                break
+            end
+            task.wait(0.3)
         end
     end
     -- ALWAYS eject, even if we broke out early (stopped / error)
@@ -300,7 +330,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.2", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.3", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -383,12 +413,12 @@ local function mainWindow()
     end)
 
     text(frame, 8, 216, width-16, 14, ("Concurrent: %d subjects held at once"):format(MAX_CONCURRENT), 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Unstick: re-hold after food/drink", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Targets: every other player + pet on server", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Verified pickup w/ retry (no more stuck pets)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Food/drink dwell 30s, others 20s", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.2 — concurrent hold/place/eject", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.3 — concurrent hold/place/eject", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -402,7 +432,8 @@ env.COCOON = {
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
     EjectAllHeld = ejectAllHeld,
+    HoldWithRetry = holdWithRetry,
 }
 
 mainWindow()
-say("Loaded v3.2. Concurrent pool x2, unstick + guaranteed eject.", "ok")
+say("Loaded v3.3. Verified pickup with retry.", "ok")
