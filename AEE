@@ -1,16 +1,17 @@
 -- ==================================================================
--- COCOON v4.0 — COCOON powered by AdoptMe Farm v3 task functions
--- - Reuses Tasks / EventTasks / HouseTasks / WhereBear from the farm
--- - Non-stop concurrent Hold/Place/Eject passes until button OFF
--- - Movement-verified detach for pets (no stuck pets)
--- - Requires: getgenv().AdoptMeFarm (farm must be running)
+-- COCOON v4.0 — Continuous concurrent Hold/Place/Eject
+-- Uses Adopt Victims' proven detach flow:
+--   1. Read interior.furniture[].occupied to see if pet is seated
+--   2. Send PetAPI/ExitFurnitureUseStates(petUnique)
+--   3. Wait for occupied[] to clear (data-verified, not position)
+--   4. Then HoldBaby via AdoptAPI/HoldBaby
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
-local env = getgenv and getgenv() or _G
+local env = getgenv and getgenv() or {}
 if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
@@ -18,15 +19,12 @@ local INVITE_DELAY      = 1.0
 local FURNITURE_DWELL   = 20
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local UNSTICK_TIMEOUT   = 60
-local DETACH_RADIUS     = 6
-local PET_DETACH_RADIUS = 20
-local PET_UNSTICK_ATTEMPTS = 40
+local DETACH_TIMEOUT    = 8       -- seconds to wait for occupied[] to clear (data-verified)
+local DETACH_RETRIES    = 3       -- ExitFurnitureUseStates retries
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2
 local PASS_COOLDOWN     = 2
 
--- Furniture for PETS (HousingAPI/ActivateFurniture)
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
@@ -41,47 +39,11 @@ local BABY_FURNITURE = {
     { id = "f-32", mode = "Seat1",    label = "bored" },
 }
 
--- ================= FARM API LOOKUP =================
--- The farm exposes getgenv().AdoptMeFarm with: Config, State, Stop, Status, GoHome, SkipTask, ...
--- The task modules live in its internals; we reach them via the module loader it publishes.
-local Farm = env.AdoptMeFarm
-if type(Farm) ~= "table" then
-    error("COCOON v4 needs the AdoptMe Farm running first (getgenv().AdoptMeFarm)", 0)
-end
-
--- The farm's main() returns `api`; we can't reach the internal `import` from outside.
--- So we re-import the same modules from ReplicatedStorage? No — the farm's modules are
--- compiled into its closure. Instead we expose them via the loader it already exposes.
--- The farm's `api.Catalog` / `api.Icons` / `api.Config` / `api.State` are public; the
--- task modules are not. So COCOON must be launched as a second file that the farm
--- loads in the same environment. To keep it simple here, we wrap the task calls we
--- need through `Farm.Config` (settings) and mimic the task behavior only when the
--- farm API is absent. For the full integration, put this file's body inside the
--- farm's main() after `api` is created, or have the loader pass `import` in.
---
--- Below: the local task functions COCOON needs that don't depend on the farm internals,
--- plus a thin wrapper that calls the farm's own task runners via the modules it loads
--- through `import` when the loader makes it available.
-
--- Try to grab the farm's internal import via its loader (if the farm was launched with
--- `getgenv().AdoptMeFarmSettings`, it also stashed `_G.__FarmImport` = import).
-local FarmImport = env.__FarmImport
-local Tasks, EventTasks, HouseTasks, WhereBear
-if type(FarmImport) == "function" then
-    local ok1, m1 = pcall(FarmImport, "Game/Tasks")
-    if ok1 then Tasks = m1 end
-    local ok2, m2 = pcall(FarmImport, "Game/EventTasks")
-    if ok2 then EventTasks = m2 end
-    local ok3, m3 = pcall(FarmImport, "Game/HouseTasks")
-    if ok3 then HouseTasks = m3 end
-    local ok4, m4 = pcall(FarmImport, "Game/WhereBear")
-    if ok4 then WhereBear = m4 end
-end
-
 -- ================= STATUS / LOG =================
 local ui = {}
 local uiLog = nil
 local status = { now = "Ready", goal = "Pick an action", queue = {} }
+
 local function renderStatus()
     if ui.now then
         pcall(function()
@@ -96,12 +58,7 @@ local function setNow(t) status.now = t or ""; renderStatus() end
 local function say(text, tone)
     setNow(text)
     if uiLog then pcall(uiLog, tone or "info", text) end
-    if Farm then
-        local state = Farm.State
-        if state and type(state.get) == "function" then
-            -- mirror into the farm's log when possible
-        end
-    end
+    print("[COCOON] " .. tostring(text))
 end
 
 -- ================= COUNTERS =================
@@ -139,28 +96,191 @@ local function getPosition(obj)
     return nil
 end
 
-local function stillOnFurniture(obj, fCframe, radius)
-    if not fCframe then return false end
-    if not obj or not obj.Parent then return false end
-    local pos = getPosition(obj)
-    if not pos then return true end
-    return (pos - fCframe.Position).Magnitude < (radius or DETACH_RADIUS)
-end
+-- ================= NEW: INTERIOR / OCCUPIED DATA READER =================
+-- Adopt Victims' AilmentTracker reads the interior furniture list from DataAPI/DataChanged
+-- ("house_interior" -> interior.furniture[key].occupied[] contains the pet's StreamingId
+-- while it is seated). We need the same data to verify detach.
 
-local function hasAttachmentToFurniture(obj)
-    if not obj then return false end
-    local ok, result = pcall(function()
-        for _, d in ipairs(obj:GetDescendants()) do
-            if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("AlignPosition") or d:IsA("AlignOrientation") then
-                local p0, p1 = d.Part0, d.Part1
-                if (p0 and not p0:IsDescendantOf(obj)) or (p1 and not p1:IsDescendantOf(obj)) then
-                    return true
+local GameConstants = {
+    DataKeys = {
+        Interior = "house_interior",
+        PetWrappers = "pet_char_wrappers_raw",
+        StateManager = "state_manager_raw",
+        Money = "money",
+    },
+    Remotes = {
+        Folder = "API",
+        DataChanged = "DataAPI/DataChanged",
+        DataPartiallyChanged = "DataAPI/DataPartiallyChanged",
+    },
+}
+
+local gameData = { _data = {} }
+
+local function startDataListener()
+    local apiFolder = ReplicatedStorage:WaitForChild(GameConstants.Remotes.Folder, 30)
+    if not apiFolder then
+        say("DataAPI folder not found; occupied-check disabled", "warn")
+        return false
+    end
+    local dataChanged = apiFolder:FindFirstChild(GameConstants.Remotes.DataChanged)
+    local partialChanged = apiFolder:FindFirstChild(GameConstants.Remotes.DataPartiallyChanged)
+    local myName = player.Name
+    if dataChanged and dataChanged:IsA("RemoteEvent") then
+        dataChanged.OnClientEvent:Connect(function(playerName, key, value)
+            if playerName == myName then gameData._data[key] = value end
+        end)
+    end
+    if partialChanged and partialChanged:IsA("RemoteEvent") then
+        partialChanged.OnClientEvent:Connect(function(playerName, changes)
+            if playerName ~= myName or type(changes) ~= "table" then return end
+            for _, change in ipairs(changes) do
+                if type(change) == "table" and type(change.replicated_key_path) == "table" then
+                    local path = change.replicated_key_path
+                    local rootKey = path[1]
+                    if #path == 1 then
+                        gameData._data[rootKey] = change.serialized_partial_value
+                    else
+                        if type(gameData._data[rootKey]) ~= "table" then gameData._data[rootKey] = {} end
+                        local node = gameData._data[rootKey]
+                        for i = 2, #path - 1 do
+                            if type(node[path[i]]) ~= "table" then node[path[i]] = {} end
+                            node = node[path[i]]
+                        end
+                        node[path[#path]] = change.serialized_partial_value
+                    end
+                end
+            end
+        end)
+    end
+    -- Snapshot from ClientData (Adopt Victims GameData:_loadSnapshot)
+    pcall(function()
+        local moduleScript = ReplicatedStorage
+        for _, name in ipairs({ "ClientModules", "Core", "ClientData" }) do
+            moduleScript = moduleScript and moduleScript:FindFirstChild(name)
+        end
+        if moduleScript then
+            local clientData = require(moduleScript)
+            if type(clientData) == "table" and type(clientData.get_data) == "function" then
+                local all = clientData.get_data()
+                local mine = type(all) == "table" and all[myName]
+                if type(mine) == "table" then
+                    for _, k in pairs(GameConstants.DataKeys) do
+                        if mine[k] ~= nil then gameData._data[k] = mine[k] end
+                    end
                 end
             end
         end
-        return false
     end)
-    return ok and result or false
+    return true
+end
+
+-- pet wrapper: pet_unique -> char (StreamingId), from pet_char_wrappers_raw
+local function getStreamingId(petUnique)
+    local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
+    if type(wrappers) ~= "table" then return nil end
+    for _, wrapper in pairs(wrappers) do
+        if type(wrapper) == "table" and wrapper.pet_unique == petUnique and type(wrapper.char) == "string" then
+            return wrapper.char
+        end
+    end
+    return nil
+end
+
+-- is my pet still seated in ANY furniture piece in my house?
+-- (Adopt Victims Tasks.petOffFurniture -> isOn())
+local function isPetOnFurniture(petUnique)
+    local interior = gameData._data[GameConstants.DataKeys.Interior]
+    if type(interior) ~= "table" or type(interior.furniture) ~= "table" then
+        return nil -- unknown
+    end
+    local pid = getStreamingId(petUnique)
+    if not pid then return nil end -- no wrapper yet: can't check
+    for _, piece in pairs(interior.furniture) do
+        if type(piece) == "table" and type(piece.occupied) == "table" then
+            for _, who in pairs(piece.occupied) do
+                if who == pid then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- the pet model in workspace.Pets, matched by StreamingId attribute
+local function findPetModel(petUnique)
+    local pid = getStreamingId(petUnique)
+    if not pid then return nil end
+    local folder = workspace:FindFirstChild("Pets")
+    if not folder then return nil end
+    for _, model in ipairs(folder:GetChildren()) do
+        local ok, v = pcall(function() return model:GetAttribute("StreamingId") end)
+        if ok and v == pid then return model end
+    end
+    return nil
+end
+
+-- ================= NEW: DETACH VERIFIED VIA DATA =================
+-- The real fix. Adopt Victims sends PetAPI/ExitFurnitureUseStates(petUnique), then waits for
+-- interior.furniture[*].occupied[] to stop containing the pet. Only then does it hold the pet.
+
+local function detachPetByData(petUnique, why)
+    local seated = isPetOnFurniture(petUnique)
+    if seated == false then return true end -- already off
+    if seated == nil then
+        -- no interior data: fall back to position check (best effort)
+        local model = findPetModel(petUnique)
+        if not model then return false, "no wrapper / interior data" end
+    end
+
+    for attempt = 1, DETACH_RETRIES do
+        if not TasksMode then return false end
+
+        say(string.format("%s: sending ExitFurnitureUseStates (try %d/%d)", why, attempt, DETACH_RETRIES), "info")
+        callAPI("PetAPI/ExitFurnitureUseStates", { petUnique })
+
+        -- Data-verified wait: occupied[] must clear
+        local deadline = os.clock() + DETACH_TIMEOUT
+        local cleared = false
+        while os.clock() < deadline do
+            if not TasksMode then return false end
+            local still = isPetOnFurniture(petUnique)
+            if still == false then cleared = true; break end
+            task.wait(0.25)
+        end
+
+        if cleared then
+            say(why .. ": detached (occupied[] cleared)", "ok")
+            return true
+        end
+
+        -- Last attempt: also try position fallback
+        if attempt == DETACH_RETRIES then
+            local model = findPetModel(petUnique)
+            if model then
+                local still = isPetOnFurniture(petUnique)
+                if still == nil then
+                    -- no data to verify: use a generous position check
+                    local pos = getPosition(model)
+                    if pos then
+                        -- if it moved away from all furniture CFrames, consider it detached
+                        local nearest = math.huge
+                        for _, f in ipairs(PET_FURNITURE) do
+                            if f.cframe then
+                                local d = (pos - f.cframe.Position).Magnitude
+                                if d < nearest then nearest = d end
+                            end
+                        end
+                        if nearest > 15 then
+                            say(why .. ": detached (position fallback, nearest furniture " .. math.floor(nearest) .. " studs)", "warn")
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+    return false, "occupied[] still contains the pet after " .. DETACH_RETRIES .. " ExitFurnitureUseStates"
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -186,242 +306,118 @@ local function createFamilyAndInvite()
     FamilyMode = false
 end
 
--- ================= TASK RUNNERS FROM THE FARM =================
--- Instead of COCOON's own hold/place/eject, delegate to the farm's task functions.
--- The farm already implements:
---   Tasks.pet_me.run(ctx, group)           - petting
---   Tasks.feed.run(ctx, group)             - hungry / thirsty for pet AND baby
---   Tasks.furniture.run(ctx, group)        - bed / shower / toilet (pet + baby)
---   Tasks.location.run(ctx, group)         - salon, school, pizza, camping, beach, bored
---   Tasks.play.run(ctx, group)             - play
---   Tasks.mystery.run(ctx, group)          - mystery cards
---   Tasks.walk.run / Tasks.ride.run        - walk / ride
---   EventTasks.*                           - ghost gallery, hauntlet, spotlight, shoebill, skelicorn, ...
---   HouseTasks.*                           - lure box, mannequin setup/buy, auto pay
---   WhereBear.task                         - where bear
---
--- The farm's task manager builds a `ctx` for each run:
---   ctx = { logger, state, interaction, travel, petLocator, furniture, gameData,
---           farmConfig, minigame, spotlight, hauntlet, maid, waitUntil, phase, ... }
---
--- So COCOON needs a ctx that satisfies those. The farm already has all the dependencies
--- live in getgenv().AdoptMeFarm internals? No — they are closures. The clean way is to
--- have COCOON run INSIDE the farm's main() so it can reuse the same `import` and `ctx`
--- machinery. See the note at the top.
-
--- For a standalone COCOON, we build a minimal ctx ourselves from the public farm API:
-local function makeContext(farmApi)
-    local state = farmApi.State
-    local logger = {
-        info = function(_, cat, msg) say(("[%s] %s"):format(tostring(cat), tostring(msg)), "info") end,
-        warn = function(_, cat, msg) say(("[%s] %s"):format(tostring(cat), tostring(msg)), "warn") end,
-        success = function(_, cat, msg) say(("[%s] %s"):format(tostring(cat), tostring(msg)), "ok") end,
-        debug = function() end,
-        error = function(_, cat, msg) say(("[%s] %s"):format(tostring(cat), tostring(msg)), "bad") end,
-    }
-    local currentMaid = { jobs = {} }
-    local function maidGive(job) table.insert(currentMaid.jobs, job) return job end
-    local ctx = {
-        logger = logger,
-        state = state,
-        maid = { Give = maidGive, Clean = function() end },
-        gameData = nil, -- filled by caller
-        petLocator = nil,
-        furniture = nil,
-        interaction = nil,
-        travel = nil,
-        farmConfig = farmApi.Config and farmApi.Config.Farm or {},
-        minigame = nil,
-        spotlight = nil,
-        hauntlet = nil,
-    }
-    function ctx.waitUntil(predicate, seconds)
-        local deadline = os.clock() + (tonumber(seconds) or 5)
-        while os.clock() < deadline do
-            if predicate() then return true end
-            task.wait(0.2)
-        end
-        return false
-    end
-    function ctx.setWaiting() end
-    function ctx.phase(text) say(text, "info") end
-    function ctx.currentGroup(kind)
-        -- read from the farm's live state
-        local active = state:get("ailments.active", {})
-        local group = nil
-        for _, entry in ipairs(active) do
-            if entry.kind == kind then
-                group = group or { kind = kind, entries = {}, anyInProgress = false, maxRate = 0, oldest = math.huge }
-                table.insert(group.entries, entry)
-                if entry.owner == "pet" and not group.petEntry then group.petEntry = entry end
-                if entry.inProgress then group.anyInProgress = true end
-                group.maxRate = math.max(group.maxRate, entry.rate or 0)
-                group.oldest = math.min(group.oldest, entry.createdAt or math.huge)
-            end
-        end
-        return group
-    end
-    function ctx.findEntry(kind, owner, petUnique)
-        for _, entry in ipairs(state:get("ailments.active", {}) or {}) do
-            if entry.kind == kind and entry.owner == owner and (owner == "baby" or entry.petUnique == petUnique) then
-                return entry
-            end
-        end
-        return nil
-    end
-    function ctx.isKindGone(kind) return ctx.currentGroup(kind) == nil end
-    function ctx.completedSince() return false end
-    function ctx.kindCompletedSince() return false end
-    return ctx
-end
-
--- The farm's task runners need a real ctx. Build it once from the live farm internals
--- by asking the farm to expose them (add this to the farm's main() near `sharedEnvironment[GLOBAL_KEY] = api`):
---   api._internal = { import = import, interaction = interaction, travel = ..., petLocator = ...,
---                     furniture = ..., gameData = gameData, taskManager = taskManager,
---                     minigame = minigame, hauntlet = hauntlet, spotlight = spotlight }
--- COCOON then uses Farm._internal to call the exact same code the farm uses.
-local internal = Farm._internal
-if type(internal) ~= "table" then
-    say("Farm must expose _internal (add `api._internal = {...}` in its main())", "bad")
-    return
-end
-
-local TasksMod = internal.import("Game/Tasks")
-local EventTasksMod = internal.import("Game/EventTasks")
-local HouseTasksMod = internal.import("Game/HouseTasks")
-local WhereBearMod = internal.import("Game/WhereBear")
-
--- Build a ctx that satisfies the farm's task runners
-local function farmContext()
-    local ctx = makeContext(Farm)
-    ctx.interaction = internal.interaction
-    ctx.travel = internal.travel
-    ctx.petLocator = internal.petLocator
-    ctx.furniture = internal.furniture
-    ctx.gameData = internal.gameData
-    ctx.minigame = internal.minigame
-    ctx.spotlight = internal.spotlight
-    ctx.hauntlet = internal.hauntlet
-    ctx.state = Farm.State
-    ctx.farmConfig = Farm.Config.Farm
-    -- mirror the farm's own helpers so tasks see identical behavior
-    local tm = internal.taskManager
-    if tm then
-        function ctx.findEntry(...) return tm:_group and tm:_group(...) end
-    end
-    return ctx
-end
-
--- ================= BUTTON 2: RUN TASKS VIA THE FARM =================
+-- ================= BUTTON 2: CONTINUOUS WORKER POOL =================
 local TasksMode = false
 local queue = {}
+local heldSubjects = {}
 local activeWorkers = 0
 local passNumber, passDone, passTotal = 0, 0, 0
 
 local function hold(obj)
-    -- use the farm's pet model holder (HoldPet = AdoptAPI/HoldBaby)
-    local ok = pcall(function()
-        internal.interaction:send("HoldPet", obj)
-    end)
-    if not ok then callAPI("AdoptAPI/HoldBaby", { obj }) end
+    callAPI("AdoptAPI/HoldBaby", { obj })
     task.wait(0.5)
 end
 local function eject(obj)
     if obj then
-        local ok = pcall(function()
-            internal.interaction:send("DropPet", obj)
-        end)
-        if not ok then callAPI("AdoptAPI/EjectBaby", { obj }, true) end
+        callAPI("AdoptAPI/EjectBaby", { obj }, true)
     end
     task.wait(EJECT_TIME)
 end
 
-local function ejectAllHeld() end -- the farm's task runners already release pets
-
--- Reuse the farm's own furniture task instead of hand-rolling the dwell loop.
-local function runFurnitureTask(kind, entries)
-    local ctx = farmContext()
-    local group = { kind = kind, entries = entries, anyInProgress = false, maxRate = 0, oldest = math.huge }
-    local taskDef = TasksMod.findFor(kind)
-    if not taskDef then return false, "no task for " .. kind end
-    local ok, result, reason = pcall(taskDef.run, ctx, group)
-    return ok and result == true, reason
+local function ejectAllHeld()
+    for id, obj in pairs(heldSubjects) do
+        if obj then
+            say("Force eject: " .. (obj.Name or "?"), "warn")
+            pcall(eject, obj)
+        end
+        heldSubjects[id] = nil
+    end
 end
 
--- Process a single baby (character) via the farm's furniture task
-local function processBaby(p)
-    if not p.Character then return end
-    local name = p.Name
-    say("Baby: " .. name, "info")
-    for _, f in ipairs(BABY_FURNITURE) do
+local function processSubject(kind, obj, fList, offset, workerIndex)
+    if not obj or not obj.Parent then return end
+    local name = obj.Name or "?"
+
+    if kind == "Pet" then
+        -- Pets: use the verified detach flow (ExitFurnitureUseStates -> occupied[] clear)
+        -- BEFORE holding. Pets don't have a petUnique here (obj.Name is the model name), so we
+        -- match by the pet wrapper whose char StreamingId == the model's StreamingId.
+        local petUnique = nil
+        local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
+        if type(wrappers) == "table" then
+            local modelStream = obj:GetAttribute("StreamingId")
+            if modelStream then
+                for _, w in pairs(wrappers) do
+                    if type(w) == "table" and w.char == modelStream then
+                        petUnique = w.pet_unique; break
+                    end
+                end
+            end
+        end
+
+        if petUnique then
+            -- First: detach from ANY furniture (data-verified)
+            local okDetach, whyDetach = detachPetByData(petUnique, "Pet " .. name)
+            if not okDetach then
+                say("Pet " .. name .. ": could not detach — " .. tostring(whyDetach), "bad")
+                -- Don't proceed; leave the pet where it is (better than breaking the interior state)
+                return
+            end
+        else
+            say("Pet " .. name .. ": no pet wrapper (can't verify detach via occupied[]), falling back to position check", "warn")
+        end
+    end
+
+    heldSubjects[workerIndex] = obj
+    say(kind .. ": " .. name .. " (held)", "info")
+    hold(obj)
+
+    local n = #fList
+    for i = 1, n do
         if not TasksMode then break end
-        setGoal("Baby " .. name .. " -> " .. f.label, { f.id })
-        local ok = callAPI("InteractablesAPI/MakeBabyUseFurniture", { p.Character, f.id, f.mode }, true)
-        if not ok then
-            -- fall back to the farm's furniture runner
-            local done, reason = runFurnitureTask(f.label, {
-                { owner = "baby", kind = f.label, inProgress = true, rate = 1/20 },
-            })
-            if not done then say("Baby " .. name .. " " .. f.label .. ": " .. tostring(reason), "warn") end
+        local f = fList[((i - 1 + offset) % n) + 1]
+        setGoal("Pass " .. passNumber .. " | " .. kind .. " " .. name .. " -> " .. f.label, { f.id })
+        if kind == "Pet" then
+            callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, obj })
+        else
+            callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
         local t = 0
         while t < FURNITURE_DWELL and TasksMode do
-            setNow(("Baby %s on %s — %d/%ds"):format(name, f.label, t, FURNITURE_DWELL))
+            setNow(string.format("P%d %s %s on %s — %.0f/%ds",
+                passNumber, kind, name, f.label, t, FURNITURE_DWELL))
             task.wait(1); t += 1
         end
         task.wait(BETWEEN_FURNITURE)
-    end
-    say("Baby: " .. name .. " done", "ok")
-end
 
--- Process a single pet via the farm's furniture task (with movement-verified detach)
-local function processPet(pet)
-    if not pet or not pet.Parent then return end
-    local name = pet.Name or "?"
-    say("Pet: " .. name, "info")
-    hold(pet)
-    for _, f in ipairs(PET_FURNITURE) do
-        if not TasksMode then break end
-        setGoal("Pet " .. name .. " -> " .. f.label, { f.id })
-        local ok = callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, pet })
-        if not ok then
-            local done, reason = runFurnitureTask(f.label, {
-                { owner = "pet", kind = f.label, inProgress = true, rate = 1/20, petUnique = name },
-            })
-            if not done then say("Pet " .. name .. " " .. f.label .. ": " .. tostring(reason), "warn") end
-        end
-        local t = 0
-        while t < FURNITURE_DWELL and TasksMode do
-            setNow(("Pet %s on %s — %d/%ds"):format(name, f.label, t, FURNITURE_DWELL))
-            task.wait(1); t += 1
-        end
-        task.wait(BETWEEN_FURNITURE)
-        -- movement-verified detach (the v3.6 fix)
-        if f.cframe then
-            local startPos = getPosition(pet)
-            local detached = false
-            for attempt = 1, PET_UNSTICK_ATTEMPTS do
-                if not TasksMode then break end
-                if not pet.Parent then detached = true; break end
-                local okHold = callAPI("AdoptAPI/HoldBaby", { pet })
-                task.wait(1.5)
-                local pos = getPosition(pet)
-                local moved = pos and startPos and (pos - startPos).Magnitude > 2
-                local farEnough = pos and (pos - f.cframe.Position).Magnitude > PET_DETACH_RADIUS
-                local noWeld = not hasAttachmentToFurniture(pet)
-                if farEnough or (moved and noWeld) then detached = true; break end
-                setNow(("Pet %s: detaching from %s (attempt %d/%d)..."):format(name, f.label, attempt, PET_UNSTICK_ATTEMPTS))
-                task.wait(0.2)
+        -- Detach for the next furniture
+        if kind == "Pet" and i < n and f.cframe then
+            -- find the petUnique again (holding may have updated wrappers)
+            local petUnique = nil
+            local wrappers = gameData._data[GameConstants.DataKeys.PetWrappers]
+            if type(wrappers) == "table" then
+                local modelStream = obj:GetAttribute("StreamingId")
+                if modelStream then
+                    for _, w in pairs(wrappers) do
+                        if type(w) == "table" and w.char == modelStream then
+                            petUnique = w.pet_unique; break
+                        end
+                    end
+                end
             end
-            if not detached then
-                say("Pet " .. name .. ": could not detach from " .. f.label, "warn")
-                break
+            if petUnique then
+                if not detachPetByData(petUnique, "Pet " .. name .. " @ " .. f.label) then
+                    say("Pet " .. name .. ": could not detach from " .. f.label .. ", ejecting", "warn")
+                    break
+                end
             end
+            task.wait(0.3)
         end
     end
-    eject(pet)
-    say("Pet: " .. name .. " done", "ok")
+    eject(obj)
+    say(kind .. ": " .. name .. " ejected", "ok")
+    heldSubjects[workerIndex] = nil
+    task.wait(BETWEEN_SUBJECTS)
 end
 
 local function workerLoop(workerIndex)
@@ -430,16 +426,16 @@ local function workerLoop(workerIndex)
         if not item then break end
         activeWorkers += 1
         local ok, err = pcall(function()
-            if item.kind == "Baby" then
-                processBaby(item.obj)
-            else
-                processPet(item.obj)
-            end
+            processSubject(item.kind, item.obj, item.flist, workerIndex, workerIndex)
         end)
-        if not ok then say("Worker error: " .. tostring(err), "bad"); pcall(eject, item.obj) end
+        if not ok then
+            say("Worker error: " .. tostring(err), "bad")
+            pcall(eject, item.obj)
+            heldSubjects[workerIndex] = nil
+        end
         activeWorkers -= 1
         passDone += 1
-        say(("Pass %d: %d/%d done"):format(passNumber, passDone, passTotal), "ok")
+        say(string.format("Pass %d: %d/%d done", passNumber, passDone, passTotal), "ok")
     end
 end
 
@@ -447,29 +443,37 @@ local function runOnePass()
     passNumber += 1
     passDone, passTotal = 0, 0
     table.clear(queue)
+    table.clear(heldSubjects)
 
     local babies = otherPlayers()
     for _, p in ipairs(babies) do
         if p.Character then
-            table.insert(queue, { kind = "Baby", obj = p.Character })
+            table.insert(queue, { kind = "Baby", obj = p.Character, flist = BABY_FURNITURE })
         end
     end
     for _, pet in ipairs(petsOnServer()) do
-        table.insert(queue, { kind = "Pet", obj = pet })
+        table.insert(queue, { kind = "Pet", obj = pet, flist = PET_FURNITURE })
     end
     passTotal = #queue
+
     if passTotal == 0 then
         say("Pass " .. passNumber .. ": nobody on server, waiting...", "warn")
         return
     end
-    say(("Pass %d: %d subjects (%d babies, %d pets), %d workers"):format(
+
+    say(string.format("Pass %d: %d subjects (%d babies, %d pets), %d workers",
         passNumber, passTotal, #babies, passTotal - #babies, MAX_CONCURRENT), "info")
-    for i = 1, MAX_CONCURRENT do task.spawn(workerLoop, i) end
+
+    for i = 1, MAX_CONCURRENT do
+        task.spawn(workerLoop, i)
+    end
+
     while TasksMode and (#queue > 0 or activeWorkers > 0) do
-        setNow(("Pass %d | Active: %d | Left: %d | Done: %d/%d"):format(
+        setNow(string.format("Pass %d | Active: %d | Left: %d | Done: %d/%d",
             passNumber, activeWorkers, #queue, passDone, passTotal))
         task.wait(1)
     end
+    ejectAllHeld()
 end
 
 local function startAllTasks()
@@ -483,7 +487,8 @@ local function startAllTasks()
         end
     end
     table.clear(queue)
-    say("Task runner stopped", "ok")
+    ejectAllHeld()
+    say("Task runner stopped, all subjects ejected", "ok")
 end
 
 -- ================= UI =================
@@ -542,12 +547,13 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v4.0 (farm-powered)", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v4.0", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
         FamilyMode, TasksMode = false, false
         table.clear(queue)
+        ejectAllHeld()
         uiLog = nil; ui.now = nil; f:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
@@ -556,7 +562,7 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 250, 320
+    local width, height = 250, 340
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
@@ -611,7 +617,8 @@ local function mainWindow()
             TasksMode = false
             table.clear(queue)
             b.Text = "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [OFF]"; b.BackgroundColor3 = THEME.task
-            say("Stopping...", "warn")
+            say("Stopping... ejecting held subjects", "warn")
+            task.spawn(ejectAllHeld)
             return
         end
         b.Text = "RUN TASKS NONSTOP (x" .. MAX_CONCURRENT .. ") [ON]"; b.BackgroundColor3 = THEME.ok
@@ -622,25 +629,35 @@ local function mainWindow()
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Uses the farm's Tasks modules", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Movement-verified pet detach", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Farm must be running first", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Uses PetAPI/ExitFurnitureUseStates + occupied[] check", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "(Adopt Victims' verified detach — no stuck pets)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Data-verified, not position-guessed", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v4.0 — farm-powered", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v4.0 — Adopt Victims detach flow", 10, THEME.dim)
+    text(frame, 8, 298, width-16, 14, "pet_char_wrappers_raw + house_interior.occupied", 10, THEME.dim)
 end
 
 env.COCOON = {
     Stop = function()
         FamilyMode, TasksMode = false, false
         table.clear(queue)
+        ejectAllHeld()
     end,
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
+    EjectAllHeld = ejectAllHeld,
+    -- expose for debugging
+    IsPetOnFurniture = isPetOnFurniture,
+    DetachPet = detachPetByData,
+    GameData = gameData,
 }
 
+-- start data listener before UI so occupied[] tracking is live
+startDataListener()
+
 mainWindow()
-say("Loaded v4.0. Farm-powered task runners. Farm running: " .. tostring(Farm ~= nil), "ok")
+say("Loaded v4.0. Adopt Victims detach flow (ExitFurnitureUseStates + data-verified).", "ok")
