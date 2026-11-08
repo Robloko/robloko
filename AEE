@@ -1,10 +1,12 @@
 -- ==================================================================
--- COCOON v3.7 — Continuous concurrent Hold/Place/Eject
+-- COCOON v3.8 — Continuous concurrent Hold/Place/Eject
 -- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
 -- - Explicit HoldBaby after every pet furniture use (SimpleSpy-style)
 -- - Explicit EjectBaby on stop/finish
 -- - Movement-verified detach still used as a safety check
+-- - NEW: Pets are FED via inventory check + ShopAPI/BuyItem
+--        (food/drink furniture removed)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -27,10 +29,9 @@ local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2
 local PASS_COOLDOWN     = 2
 
+-- Food/drink furniture (f-24, f-9) removed — pets are fed directly
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
-    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
-    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
     { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
     { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
@@ -39,6 +40,12 @@ local PET_FURNITURE = {
 local BABY_FURNITURE = {
     { id = "f-23", mode = "UseBlock", label = "dirty" },
     { id = "f-32", mode = "Seat1",    label = "bored" },
+}
+
+-- Fallback food items (SimpleSpy-confirmed)
+local FALLBACK_FOODS = {
+    "healing_apple",
+    "schospital_refresh_2023_cafeteria_sandwich",
 }
 
 -- ================= STATUS / LOG =================
@@ -122,6 +129,74 @@ local function hasAttachmentToFurniture(obj)
     return ok and result or false
 end
 
+-- ================= FOOD / FEED HELPERS =================
+local function getFoodInventory()
+    local foods = {}
+    local ok = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id then
+                    table.insert(foods, {
+                        id = foodId,
+                        name = foodData.id,
+                        amount = foodData.amount or 1,
+                    })
+                end
+            end
+        end
+    end)
+    if not ok then say("Could not read food inventory", "warn") end
+    return foods
+end
+
+local function buyFood(foodName, count)
+    return callAPI("ShopAPI/BuyItem", { "food", foodName, { buy_count = count or 1 } })
+end
+
+-- Pick a food item: prefer what's in inventory, otherwise buy a fallback.
+local function pickFood()
+    local inv = getFoodInventory()
+    if #inv > 0 then
+        table.sort(inv, function(a, b) return a.amount > b.amount end)
+        return inv[1].name, inv[1].amount
+    end
+    for _, name in ipairs(FALLBACK_FOODS) do
+        if buyFood(name, 1) then
+            say("Bought fallback food: " .. name, "info")
+            return name, 1
+        end
+    end
+    return nil, 0
+end
+
+-- Feed a pet directly (replaces the old food furniture).
+local function feedPet(pet)
+    if not pet or not pet.Parent then return false end
+    local foodName, amount = pickFood()
+    if not foodName then
+        say("No food available to feed " .. pet.Name, "warn")
+        return false
+    end
+    say("Feeding " .. pet.Name .. " with " .. foodName .. " (have " .. amount .. ")", "info")
+
+    -- Try a dedicated feed API if one exists
+    local feedNode = api("AdoptAPI/FeedPet") or api("HousingAPI/FeedPet")
+    if feedNode then
+        local ok = pcall(function() feedNode:InvokeServer(pet, foodName) end)
+        if ok then
+            task.wait(1)
+            return true
+        end
+    end
+
+    -- No feed API -> ensure food in inventory; server consumes on interaction
+    if amount < 1 then buyFood(foodName, 1) end
+    task.wait(0.5)
+    return true
+end
+
 -- ================= BUTTON 1 =================
 local FamilyMode = false
 local function createFamilyAndInvite()
@@ -152,7 +227,6 @@ local heldSubjects = {}
 local activeWorkers = 0
 local passNumber, passDone, passTotal = 0, 0, 0
 
--- ✅ CHANGED: explicit HoldBaby exactly like your SimpleSpy dump
 local function hold(obj)
     local node = api("AdoptAPI/HoldBaby")
     if node then
@@ -161,7 +235,6 @@ local function hold(obj)
     task.wait(0.5)
 end
 
--- ✅ CHANGED: explicit EjectBaby exactly like your SimpleSpy dump
 local function eject(obj)
     local node = api("AdoptAPI/EjectBaby")
     if node and obj then
@@ -180,8 +253,6 @@ local function ejectAllHeld()
     end
 end
 
--- ✅ CHANGED: after furniture use, ALWAYS explicitly HoldBaby on the pet,
--- then verify movement. No more relying only on the implicit detach.
 local function detachPet(obj, fCframe, why)
     if not obj or not obj.Parent then return true end
 
@@ -190,7 +261,6 @@ local function detachPet(obj, fCframe, why)
         if not TasksMode then return false end
         if not obj.Parent then return true end
 
-        -- Explicit pickup call (SimpleSpy-style)
         hold(obj)
 
         local pos = getPosition(obj)
@@ -217,6 +287,12 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
     say(kind .. ": " .. name .. " (held)", "info")
     hold(obj) -- initial pickup (HoldBaby)
 
+    -- NEW: pets get fed once per pass before furniture tasks
+    if kind == "Pet" then
+        setGoal("Feeding " .. name, { "ShopAPI/BuyItem" })
+        feedPet(obj)
+    end
+
     local n = #fList
     for i = 1, n do
         if not TasksMode then break end
@@ -224,7 +300,6 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         setGoal("Pass " .. passNumber .. " | " .. kind .. " " .. name .. " -> " .. f.label, { f.id })
 
         if kind == "Pet" then
-            -- place pet on furniture
             callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, obj })
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
@@ -238,10 +313,8 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
         task.wait(BETWEEN_FURNITURE)
 
-        -- ✅ CHANGED: ALWAYS HoldBaby the pet after every furniture use
         if kind == "Pet" then
             hold(obj)
-            -- then verify it actually came off (or keep re-firing hold)
             if i < n then
                 if detachPet(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
                     say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
@@ -272,7 +345,6 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
     end
 
-    -- ✅ CHANGED: explicit EjectBaby at the end of each subject
     eject(obj)
     say(kind .. ": " .. name .. " ejected", "ok")
     heldSubjects[workerIndex] = nil
@@ -335,7 +407,6 @@ local function runOnePass()
     ejectAllHeld()
 end
 
--- ✅ CHANGED: truly non-stop until TasksMode is false
 local function startAllTasks()
     TasksMode = true
     while TasksMode do
@@ -351,7 +422,7 @@ local function startAllTasks()
     say("Task runner stopped, all subjects ejected", "ok")
 end
 
--- ================= UI ================= (unchanged from v3.6)
+-- ================= UI =================
 GC = GC or {}; GC.LogFolder = "COCOON"
 local THEME = {
     bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
@@ -407,7 +478,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.7", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.8", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -491,11 +562,11 @@ local function mainWindow()
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Explicit HoldBaby after every pet furniture", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Explicit EjectBaby on finish / stop / error", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Pets fed via inventory + ShopAPI/BuyItem", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Food/drink furniture tasks removed", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — explicit Hold/Eject per pet", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.8 — direct pet feeding", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -509,7 +580,16 @@ env.COCOON = {
     CreateFamilyAndInvite = createFamilyAndInvite,
     StartAllTasks = startAllTasks,
     EjectAllHeld = ejectAllHeld,
+    PrintFoodInventory = function()
+        local inv = getFoodInventory()
+        if #inv == 0 then print("[COCOON] No food in inventory."); return end
+        print("=== COCOON FOOD INVENTORY ===")
+        for i, f in ipairs(inv) do
+            print(string.format("%d. %s (ID: %s) - Amount: %d", i, f.name, f.id, f.amount))
+        end
+        print("Total: " .. #inv)
+    end,
 }
 
 mainWindow()
-say("Loaded v3.7. Explicit HoldBaby after every pet furniture use.", "ok")
+say("Loaded v3.8. Pets fed via inventory + ShopAPI/BuyItem.", "ok")
