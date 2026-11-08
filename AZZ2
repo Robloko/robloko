@@ -1,8 +1,9 @@
 -- ==================================================================
--- COCOON v3.1 — Concurrent Hold/Place/Eject worker pool (fixed)
+-- COCOON v3.2 — Concurrent Hold/Place/Eject worker pool
 -- - 2 workers hold 2 subjects at once (game cap: 2 objects)
 -- - Guaranteed eject: subjects are ALWAYS ejected, even on stop/error
--- - Stop button / X button force-eject everything still held
+-- - UNSTICK: re-holds pets after UseBlock furniture (food/drink) so
+--   they don't stay glued to the bowl before the next furniture
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,6 +22,7 @@ local HOLD_TIME         = 0.5
 local EJECT_TIME        = 0.4
 local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
 local MAX_TASK_PASSES   = 1
+local UNSTICK_USEBLOCK  = true    -- re-hold pet after UseBlock furniture (food/drink) to unstick it
 
 -- Furniture for PETS (HousingAPI/ActivateFurniture)
 local PET_FURNITURE = {
@@ -166,6 +168,14 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
             task.wait(1); t += 1
         end
         task.wait(BETWEEN_FURNITURE)
+
+        -- UNSTICK: pets stay glued to food/drink (UseBlock) after the task.
+        -- Re-invoke HoldBaby to pick the pet back up before the next furniture.
+        if UNSTICK_USEBLOCK and f.mode == "UseBlock" then
+            say(kind .. " " .. name .. ": picking back up from " .. f.label, "info")
+            callAPI("AdoptAPI/HoldBaby", { obj })
+            task.wait(HOLD_TIME)
+        end
     end
     -- ALWAYS eject, even if we broke out early (stopped / error)
     eject(obj)
@@ -290,7 +300,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.1", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.2", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -373,12 +383,12 @@ local function mainWindow()
     end)
 
     text(frame, 8, 216, width-16, 14, ("Concurrent: %d subjects held at once"):format(MAX_CONCURRENT), 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pets: 6 furniture | Babies: 2 furniture", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Unstick: re-hold after food/drink", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Targets: every other player + pet on server", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.1 — concurrent hold/place/eject", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.2 — concurrent hold/place/eject", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -395,4 +405,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v3.1. Concurrent pool x2, guaranteed eject.", "ok")
+say("Loaded v3.2. Concurrent pool x2, unstick + guaranteed eject.", "ok")
