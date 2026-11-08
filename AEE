@@ -2,11 +2,9 @@
 -- COCOON v3.7 — Continuous concurrent Hold/Place/Eject
 -- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
--- - Pet pickup uses the EXACT SimpleSpy-generated call:
---     ReplicatedStorage.API["AdoptAPI/HoldBaby"]:InvokeServer(petModel)
--- - Movement-verified detach for pets (fixes stuck pets)
--- - Larger radius + re-hold attempts + parent/weld fallback
--- - Guaranteed eject on stop/error
+-- - Explicit HoldBaby after every pet furniture use (SimpleSpy-style)
+-- - Explicit EjectBaby on stop/finish
+-- - Movement-verified detach still used as a safety check
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,18 +16,17 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- seconds per furniture
+local FURNITURE_DWELL   = 20
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
-local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture (babies)
-local PET_DETACH_RADIUS = 20      -- studs: wider tolerance for pet models
-local PET_UNSTICK_ATTEMPTS = 40   -- max re-hold attempts for pets
+local UNSTICK_TIMEOUT   = 60
+local DETACH_RADIUS     = 6
+local PET_DETACH_RADIUS = 20
+local PET_UNSTICK_ATTEMPTS = 40
 local EJECT_TIME        = 0.4
-local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
-local PASS_COOLDOWN     = 2       -- seconds between full passes
+local MAX_CONCURRENT    = 2
+local PASS_COOLDOWN     = 2
 
--- Furniture for PETS (HousingAPI/ActivateFurniture)
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
     { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
@@ -39,7 +36,6 @@ local PET_FURNITURE = {
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
 
--- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture)
 local BABY_FURNITURE = {
     { id = "f-23", mode = "UseBlock", label = "dirty" },
     { id = "f-32", mode = "Seat1",    label = "bored" },
@@ -95,37 +91,6 @@ local function callAPI(name, args, fire)
     return ok
 end
 
--- EXACT SimpleSpy-generated pet pickup:
---   game:GetService("ReplicatedStorage").API["AdoptAPI/HoldBaby"]:InvokeServer(petModel)
-local function holdPetRaw(petModel)
-    local node = ReplicatedStorage:WaitForChild("API"):FindFirstChild("AdoptAPI/HoldBaby")
-    if not node then say("AdoptAPI/HoldBaby missing", "bad"); return false end
-    local ok, err = pcall(function() node:InvokeServer(petModel) end)
-    if not ok then say("HoldBaby(pet) failed: " .. tostring(err), "bad") end
-    return ok
-end
-
-local function hold(obj)              -- generic hold (used for babies)
-    callAPI("AdoptAPI/HoldBaby", { obj })
-    task.wait(0.5)
-end
-local function eject(obj)
-    if obj then
-        callAPI("AdoptAPI/EjectBaby", { obj }, true)
-    end
-    task.wait(EJECT_TIME)
-end
-
-local function ejectAllHeld()
-    for id, obj in pairs(heldSubjects) do
-        if obj then
-            say("Force eject: " .. (obj.Name or "?"), "warn")
-            pcall(eject, obj)
-        end
-        heldSubjects[id] = nil
-    end
-end
-
 local function getPosition(obj)
     if not obj or not obj.Parent then return nil end
     local ok, pos = pcall(function() return obj:GetPivot().Position end)
@@ -133,12 +98,11 @@ local function getPosition(obj)
     return nil
 end
 
--- Movement-verified detach. Uses the EXACT raw HoldBaby call for pets.
 local function stillOnFurniture(obj, fCframe, radius)
     if not fCframe then return false end
     if not obj or not obj.Parent then return false end
     local pos = getPosition(obj)
-    if not pos then return true end -- can't read position => assume stuck
+    if not pos then return true end
     return (pos - fCframe.Position).Magnitude < (radius or DETACH_RADIUS)
 end
 
@@ -158,36 +122,7 @@ local function hasAttachmentToFurniture(obj)
     return ok and result or false
 end
 
-local function detachPet(obj, fCframe, why)
-    if not obj or not obj.Parent then return true end
-    if not fCframe then return true end
-
-    local startPos = getPosition(obj)
-    for attempt = 1, PET_UNSTICK_ATTEMPTS do
-        if not TasksMode then return false end
-        if not obj.Parent then return true end
-
-        -- EXACT SimpleSpy call for pet pickup:
-        holdPetRaw(obj)
-        task.wait(1.5)
-
-        local pos = getPosition(obj)
-        local moved = pos and startPos and (pos - startPos).Magnitude > 2
-        local farEnough = pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS
-        local noWeld = not hasAttachmentToFurniture(obj)
-
-        if farEnough or (moved and noWeld) then
-            return true
-        end
-
-        setNow(string.format("%s: detaching (attempt %d/%d)...",
-            why, attempt, PET_UNSTICK_ATTEMPTS))
-        task.wait(0.2)
-    end
-    return false
-end
-
--- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
+-- ================= BUTTON 1 =================
 local FamilyMode = false
 local function createFamilyAndInvite()
     FamilyMode = true
@@ -217,29 +152,84 @@ local heldSubjects = {}
 local activeWorkers = 0
 local passNumber, passDone, passTotal = 0, 0, 0
 
+-- ✅ CHANGED: explicit HoldBaby exactly like your SimpleSpy dump
+local function hold(obj)
+    local node = api("AdoptAPI/HoldBaby")
+    if node then
+        pcall(function() node:InvokeServer(obj) end)
+    end
+    task.wait(0.5)
+end
+
+-- ✅ CHANGED: explicit EjectBaby exactly like your SimpleSpy dump
+local function eject(obj)
+    local node = api("AdoptAPI/EjectBaby")
+    if node and obj then
+        pcall(function() node:FireServer(obj) end)
+    end
+    task.wait(EJECT_TIME)
+end
+
+local function ejectAllHeld()
+    for id, obj in pairs(heldSubjects) do
+        if obj then
+            say("Force eject: " .. (obj.Name or "?"), "warn")
+            pcall(eject, obj)
+        end
+        heldSubjects[id] = nil
+    end
+end
+
+-- ✅ CHANGED: after furniture use, ALWAYS explicitly HoldBaby on the pet,
+-- then verify movement. No more relying only on the implicit detach.
+local function detachPet(obj, fCframe, why)
+    if not obj or not obj.Parent then return true end
+
+    local startPos = getPosition(obj)
+    for attempt = 1, PET_UNSTICK_ATTEMPTS do
+        if not TasksMode then return false end
+        if not obj.Parent then return true end
+
+        -- Explicit pickup call (SimpleSpy-style)
+        hold(obj)
+
+        local pos = getPosition(obj)
+        local moved      = pos and startPos and (pos - startPos).Magnitude > 2
+        local farEnough  = (not fCframe) or (pos and (pos - fCframe.Position).Magnitude > PET_DETACH_RADIUS)
+        local noWeld     = not hasAttachmentToFurniture(obj)
+
+        if farEnough or (moved and noWeld) then
+            return true
+        end
+
+        setNow(string.format("%s: detaching (attempt %d/%d)...",
+            why, attempt, PET_UNSTICK_ATTEMPTS))
+        task.wait(0.2)
+    end
+    return false
+end
+
 local function processSubject(kind, obj, fList, offset, workerIndex)
     if not obj or not obj.Parent then return end
     local name = obj.Name or "?"
     heldSubjects[workerIndex] = obj
 
     say(kind .. ": " .. name .. " (held)", "info")
-    if kind == "Pet" then
-        holdPetRaw(obj)   -- EXACT SimpleSpy call
-        task.wait(0.5)
-    else
-        hold(obj)
-    end
+    hold(obj) -- initial pickup (HoldBaby)
 
     local n = #fList
     for i = 1, n do
         if not TasksMode then break end
         local f = fList[((i - 1 + offset) % n) + 1]
         setGoal("Pass " .. passNumber .. " | " .. kind .. " " .. name .. " -> " .. f.label, { f.id })
+
         if kind == "Pet" then
+            -- place pet on furniture
             callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, obj })
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
+
         local t = 0
         while t < FURNITURE_DWELL and TasksMode do
             setNow(string.format("P%d %s %s on %s — %.0f/%ds",
@@ -248,14 +238,19 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
         task.wait(BETWEEN_FURNITURE)
 
-        if kind == "Pet" and i < n and f.cframe then
-            if detachPet(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
-                say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
-            else
-                say(kind .. " " .. name .. ": could not detach from " .. f.label, "warn")
-                break
+        -- ✅ CHANGED: ALWAYS HoldBaby the pet after every furniture use
+        if kind == "Pet" then
+            hold(obj)
+            -- then verify it actually came off (or keep re-firing hold)
+            if i < n then
+                if detachPet(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
+                    say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
+                else
+                    say(kind .. " " .. name .. ": could not detach from " .. f.label, "warn")
+                    break
+                end
+                task.wait(0.3)
             end
-            task.wait(0.3)
         elseif kind == "Baby" and i < n then
             local fC = f.cframe
             if fC and stillOnFurniture(obj, fC, DETACH_RADIUS) then
@@ -263,7 +258,7 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
                 local waited = 0
                 local detached = false
                 while waited < UNSTICK_TIMEOUT and TasksMode do
-                    callAPI("AdoptAPI/HoldBaby", { obj })
+                    hold(obj)
                     task.wait(1.5); waited += 1.5
                     if not stillOnFurniture(obj, fC, DETACH_RADIUS) then detached = true; break end
                 end
@@ -276,6 +271,8 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
             task.wait(0.3)
         end
     end
+
+    -- ✅ CHANGED: explicit EjectBaby at the end of each subject
     eject(obj)
     say(kind .. ": " .. name .. " ejected", "ok")
     heldSubjects[workerIndex] = nil
@@ -338,6 +335,7 @@ local function runOnePass()
     ejectAllHeld()
 end
 
+-- ✅ CHANGED: truly non-stop until TasksMode is false
 local function startAllTasks()
     TasksMode = true
     while TasksMode do
@@ -353,7 +351,7 @@ local function startAllTasks()
     say("Task runner stopped, all subjects ejected", "ok")
 end
 
--- ================= UI =================
+-- ================= UI ================= (unchanged from v3.6)
 GC = GC or {}; GC.LogFolder = "COCOON"
 local THEME = {
     bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
@@ -493,11 +491,11 @@ local function mainWindow()
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pet pickup = exact HoldBaby:InvokeServer(pet)", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Explicit HoldBaby after every pet furniture", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Explicit EjectBaby on finish / stop / error", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — exact SimpleSpy pet pickup", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — explicit Hold/Eject per pet", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -514,4 +512,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v3.7. Pet pickup uses exact SimpleSpy HoldBaby:InvokeServer(pet).", "ok")
+say("Loaded v3.7. Explicit HoldBaby after every pet furniture use.", "ok")
