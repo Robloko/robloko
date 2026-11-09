@@ -1,12 +1,8 @@
 -- ==================================================================
--- COCOON v3.7 — Continuous concurrent Hold/Place/Eject
+-- COCOON v3.5 — Continuous concurrent Hold/Place/Eject
 -- - NON-STOP: repeats passes over all players+pets until button OFF
 -- - 2 workers (game cap: 2 held objects)
--- - PROVEN pet workflow (SimpleSpy captures):
---     ActivateFurniture(InvokeServer) -> dwell -> HoldBaby(InvokeServer)
---     -> wait 1 -> EjectBaby(FireServer)
--- - No looped re-holds / no weld checks for pets (captures prove single pass works)
--- - Babies keep original position-verified unstick
+-- - Position-verified detach from food/drink (no stuck pets)
 -- - Guaranteed eject on stop/error
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -22,18 +18,17 @@ local INVITE_DELAY      = 1.0
 local FURNITURE_DWELL   = 20      -- seconds per furniture
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a baby
-local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture (babies)
+local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
+local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture
 local EJECT_TIME        = 0.4
-local MAX_CONCURRENT    = 1       -- game allows holding 2 objects at once
+local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
 local PASS_COOLDOWN     = 2       -- seconds between full passes
 
 -- Furniture for PETS (HousingAPI/ActivateFurniture)
--- cframes match the SimpleSpy captures for food (f-24) and drink (f-9) exactly.
 local PET_FURNITURE = {
     { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
-    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.901824951171875, 4000.619873046875, -9018.005859375) * CFrame.Angles(-0, -1.5707963705062866, 0), label = "food" },
-    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.903488159179688, 4000.619873046875, -9021.0029296875) * CFrame.Angles(-0, -1.5707963705062866, 0), label = "drink" },
+    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
+    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
     { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
     { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
     { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
@@ -102,13 +97,11 @@ local function getPosition(obj)
     return nil
 end
 
--- Movement-verified detach check used for BABIES only.
-local function stillOnFurniture(obj, fCframe, radius)
+local function stillOnFurniture(obj, fCframe)
     if not fCframe then return false end
-    if not obj or not obj.Parent then return false end
     local pos = getPosition(obj)
-    if not pos then return true end
-    return (pos - fCframe.Position).Magnitude < (radius or DETACH_RADIUS)
+    if not pos then return false end
+    return (pos - fCframe.Position).Magnitude < DETACH_RADIUS
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -162,19 +155,26 @@ local function ejectAllHeld()
     end
 end
 
--- ============ PROVEN PET WORKFLOW (from SimpleSpy captures) ============
--- After dwell: HoldBaby (InvokeServer) -> wait 1 -> EjectBaby (FireServer)
--- Exactly the sequence captured from food (f-24) and drink (f-9).
-local function detachAndEjectPet(obj, why)
-    if not obj or not obj.Parent then return true end
-    say((why or "Pet") .. ": HoldBaby (detach)...", "info")
-    local ok1 = callAPI("AdoptAPI/HoldBaby", { obj })   -- InvokeServer
-    task.wait(1)
-    if not obj.Parent then return true end
-    say((why or "Pet") .. ": EjectBaby (fire)...", "info")
-    local ok2 = callAPI("AdoptAPI/EjectBaby", { obj }, true)  -- FireServer
-    task.wait(EJECT_TIME)
-    return ok1 and ok2
+-- POSITION-VERIFIED pickup: fire HoldBaby, check the subject's actual
+-- position, retry until it has really left the furniture.
+local function pickupFromFurniture(obj, fCframe, why)
+    local waited = 0
+    while waited < UNSTICK_TIMEOUT do
+        if not TasksMode then return false end
+        if obj and not obj.Parent then return true end
+
+        callAPI("AdoptAPI/HoldBaby", { obj })
+        task.wait(1.5)
+
+        if not stillOnFurniture(obj, fCframe) then
+            return true
+        end
+        setNow(string.format("%s: still on furniture (%d/%ds), retrying pickup...",
+            why, waited, UNSTICK_TIMEOUT))
+        waited += 1.5
+    end
+    say(why .. ": could not detach after " .. UNSTICK_TIMEOUT .. "s", "bad")
+    return false
 end
 
 local function processSubject(kind, obj, fList, offset, workerIndex)
@@ -190,17 +190,11 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         if not TasksMode then break end
         local f = fList[((i - 1 + offset) % n) + 1]
         setGoal("Pass " .. passNumber .. " | " .. kind .. " " .. name .. " -> " .. f.label, { f.id })
-
         if kind == "Pet" then
-            -- EXACT proven call: ActivateFurniture InvokeServer with cframe + pet
-            callAPI("HousingAPI/ActivateFurniture", {
-                player, f.id, f.mode, { cframe = f.cframe }, obj
-            })
+            callAPI("HousingAPI/ActivateFurniture", { player, f.id, f.mode, { cframe = f.cframe }, obj })
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
-
-        -- Dwell on the furniture
         local t = 0
         while t < FURNITURE_DWELL and TasksMode do
             setNow(string.format("P%d %s %s on %s — %.0f/%ds",
@@ -209,31 +203,10 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
         task.wait(BETWEEN_FURNITURE)
 
-        if kind == "Pet" then
-            if i < n then
-                -- EXACT proven sequence for intermediate furniture:
-                -- HoldBaby (InvokeServer) -> wait 1 -> EjectBaby (FireServer)
-                if detachAndEjectPet(obj, kind .. " " .. name .. " @" .. f.label) then
-                    say(kind .. " " .. name .. ": detached from " .. f.label, "ok")
-                else
-                    say(kind .. " " .. name .. ": detach/eject failed at " .. f.label, "warn")
-                    break
-                end
-                task.wait(0.3)
-            end
-            -- last furniture falls through to the final eject below (same as capture's tail)
-        elseif kind == "Baby" and i < n then
-            -- Babies keep the original position-verified unstick
-            local fC = f.cframe
-            if fC and stillOnFurniture(obj, fC, DETACH_RADIUS) then
+        if kind == "Pet" and i < n and f.cframe then
+            if stillOnFurniture(obj, f.cframe) then
                 say(kind .. " " .. name .. ": waiting to detach from " .. f.label, "warn")
-                local waited, detached = 0, false
-                while waited < UNSTICK_TIMEOUT and TasksMode do
-                    callAPI("AdoptAPI/HoldBaby", { obj })
-                    task.wait(1.5); waited += 1.5
-                    if not stillOnFurniture(obj, fC, DETACH_RADIUS) then detached = true; break end
-                end
-                if not detached then
+                if not pickupFromFurniture(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
                     say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
                     break
                 end
@@ -242,8 +215,6 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
             task.wait(0.3)
         end
     end
-
-    -- Final eject (FireServer) — matches the capture's final EjectBaby
     eject(obj)
     say(kind .. ": " .. name .. " ejected", "ok")
     heldSubjects[workerIndex] = nil
@@ -380,7 +351,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.7", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.5", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -464,11 +435,11 @@ local function mainWindow()
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pets: Activate -> Hold (Invoke) -> wait 1 -> Eject (Fire)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Position-verified detach (no stuck pets)", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — proven pet workflow (matches captures)", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.5 — nonstop concurrent tasks", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -485,4 +456,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v3.7. Proven pet workflow (Activate -> Hold -> wait 1 -> Eject).", "ok")
+say("Loaded v3.5. Nonstop passes until button OFF.", "ok")
