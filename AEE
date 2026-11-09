@@ -1,6 +1,9 @@
 -- ==================================================================
--- COCOON v2c — Players first (sleep->bath->bored), then pets
--- Pick up (hold) ONLY before the "bored" task for each subject
+-- COCOON v2b — Server Stats + Family Builder + Hold/Place/Eject loop
+-- Workflow per subject: Hold -> furniture -> 20s -> Eject -> next
+-- MODIFIED: confirmation-aware furniture activation (waits for API
+--           success before dwell), retry on failed activation, so the
+--           last pet task ("bored") is not silently skipped.
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,22 +19,23 @@ local FURNITURE_DWELL = 20       -- seconds subject stays on each furniture
 local BETWEEN_SUBJECTS = 1.5     -- pause after eject before next subject
 local BETWEEN_FURNITURE = 0.8    -- pause between furniture pieces
 local MAX_TASK_PASSES = 1        -- 1 = run through everyone once, then stop
+local ACTIVATION_RETRIES = 2     -- extra attempts if activation fails
+local ACTIVATION_RETRY_WAIT = 0.8
 
 -- Furniture for PETS (HousingAPI/ActivateFurniture)
--- Order: sleep -> bath(dirty) -> bored. holdBefore only on "bored".
 local PET_FURNITURE = {
+    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "dirty" },
+    { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0), label = "food" },
+    { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0), label = "drink" },
+    { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0), label = "toilet" },
     { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0), label = "sleep" },
-    { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927), label = "bath" },
-    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored", holdBefore = true },
+    { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0), label = "bored" },
 }
 
 -- Furniture for BABIES (InteractablesAPI/MakeBabyUseFurniture) — no cframe arg
--- Order: sleep -> bath -> bored. holdBefore only on "bored".
--- >>> REPLACE <BABY_SLEEP_ID> and <BABY_BATH_ID> with your real IDs <<<
 local BABY_FURNITURE = {
-    { id = "<BABY_SLEEP_ID>", mode = "Seat1",    label = "sleep" },
-    { id = "<BABY_BATH_ID>",  mode = "UseBlock", label = "bath"  },
-    { id = "f-32",            mode = "Seat1",    label = "bored", holdBefore = true },
+    { id = "f-23", mode = "UseBlock", label = "dirty" },
+    { id = "f-32", mode = "Seat1",    label = "bored" },
 }
 
 -- ================= STATUS / LOG =================
@@ -74,14 +78,28 @@ end
 
 -- ================= API HELPERS =================
 local function api(name) return ReplicatedStorage:WaitForChild("API"):FindFirstChild(name) end
+
+-- fire=false -> InvokeServer (returns result), fire=true -> FireServer (no result)
 local function callAPI(name, args, fire)
     local node = api(name)
-    if not node then say("API missing: " .. name, "bad"); return false end
-    local ok, err = pcall(function()
-        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
-    end)
-    if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
-    return ok
+    if not node then say("API missing: " .. name, "bad"); return false, nil end
+    if fire then
+        local ok, err = pcall(function() node:FireServer(unpack(args)) end)
+        if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
+        return ok, nil
+    else
+        local ok, res = pcall(function() return node:InvokeServer(unpack(args)) end)
+        if not ok then say("Call failed " .. name .. ": " .. tostring(res), "bad"); return false, nil end
+        return true, res
+    end
+end
+
+-- Interpret an activation result. Treats explicit false/nil-with-error as failure,
+-- but accepts true, a truthy value, or an unknown/empty result as success (best effort).
+local function activationSucceeded(ok, res)
+    if not ok then return false end
+    if res == false then return false end
+    return true
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -130,36 +148,62 @@ local function dwell(seconds, label)
     end
 end
 
--- PET: furniture in order (sleep -> bath -> bored). Hold only before "bored".
+-- PET: hold -> each furniture (confirmed, then 20s) -> eject
 local function processPet(pet)
     if not pet or not pet.Parent then return end
     currentSubject = pet
     say("Pet: " .. (pet.Name or "?"), "info")
+    hold(pet)
     for _, f in ipairs(PET_FURNITURE) do
         if not TasksMode then break end
-        if f.holdBefore then hold(pet) end
         setGoal("Pet: " .. (pet.Name or "?") .. " -> " .. f.label, { f.id })
-        callAPI("HousingAPI/ActivateFurniture",
-            { player, f.id, f.mode, { cframe = f.cframe }, pet })
-        dwell(FURNITURE_DWELL, "Pet " .. f.label)
-        task.wait(BETWEEN_FURNITURE)
+
+        -- Confirmation-aware activation: only dwell once activation is accepted.
+        local activated = false
+        for attempt = 0, ACTIVATION_RETRIES do
+            if not TasksMode then break end
+            local ok, res = callAPI("HousingAPI/ActivateFurniture",
+                { player, f.id, f.mode, { cframe = f.cframe }, pet })
+            if activationSucceeded(ok, res) then
+                activated = true
+                break
+            end
+            if attempt < ACTIVATION_RETRIES then
+                say(string.format("Activation retry %d for %s (%s)", attempt + 1, f.label, f.id), "warn")
+                task.wait(ACTIVATION_RETRY_WAIT)
+            end
+        end
+
+        if not activated then
+            say(string.format("Activation FAILED for %s (%s) — skipping dwell", f.label, f.id), "bad")
+            task.wait(BETWEEN_FURNITURE)
+        else
+            dwell(FURNITURE_DWELL, "Pet " .. f.label)
+            task.wait(BETWEEN_FURNITURE)
+        end
     end
     eject(pet)
     currentSubject = nil
     task.wait(BETWEEN_SUBJECTS)
 end
 
--- BABY: furniture in order (sleep -> bath -> bored). Hold only before "bored".
+-- BABY: hold -> each furniture (confirmed, then 20s) -> eject
 local function processBaby(char)
     if not char or not char.Parent then return end
     currentSubject = char
     say("Baby: " .. (char.Name or "?"), "info")
+    hold(char)
     for _, f in ipairs(BABY_FURNITURE) do
         if not TasksMode then break end
-        if f.holdBefore then hold(char) end
         setGoal("Baby: " .. (char.Name or "?") .. " -> " .. f.label, { f.id })
-        callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, f.id, f.mode }, true)
-        dwell(FURNITURE_DWELL, "Baby " .. f.label)
+
+        -- FireServer has no return; assume accepted after firing.
+        local ok = callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, f.id, f.mode }, true)
+        if ok then
+            dwell(FURNITURE_DWELL, "Baby " .. f.label)
+        else
+            say(string.format("Baby activation failed for %s (%s) — skipping dwell", f.label, f.id), "bad")
+        end
         task.wait(BETWEEN_FURNITURE)
     end
     eject(char)
@@ -168,7 +212,7 @@ local function processBaby(char)
 end
 
 local function doAllTasksOnce()
-    -- PLAYERS (babies) FIRST, then PETS
+    -- babies first (they're usually fewer), then pets
     local babies = otherPlayers()
     say("Players found: " .. #babies, "info")
     for _, p in ipairs(babies) do
@@ -252,7 +296,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v2c", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v2b", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -315,26 +359,26 @@ local function mainWindow()
         end)
     end)
 
-    local taskBtn = toggleButton(frame, 8, 178, width-16, "DO ALL TASKS (PLAYERS->PETS) [OFF]", THEME.task, function(b)
+    local taskBtn = toggleButton(frame, 8, 178, width-16, "DO ALL TASKS (HOLD/PLACE/EJECT) [OFF]", THEME.task, function(b)
         if TasksMode then
-            TasksMode = false; b.Text = "DO ALL TASKS (PLAYERS->PETS) [OFF]"; b.BackgroundColor3 = THEME.task
+            TasksMode = false; b.Text = "DO ALL TASKS (HOLD/PLACE/EJECT) [OFF]"; b.BackgroundColor3 = THEME.task
             say("Task runner stopped", "warn"); return
         end
-        b.Text = "DO ALL TASKS (PLAYERS->PETS) [ON]"; b.BackgroundColor3 = THEME.ok
+        b.Text = "DO ALL TASKS (HOLD/PLACE/EJECT) [ON]"; b.BackgroundColor3 = THEME.ok
         task.spawn(startAllTasks)
         task.spawn(function()
             while TasksMode and frame.Parent do task.wait(0.5) end
-            if b.Parent then b.Text = "DO ALL TASKS (PLAYERS->PETS) [OFF]"; b.BackgroundColor3 = THEME.task end
+            if b.Parent then b.Text = "DO ALL TASKS (HOLD/PLACE/EJECT) [OFF]"; b.BackgroundColor3 = THEME.task end
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, "Order: sleep -> bath -> bored (hold only on bored)", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Players first, then pets", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Babies: <SLEEP>, <BATH>, f-32 bored", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Pets: f-31, f-5, f-32 bored", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Per subject: Hold → furniture → 20s → Eject", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Babies: f-23 dirty, f-32 bored", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Pets: f-5, f-24, f-9, f-28, f-31, f-32", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Targets: every other player + pet on server", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v2c — pick up only on bored task", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v2b — hold/place/eject automation", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -346,4 +390,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded. Players->Pets. Hold only before 'bored'.", "ok")
+say("Loaded. Counters live. Hold/place/20s/eject workflow active.", "ok")
