@@ -1,8 +1,9 @@
 -- ==================================================================
--- COCOON FAMILY CHECKER v1.0
+-- COCOON FAMILY CHECKER v1.1
 -- - Reuses COCOON UI (theme, icons, draggable window)
--- - Button: scans family_list, sends Family invite to any
---   player who is NOT already in your family
+-- - Button 1: CREATE FAMILY  (FamilyAPI/CreateFamily:InvokeServer())
+-- - Button 2: CHECK FAMILY LIST + SEND REQUESTS
+--            (invites every online player NOT in your family_list)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,12 +15,12 @@ if env.COCOON_FAM and env.COCOON_FAM.Stop then pcall(env.COCOON_FAM.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY = 1.0
-local SCAN_DELAY   = 1.5   -- seconds between passes while scanning
+local POST_CREATE_WAIT = 1.5   -- wait after CreateFamily before reading family_list
 
 -- ================= STATUS / LOG =================
 local ui = {}
 local uiLog = nil
-local status = { now = "Ready", goal = "Check family list" }
+local status = { now = "Ready", goal = "Create family, then check + invite" }
 
 local function renderStatus()
     if ui.now then
@@ -59,10 +60,9 @@ local function getPlayerData()
     return result
 end
 
--- Returns a set of usernames/userids already in our family
+-- Returns a set of usernames/userids already in our family, plus display names
 local function getFamilyMembers()
-    local members = {}   -- set of tostring identifiers
-    local names = {}     -- display list
+    local members, names = {}, {}
     local data = getPlayerData()
     if not data then return members, names end
 
@@ -74,13 +74,11 @@ local function getFamilyMembers()
         return members, names
     end
 
-    -- family_list may be keyed by name, by id, or be an array
     for k, v in pairs(familyList) do
         if type(k) == "string" then
             members[k:lower()] = true
             table.insert(names, k)
         elseif type(k) == "number" and type(v) == "table" then
-            -- array of entries: look for common name fields
             for _, field in ipairs({"name","username","display_name","displayName","player_name","playerName"}) do
                 if type(v[field]) == "string" then
                     members[v[field]:lower()] = true
@@ -102,13 +100,53 @@ local function callAPI(name, args, fire)
     local node = api(name)
     if not node then say("API missing: " .. name, "bad"); return false end
     local ok, err = pcall(function()
-        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
+        if fire then node:FireServer(unpack(args or {})) else node:InvokeServer(unpack(args or {})) end
     end)
     if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
     return ok
 end
 
--- ================= FAMILY CHECK LOGIC =================
+-- ================= BUTTON 1: CREATE FAMILY =================
+local CreateMode = false
+
+local function createFamily()
+    if CreateMode then return end
+    CreateMode = true
+    say("Creating family...", "info")
+    setGoal("FamilyAPI/CreateFamily:InvokeServer()")
+
+    -- Exact call from SimpleSpy (no arguments)
+    local node = api("FamilyAPI/CreateFamily")
+    if not node then
+        say("FamilyAPI/CreateFamily not found", "bad")
+        CreateMode = false
+        return
+    end
+
+    local ok, err = pcall(function() node:InvokeServer() end)
+    if ok then
+        say("CreateFamily called successfully", "ok")
+        task.wait(POST_CREATE_WAIT)
+
+        -- Verify by re-reading family_list
+        local members, names = getFamilyMembers()
+        local count = 0
+        for _ in pairs(members) do count += 1 end
+        if count > 0 then
+            say("Family active — " .. count .. " member(s)", "ok")
+        else
+            say("CreateFamily returned, but family_list is still empty", "warn")
+            say("(You may already be in a family, or the server rejected it)", "warn")
+        end
+    else
+        say("CreateFamily failed: " .. tostring(err), "bad")
+    end
+
+    setGoal("Ready")
+    CreateMode = false
+end
+
+-- ================= BUTTON 2: CHECK LIST + SEND REQUESTS =================
 local CheckMode = false
 
 local function checkAndInvite()
@@ -120,8 +158,8 @@ local function checkAndInvite()
     for _ in pairs(members) do memberCount += 1 end
 
     if memberCount == 0 then
-        say("No family list data found — is the player in a family?", "warn")
-        setGoal("No family data (must be in a family)")
+        say("No family data — press CREATE FAMILY first", "warn")
+        setGoal("No family — create one first")
         CheckMode = false
         return
     end
@@ -129,11 +167,10 @@ local function checkAndInvite()
     say("Family has " .. memberCount .. " member(s)", "ok")
     setGoal("Checking " .. #otherPlayers() .. " online player(s)")
 
-    local targets = otherPlayers()
     local toInvite = {}
-    for _, p in ipairs(targets) do
+    for _, p in ipairs(otherPlayers()) do
         if not CheckMode then break end
-        local key = p.Name:lower()
+        local key    = p.Name:lower()
         local uidKey = tostring(p.UserId)
         if not members[key] and not members[uidKey] then
             table.insert(toInvite, p)
@@ -156,27 +193,6 @@ local function checkAndInvite()
     say(string.format("Done — %d player(s) invited", #toInvite), "ok")
     setGoal("Ready")
     CheckMode = false
-end
-
--- Optional: automatic family creation if you're not in one yet.
--- Enable by setting AUTO_CREATE_FAMILY = true
-local AUTO_CREATE_FAMILY = true
-
-local function checkAndInviteWithAutoFamily()
-    local members = getFamilyMembers()
-    local memberCount = 0
-    for _ in pairs(members) do memberCount += 1 end
-
-    if memberCount == 0 and AUTO_CREATE_FAMILY then
-        say("Not in a family — creating one first...", "info")
-        local ok = callAPI("FamilyAPI/CreateFamily", {})
-        if not ok then
-            say("Family creation failed (already in a family?)", "bad")
-            return
-        end
-        task.wait(1.2)
-    end
-    checkAndInvite()
 end
 
 -- ================= UI =================
@@ -236,11 +252,11 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON FAM v1.0", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON FAM v1.1", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
-        CheckMode = false
+        CreateMode, CheckMode = false, false
         uiLog = nil; ui.now = nil; f:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
@@ -249,10 +265,10 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 250, 290
+    local width, height = 250, 340
     local frame = window(width, height)
 
-    -- Status row
+    -- Status
     text(frame, 8, 33, 26, 13, "Now", 10, THEME.accent, true)
     ui.now  = text(frame, 34, 33, width-42, 13, status.now, 11, THEME.text, true)
     ui.goal = text(frame, 8, 48, width-16, 12, status.goal, 10, THEME.dim)
@@ -272,40 +288,58 @@ local function mainWindow()
     create("Frame", { Position = UDim2.fromOffset(8,105), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
 
-    -- Main button: check family list + invite non-members
-    local checkBtn = toggleButton(frame, 8, 116, width-16,
-        "CHECK FAMILY LIST + SEND REQUESTS [OFF]", THEME.fam, function(b)
-        if CheckMode then
-            CheckMode = false
-            b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
-            b.BackgroundColor3 = THEME.fam
-            say("Family check stopped", "warn")
+    -- BUTTON 1: CREATE FAMILY
+    toggleButton(frame, 8, 116, width-16, "CREATE FAMILY", THEME.fam, function(b)
+        if CreateMode then
+            say("Create already running...", "warn")
             return
         end
-        b.Text = "CHECK FAMILY LIST + SEND REQUESTS [ON]"
+        b.Text = "CREATE FAMILY..."
         b.BackgroundColor3 = THEME.ok
-        task.spawn(checkAndInviteWithAutoFamily)
+        task.spawn(createFamily)
         task.spawn(function()
-            while CheckMode and frame.Parent do task.wait(0.5) end
+            while CreateMode and frame.Parent do task.wait(0.3) end
             if b.Parent then
-                b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
+                b.Text = "CREATE FAMILY"
                 b.BackgroundColor3 = THEME.fam
             end
         end)
     end)
 
-    -- Info lines
-    text(frame, 8, 154, width-16, 14, "Reads family_list via ClientData", 10, THEME.dim)
-    text(frame, 8, 168, width-16, 14, "Invites every online player not in it", 10, THEME.dim)
-    text(frame, 8, 182, width-16, 14, "Auto-creates a family if none exists", 10, THEME.dim)
-    text(frame, 8, 196, width-16, 14, "Uses FamilyAPI/InvitePlayer + CreateFamily", 10, THEME.dim)
+    -- BUTTON 2: CHECK FAMILY LIST + SEND REQUESTS
+    toggleButton(frame, 8, 154, width-16,
+        "CHECK FAMILY LIST + SEND REQUESTS [OFF]", THEME.task, function(b)
+        if CheckMode then
+            CheckMode = false
+            b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
+            b.BackgroundColor3 = THEME.task
+            say("Family check stopped", "warn")
+            return
+        end
+        b.Text = "CHECK FAMILY LIST + SEND REQUESTS [ON]"
+        b.BackgroundColor3 = THEME.ok
+        task.spawn(checkAndInvite)
+        task.spawn(function()
+            while CheckMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then
+                b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
+                b.BackgroundColor3 = THEME.task
+            end
+        end)
+    end)
 
-    create("Frame", { Position = UDim2.fromOffset(8, 216), Size = UDim2.new(1,-16,0,1),
+    -- Info
+    text(frame, 8, 192, width-16, 14, "1) CREATE FAMILY = FamilyAPI/CreateFamily", 10, THEME.dim)
+    text(frame, 8, 206, width-16, 14, "2) CHECK = read family_list, invite the rest", 10, THEME.dim)
+    text(frame, 8, 220, width-16, 14, "Uses FamilyAPI/InvitePlayer per non-member", 10, THEME.dim)
+    text(frame, 8, 234, width-16, 14, "Run CREATE first if you have no family yet", 10, THEME.dim)
+
+    create("Frame", { Position = UDim2.fromOffset(8, 252), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 222, width-16, 14, "COCOON FAM v1.0 — family checker + inviter", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "COCOON FAM v1.1 — create + check + invite", 10, THEME.dim)
 
-    -- Members readout
-    local memberLabel = text(frame, 8, 240, width-16, 14, "Family members: —", 10, THEME.accent, true)
+    -- Live family members readout
+    local memberLabel = text(frame, 8, 278, width-16, 14, "Family members: —", 10, THEME.accent, true)
     task.spawn(function()
         while frame.Parent do
             pcall(function()
@@ -322,11 +356,11 @@ local function mainWindow()
 end
 
 env.COCOON_FAM = {
-    Stop = function() CheckMode = false end,
+    Stop = function() CreateMode, CheckMode = false, false end,
+    CreateFamily = createFamily,
     CheckAndInvite = checkAndInvite,
-    CheckAndInviteWithAutoFamily = checkAndInviteWithAutoFamily,
     GetFamilyMembers = getFamilyMembers,
 }
 
 mainWindow()
-say("Loaded v1.0. Family checker ready.", "ok")
+say("Loaded v1.1. Create family, then check + invite.", "ok")
