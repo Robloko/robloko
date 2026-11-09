@@ -1,13 +1,12 @@
--- FURNITURE INSPECTOR (targets workspace.HouseInteriors.furniture)
--- Place in a LocalScript (e.g., StarterPlayerScripts) or run via executor.
--- Prints a full report to the output console.
+-- FURNITURE INSPECTOR (correct nesting)
+-- Target: workspace.HouseInteriors.furniture[<houseKey>].<FurnitureModel>.UseBlocks[.UseBlock]
+-- Place in a LocalScript or run via executor.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 
--- Names the main PetFarm script looks for
 local TRACKED_NAMES = {
     "ModernShower",
     "BasicBed",
@@ -17,136 +16,123 @@ local TRACKED_NAMES = {
     "Piano",
     "AilmentsRefresh2024LitterBox",
 }
-
 local trackedSet = {}
-for _, n in ipairs(TRACKED_NAMES) do
-    trackedSet[string.lower(n)] = n
-end
+for _, n in ipairs(TRACKED_NAMES) do trackedSet[n:lower()] = n end
 
-local function sep(char, len)
-    return string.rep(char or "=", len or 70)
-end
+local function sep(c, n) return string.rep(c or "=", n or 74) end
 
--- Find the activation part the same way the main script does
 local function findActivationPart(model)
-    local useBlocks = model:FindFirstChild("UseBlocks")
-    if useBlocks then
-        for _, pname in ipairs({ "UseBlock", "Seat1" }) do
-            local p = useBlocks:FindFirstChild(pname)
-            if p and p:IsA("BasePart") then return p end
+    -- exact order the PetFarm script uses
+    local ub = model:FindFirstChild("UseBlocks")
+    if ub then
+        for _, pname in ipairs({"UseBlock", "Seat1"}) do
+            local p = ub:FindFirstChild(pname)
+            if p and p:IsA("BasePart") then return p, "UseBlocks/" .. p.Name end
         end
     end
-    for _, pname in ipairs({ "UseBlock", "Seat1" }) do
+    for _, pname in ipairs({"UseBlock", "Seat1"}) do
         local p = model:FindFirstChild(pname)
-        if p and p:IsA("BasePart") then return p end
+        if p and p:IsA("BasePart") then return p, p.Name end
     end
-    -- Fallback: first BasePart in the model
     for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("BasePart") then return d end
+        if d:IsA("BasePart") then return d, "(fallback) " .. d.Name end
     end
-    return nil
+    return nil, nil
 end
 
 local function report()
-    print(sep("=", 74))
-    print("FURNITURE INSPECTION REPORT  →  workspace.HouseInteriors.furniture")
-    print("Player: " .. player.Name)
-    print("Time:   " .. os.date("%Y-%m-%d %H:%M:%S"))
-    print(sep("=", 74))
+    print(sep("="))
+    print("FURNITURE INSPECTION  →  workspace.HouseInteriors.furniture[<houseKey>]")
+    print("Player: " .. player.Name .. "   Time: " .. os.date("%Y-%m-%d %H:%M:%S"))
+    print(sep("="))
 
     local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then
-        warn("[Inspector] HouseInteriors not found in Workspace.")
-        return
-    end
+    if not hi then warn("HouseInteriors not found.") return end
 
-    local furnitureFolder = hi:FindFirstChild("furniture")
-    if not furnitureFolder then
-        warn("[Inspector] 'furniture' folder not found inside HouseInteriors.")
-        print("   Children of HouseInteriors:")
+    local furniture = hi:FindFirstChild("furniture")
+    if not furniture then
+        warn("'furniture' folder not found inside HouseInteriors.")
+        print("Children of HouseInteriors:")
         for _, c in ipairs(hi:GetChildren()) do
-            print(string.format("     - %s (%s)", c.Name, c.ClassName))
+            print(string.format("   - %s (%s)", c.Name, c.ClassName))
         end
         return
     end
 
-    print("📁 Inspecting: HouseInteriors.furniture  [" .. furnitureFolder.ClassName .. "]")
-    print(sep("-", 74))
+    print("furniture class: " .. furniture.ClassName)
+    local houseKeys = furniture:GetChildren()
+    print(string.format("House keys under furniture: %d", #houseKeys))
+    for _, hk in ipairs(houseKeys) do
+        print(string.format("   • [%s]  (%s)", hk.Name, hk.ClassName))
+    end
+    print("")
 
-    -- The furniture folder may hold models directly, OR sub-folders (e.g. per-house / f-####)
-    local models = {}
-    local subFolderCount = 0
+    local foundTracked = {}   -- [trackedName] = { houseKey, modelPath, partPath }
+    local totalModels = 0
+    local totalPartsReported = 0
 
-    local function collectModels(container, path)
-        for _, child in ipairs(container:GetChildren()) do
-            if child:IsA("Model") then
-                table.insert(models, { model = child, path = path })
-            elseif child:IsA("Folder") or child:IsA("Configuration") then
-                subFolderCount += 1
-                collectModels(child, path .. "/" .. child.Name)
+    for _, houseKeyFolder in ipairs(houseKeys) do
+        -- Accept Folder or Model as the house container
+        if houseKeyFolder:IsA("Folder") or houseKeyFolder:IsA("Model") then
+            print(sep("-"))
+            print(string.format("🏠 House key: %s  (%s)", houseKeyFolder.Name, houseKeyFolder.ClassName))
+
+            local models = {}
+            for _, child in ipairs(houseKeyFolder:GetChildren()) do
+                if child:IsA("Model") then
+                    table.insert(models, child)
+                end
+            end
+
+            if #models == 0 then
+                print("   (no Model children)")
+            else
+                table.sort(models, function(a, b) return a.Name:lower() < b.Name:lower() end)
+                for _, model in ipairs(models) do
+                    totalModels += 1
+                    local lower = model.Name:lower()
+                    local trackedName = trackedSet[lower]
+                    local tag = trackedName and "  ✅ TRACKED" or ""
+
+                    local part, partPath = findActivationPart(model)
+                    if part then totalPartsReported += 1 end
+
+                    local posInfo = part and string.format("@ %.1f, %.1f, %.1f", part.Position.X, part.Position.Y, part.Position.Z) or "@ <none>"
+                    print(string.format("   • %-35s %s%s", model.Name, posInfo, tag))
+                    if part then
+                        print(string.format("       part path: %s.%s.%s", houseKeyFolder.Name, model.Name, partPath))
+                    else
+                        print(string.format("       ❌ no BasePart found under %s", model.Name))
+                    end
+
+                    if trackedName and not foundTracked[trackedName] then
+                        foundTracked[trackedName] = {
+                            houseKey = houseKeyFolder.Name,
+                            model = model.Name,
+                            partPath = partPath,
+                        }
+                    end
+                end
             end
         end
     end
-    collectModels(furnitureFolder, "furniture")
-
-    print(string.format("Sub-folders found: %d", subFolderCount))
-    print(string.format("Furniture models found: %d", #models))
-    print("")
-
-    if #models == 0 then
-        print("(No models found directly under furniture)")
-        return
-    end
-
-    -- Sort by path then name for a tidy report
-    table.sort(models, function(a, b)
-        if a.path ~= b.path then return a.path < b.path end
-        return a.model.Name:lower() < b.model.Name:lower()
-    end)
-
-    local foundTracked = {}
-    local currentPath = nil
-
-    for _, entry in ipairs(models) do
-        if entry.path ~= currentPath then
-            currentPath = entry.path
-            print("")
-            print("📂 " .. currentPath)
-        end
-
-        local model = entry.model
-        local lower = model.Name:lower()
-        local trackedName = trackedSet[lower]
-        local tag = trackedName and "  ✅ TRACKED" or ""
-
-        local actPart = findActivationPart(model)
-        local partInfo
-        if actPart then
-            local p = actPart.Position
-            partInfo = string.format("[part=%s @ %.1f, %.1f, %.1f]", actPart.Name, p.X, p.Y, p.Z)
-        else
-            partInfo = "[no BasePart / activation part]"
-        end
-
-        print(string.format("   • %-38s %s%s", model.Name, partInfo, tag))
-
-        if trackedName then
-            foundTracked[trackedName] = entry.path
-        end
-    end
 
     print("")
-    print(sep("=", 74))
-    print("SUMMARY — Tracked Furniture")
-    print(sep("-", 74))
+    print(sep("="))
+    print("SUMMARY")
+    print(sep("-"))
+    print(string.format("Total furniture models: %d   with usable parts: %d", totalModels, totalPartsReported))
+    print("")
+    print("Tracked furniture status:")
     for _, name in ipairs(TRACKED_NAMES) do
-        if foundTracked[name] then
-            print(string.format("   ✅ %-30s in %s", name, foundTracked[name]))
+        local f = foundTracked[name]
+        if f then
+            print(string.format("   ✅ %-32s %s.%s.%s", name, f.houseKey, f.model, f.partPath))
         else
-            print(string.format("   ❌ %-30s NOT FOUND", name))
+            print(string.format("   ❌ %-32s NOT FOUND", name))
         end
     end
-    print(sep("=", 74))
+    print(sep("="))
 end
 
 report()
