@@ -1,6 +1,6 @@
--- FURNITURE INSPECTOR
+-- FURNITURE INSPECTOR (targets workspace.HouseInteriors.furniture)
 -- Place in a LocalScript (e.g., StarterPlayerScripts) or run via executor.
--- Outputs a full report to the output console.
+-- Prints a full report to the output console.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -24,21 +24,35 @@ for _, n in ipairs(TRACKED_NAMES) do
 end
 
 local function sep(char, len)
-    return string.rep(char or "=", len or 60)
+    return string.rep(char or "=", len or 70)
 end
 
-local function isPlayerFolder(folderName)
-    -- Matches player name OR "f-<number>" style folder ids
-    return string.find(folderName, player.Name, 1, true) ~= nil
-        or string.match(folderName, "f%-%d+") ~= nil
+-- Find the activation part the same way the main script does
+local function findActivationPart(model)
+    local useBlocks = model:FindFirstChild("UseBlocks")
+    if useBlocks then
+        for _, pname in ipairs({ "UseBlock", "Seat1" }) do
+            local p = useBlocks:FindFirstChild(pname)
+            if p and p:IsA("BasePart") then return p end
+        end
+    end
+    for _, pname in ipairs({ "UseBlock", "Seat1" }) do
+        local p = model:FindFirstChild(pname)
+        if p and p:IsA("BasePart") then return p end
+    end
+    -- Fallback: first BasePart in the model
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") then return d end
+    end
+    return nil
 end
 
 local function report()
-    print(sep("=", 70))
-    print("FURNITURE INSPECTION REPORT")
+    print(sep("=", 74))
+    print("FURNITURE INSPECTION REPORT  →  workspace.HouseInteriors.furniture")
     print("Player: " .. player.Name)
     print("Time:   " .. os.date("%Y-%m-%d %H:%M:%S"))
-    print(sep("=", 70))
+    print(sep("=", 74))
 
     local hi = Workspace:FindFirstChild("HouseInteriors")
     if not hi then
@@ -46,105 +60,93 @@ local function report()
         return
     end
 
-    local totalModels = 0
+    local furnitureFolder = hi:FindFirstChild("furniture")
+    if not furnitureFolder then
+        warn("[Inspector] 'furniture' folder not found inside HouseInteriors.")
+        print("   Children of HouseInteriors:")
+        for _, c in ipairs(hi:GetChildren()) do
+            print(string.format("     - %s (%s)", c.Name, c.ClassName))
+        end
+        return
+    end
+
+    print("📁 Inspecting: HouseInteriors.furniture  [" .. furnitureFolder.ClassName .. "]")
+    print(sep("-", 74))
+
+    -- The furniture folder may hold models directly, OR sub-folders (e.g. per-house / f-####)
+    local models = {}
+    local subFolderCount = 0
+
+    local function collectModels(container, path)
+        for _, child in ipairs(container:GetChildren()) do
+            if child:IsA("Model") then
+                table.insert(models, { model = child, path = path })
+            elseif child:IsA("Folder") or child:IsA("Configuration") then
+                subFolderCount += 1
+                collectModels(child, path .. "/" .. child.Name)
+            end
+        end
+    end
+    collectModels(furnitureFolder, "furniture")
+
+    print(string.format("Sub-folders found: %d", subFolderCount))
+    print(string.format("Furniture models found: %d", #models))
+    print("")
+
+    if #models == 0 then
+        print("(No models found directly under furniture)")
+        return
+    end
+
+    -- Sort by path then name for a tidy report
+    table.sort(models, function(a, b)
+        if a.path ~= b.path then return a.path < b.path end
+        return a.model.Name:lower() < b.model.Name:lower()
+    end)
+
     local foundTracked = {}
-    local allFolders = {}
+    local currentPath = nil
 
-    for _, folder in ipairs(hi:GetChildren()) do
-        if folder:IsA("Folder") or folder:IsA("Model") then
-            local ownsIt = isPlayerFolder(folder.Name)
-            local models = {}
+    for _, entry in ipairs(models) do
+        if entry.path ~= currentPath then
+            currentPath = entry.path
+            print("")
+            print("📂 " .. currentPath)
+        end
 
-            for _, child in ipairs(folder:GetChildren()) do
-                if child:IsA("Model") then
-                    table.insert(models, child)
-                    totalModels += 1
-                end
-            end
+        local model = entry.model
+        local lower = model.Name:lower()
+        local trackedName = trackedSet[lower]
+        local tag = trackedName and "  ✅ TRACKED" or ""
 
-            table.insert(allFolders, {
-                name = folder.Name,
-                ownsIt = ownsIt,
-                models = models,
-            })
+        local actPart = findActivationPart(model)
+        local partInfo
+        if actPart then
+            local p = actPart.Position
+            partInfo = string.format("[part=%s @ %.1f, %.1f, %.1f]", actPart.Name, p.X, p.Y, p.Z)
+        else
+            partInfo = "[no BasePart / activation part]"
+        end
 
-            if ownsIt then
-                print("")
-                print(string.format("📁 Folder: %s  (%d models)  [YOURS]", folder.Name, #models))
-                print(sep("-", 70))
+        print(string.format("   • %-38s %s%s", model.Name, partInfo, tag))
 
-                if #models == 0 then
-                    print("   (empty)")
-                else
-                    -- Sort for readable output
-                    table.sort(models, function(a, b) return a.Name:lower() < b.Name:lower() end)
-
-                    for _, model in ipairs(models) do
-                        local lower = model.Name:lower()
-                        local trackedName = trackedSet[lower]
-                        local tag = trackedName and "  ✅ TRACKED" or ""
-
-                        -- Try to find an activation part (same logic as main script)
-                        local partInfo = ""
-                        local useBlocks = model:FindFirstChild("UseBlocks")
-                        local actPart = nil
-                        if useBlocks then
-                            for _, pname in ipairs({"UseBlock", "Seat1"}) do
-                                local p = useBlocks:FindFirstChild(pname)
-                                if p and p:IsA("BasePart") then actPart = p break end
-                            end
-                        end
-                        if not actPart then
-                            for _, pname in ipairs({"UseBlock", "Seat1"}) do
-                                local p = model:FindFirstChild(pname)
-                                if p and p:IsA("BasePart") then actPart = p break end
-                            end
-                        end
-                        if actPart then
-                            local pos = actPart.Position
-                            partInfo = string.format("  [part=%s @ %.1f, %.1f, %.1f]",
-                                actPart.Name, pos.X, pos.Y, pos.Z)
-                        else
-                            partInfo = "  [no activation part found]"
-                        end
-
-                        print(string.format("   • %-35s%s%s", model.Name, tag, partInfo))
-
-                        if trackedName then
-                            foundTracked[trackedName] = folder.Name
-                        end
-                    end
-                end
-            end
+        if trackedName then
+            foundTracked[trackedName] = entry.path
         end
     end
 
     print("")
-    print(sep("=", 70))
-    print("SUMMARY")
-    print(sep("-", 70))
-    print(string.format("Total HouseInteriors folders: %d", #allFolders))
-    print(string.format("Total furniture models found: %d", totalModels))
-    print("")
-
-    print("Tracked furniture status:")
+    print(sep("=", 74))
+    print("SUMMARY — Tracked Furniture")
+    print(sep("-", 74))
     for _, name in ipairs(TRACKED_NAMES) do
         if foundTracked[name] then
-            print(string.format("   ✅ %-30s found in folder: %s", name, foundTracked[name]))
+            print(string.format("   ✅ %-30s in %s", name, foundTracked[name]))
         else
             print(string.format("   ❌ %-30s NOT FOUND", name))
         end
     end
-
-    print("")
-    print("Other folders in HouseInteriors:")
-    for _, f in ipairs(allFolders) do
-        if not f.ownsIt then
-            print(string.format("   - %s (%d models)", f.name, #f.models))
-        end
-    end
-
-    print(sep("=", 70))
+    print(sep("=", 74))
 end
 
 report()
