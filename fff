@@ -1,0 +1,86 @@
+-- INSPECT CONTAINERS: ModernShower, BasicBed, Piano
+-- Walks workspace.HouseInteriors.furniture[<houseKey>] and reports
+-- every instance of the tracked names, its path, class, and direct children.
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+
+local TARGETS = { "ModernShower", "BasicBed", "Piano" }
+local targetSet = {}
+for _, n in ipairs(TARGETS) do targetSet[n:lower()] = n end
+
+local function sep(c, n) return string.rep(c or "=", n or 74) end
+
+local found = {}          -- [displayName] = { count = n, entries = { {path, class, children={...}} } }
+for _, n in ipairs(TARGETS) do found[n] = { count = 0, entries = {} } end
+
+local function describeChildren(inst)
+    local kids = inst:GetChildren()
+    if #kids == 0 then return "(no children)" end
+    table.sort(kids, function(a, b) return a.Name:lower() < b.Name:lower() end)
+    local parts = {}
+    for _, k in ipairs(kids) do
+        table.insert(parts, string.format("%s[%s]", k.Name, k.ClassName))
+    end
+    return table.concat(parts, ", ")
+end
+
+local function scan(container, pathPrefix)
+    for _, child in ipairs(container:GetChildren()) do
+        local lower = child.Name:lower()
+        local targetName = targetSet[lower]
+        if targetName then
+            local entry = found[targetName]
+            entry.count += 1
+            table.insert(entry.entries, {
+                path = pathPrefix .. "." .. child.Name,
+                class = child.ClassName,
+                children = describeChildren(child),
+            })
+        end
+        -- keep scanning deeper (in case they're nested)
+        if child:IsA("Folder") or child:IsA("Model") or child:IsA("Configuration") then
+            scan(child, pathPrefix .. "." .. child.Name)
+        end
+    end
+end
+
+local hi = Workspace:FindFirstChild("HouseInteriors")
+local furniture = hi and hi:FindFirstChild("furniture")
+if not furniture then
+    warn("[Inspector] workspace.HouseInteriors.furniture missing")
+    return
+end
+
+scan(furniture, "HouseInteriors.furniture")
+
+print(sep("="))
+print("CONTAINER INSPECTION  |  player=" .. player.Name)
+print(sep("="))
+
+for _, name in ipairs(TARGETS) do
+    local f = found[name]
+    print("")
+    print(string.format("📦 %s  —  count: %d", name, f.count))
+    print(sep("-"))
+    if f.count == 0 then
+        print("   (none found)")
+    else
+        for i, e in ipairs(f.entries) do
+            print(string.format("   %d) %s", i, e.path))
+            print(string.format("        class   : %s", e.class))
+            print(string.format("        children: %s", e.children))
+        end
+    end
+end
+
+print("")
+print(sep("="))
+print("SUMMARY")
+print(sep("-"))
+for _, name in ipairs(TARGETS) do
+    print(string.format("   %-14s %d", name, found[name].count))
+end
+print(sep("="))
