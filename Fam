@@ -1,0 +1,332 @@
+-- ==================================================================
+-- COCOON FAMILY CHECKER v1.0
+-- - Reuses COCOON UI (theme, icons, draggable window)
+-- - Button: scans family_list, sends Family invite to any
+--   player who is NOT already in your family
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+
+local env = getgenv and getgenv() or {}
+if env.COCOON_FAM and env.COCOON_FAM.Stop then pcall(env.COCOON_FAM.Stop) end
+
+-- ================= CONFIG =================
+local INVITE_DELAY = 1.0
+local SCAN_DELAY   = 1.5   -- seconds between passes while scanning
+
+-- ================= STATUS / LOG =================
+local ui = {}
+local uiLog = nil
+local status = { now = "Ready", goal = "Check family list" }
+
+local function renderStatus()
+    if ui.now then
+        pcall(function()
+            ui.now.Text  = status.now
+            ui.goal.Text = status.goal
+        end)
+    end
+end
+local function setGoal(t) status.goal = t or ""; renderStatus() end
+local function setNow(t)  status.now  = t or ""; renderStatus() end
+local function say(text, tone)
+    setNow(text)
+    if uiLog then pcall(uiLog, tone or "info", text) end
+    print("[COCOON-FAM] " .. tostring(text))
+end
+
+-- ================= PLAYER HELPERS =================
+local function otherPlayers()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then table.insert(list, p) end
+    end
+    return list
+end
+
+-- ================= FAMILY DATA =================
+local function getPlayerData()
+    local ok, result = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return clientData.get_data()[player.Name]
+    end)
+    if not ok then
+        warn("Failed to require/get ClientData:", result)
+        return nil
+    end
+    return result
+end
+
+-- Returns a set of usernames/userids already in our family
+local function getFamilyMembers()
+    local members = {}   -- set of tostring identifiers
+    local names = {}     -- display list
+    local data = getPlayerData()
+    if not data then return members, names end
+
+    local familyList = data.family_list
+    if familyList == nil and data.family then
+        familyList = data.family.family_list
+    end
+    if type(familyList) ~= "table" then
+        return members, names
+    end
+
+    -- family_list may be keyed by name, by id, or be an array
+    for k, v in pairs(familyList) do
+        if type(k) == "string" then
+            members[k:lower()] = true
+            table.insert(names, k)
+        elseif type(k) == "number" and type(v) == "table" then
+            -- array of entries: look for common name fields
+            for _, field in ipairs({"name","username","display_name","displayName","player_name","playerName"}) do
+                if type(v[field]) == "string" then
+                    members[v[field]:lower()] = true
+                    table.insert(names, v[field])
+                    break
+                end
+            end
+        elseif type(k) == "number" and type(v) == "string" then
+            members[v:lower()] = true
+            table.insert(names, v)
+        end
+    end
+    return members, names
+end
+
+-- ================= API =================
+local function api(name) return ReplicatedStorage:WaitForChild("API"):FindFirstChild(name) end
+local function callAPI(name, args, fire)
+    local node = api(name)
+    if not node then say("API missing: " .. name, "bad"); return false end
+    local ok, err = pcall(function()
+        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
+    end)
+    if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
+    return ok
+end
+
+-- ================= FAMILY CHECK LOGIC =================
+local CheckMode = false
+
+local function checkAndInvite()
+    CheckMode = true
+    say("Scanning family list...", "info")
+
+    local members, names = getFamilyMembers()
+    local memberCount = 0
+    for _ in pairs(members) do memberCount += 1 end
+
+    if memberCount == 0 then
+        say("No family list data found — is the player in a family?", "warn")
+        setGoal("No family data (must be in a family)")
+        CheckMode = false
+        return
+    end
+
+    say("Family has " .. memberCount .. " member(s)", "ok")
+    setGoal("Checking " .. #otherPlayers() .. " online player(s)")
+
+    local targets = otherPlayers()
+    local toInvite = {}
+    for _, p in ipairs(targets) do
+        if not CheckMode then break end
+        local key = p.Name:lower()
+        local uidKey = tostring(p.UserId)
+        if not members[key] and not members[uidKey] then
+            table.insert(toInvite, p)
+        end
+    end
+
+    setGoal("Inviting " .. #toInvite .. " non-family player(s)")
+    for i, p in ipairs(toInvite) do
+        if not CheckMode then break end
+        setGoal(string.format("Inviting %d/%d: %s", i, #toInvite, p.Name))
+        local ok = callAPI("FamilyAPI/InvitePlayer", { p })
+        if ok then
+            say("Family request -> " .. p.Name, "ok")
+        else
+            say("Invite failed -> " .. p.Name, "bad")
+        end
+        task.wait(INVITE_DELAY)
+    end
+
+    say(string.format("Done — %d player(s) invited", #toInvite), "ok")
+    setGoal("Ready")
+    CheckMode = false
+end
+
+-- Optional: automatic family creation if you're not in one yet.
+-- Enable by setting AUTO_CREATE_FAMILY = true
+local AUTO_CREATE_FAMILY = true
+
+local function checkAndInviteWithAutoFamily()
+    local members = getFamilyMembers()
+    local memberCount = 0
+    for _ in pairs(members) do memberCount += 1 end
+
+    if memberCount == 0 and AUTO_CREATE_FAMILY then
+        say("Not in a family — creating one first...", "info")
+        local ok = callAPI("FamilyAPI/CreateFamily", {})
+        if not ok then
+            say("Family creation failed (already in a family?)", "bad")
+            return
+        end
+        task.wait(1.2)
+    end
+    checkAndInvite()
+end
+
+-- ================= UI =================
+GC = GC or {}; GC.LogFolder = "COCOON"
+local THEME = {
+    bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
+    text = Color3.fromRGB(230,230,235), dim = Color3.fromRGB(130,130,145), accent = Color3.fromRGB(150,120,255),
+    ok = Color3.fromRGB(90,200,120), bad = Color3.fromRGB(230,90,90),
+    fam = Color3.fromRGB(80,180,120), task = Color3.fromRGB(200,130,60),
+}
+local function guiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then return hui end
+    local ok2, core = pcall(function() return game:GetService("CoreGui") end)
+    if ok2 and core then return core end
+    return player:WaitForChild("PlayerGui")
+end
+local function create(cls, props, parent)
+    local o = Instance.new(cls); for k,v in pairs(props) do o[k]=v end; o.Parent=parent; return o
+end
+local function corner(p, r) create("UICorner", { CornerRadius = UDim.new(0, r or 6) }, p) end
+local function makeDraggable(h, t)
+    local d, si, sp
+    h.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            d, si, sp = true, i.Position, t.Position
+            i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then d = false end end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if d and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local dl = i.Position - si
+            t.Position = UDim2.new(sp.X.Scale, sp.X.Offset + dl.X, sp.Y.Scale, sp.Y.Offset + dl.Y)
+        end
+    end)
+end
+local function text(p, x, y, w, h, v, s, c, b)
+    return create("TextLabel", { Position = UDim2.fromOffset(x,y), Size = UDim2.fromOffset(w,h),
+        BackgroundTransparency = 1, Text = v or "", TextColor3 = c or THEME.text, TextSize = s or 12,
+        Font = b and Enum.Font.GothamMedium or Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd }, p)
+end
+local function toggleButton(p, x, y, w, label, color, onClick)
+    local b = create("TextButton", { Position = UDim2.fromOffset(x,y), Size = UDim2.fromOffset(w,30),
+        BackgroundColor3 = color, BorderSizePixel = 0, Text = label, TextColor3 = THEME.text,
+        Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = true }, p)
+    corner(b, 4); create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
+    b.MouseButton1Click:Connect(function() pcall(onClick, b) end)
+    return b
+end
+
+local function window(w, h)
+    if ui.screen and ui.screen.Parent then ui.screen:Destroy() end
+    ui.screen = create("ScreenGui", { Name = "COCOON_FAM", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
+    local f = create("Frame", { Size = UDim2.fromOffset(w,h), Position = UDim2.new(0,16,0.5,-h/2),
+        BackgroundColor3 = THEME.bg, BorderSizePixel = 0 }, ui.screen)
+    corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
+    local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
+    makeDraggable(hd, f)
+    text(hd, 10, 0, w-40, 26, "COCOON FAM v1.0", 13, THEME.text, true)
+    local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
+        BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
+    cl.MouseButton1Click:Connect(function()
+        CheckMode = false
+        uiLog = nil; ui.now = nil; f:Destroy()
+    end)
+    create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, f)
+    return f
+end
+
+local function mainWindow()
+    local width, height = 250, 290
+    local frame = window(width, height)
+
+    -- Status row
+    text(frame, 8, 33, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now  = text(frame, 34, 33, width-42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 48, width-16, 12, status.goal, 10, THEME.dim)
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8,62), Size = UDim2.fromOffset(width-16,40),
+        BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim,
+        Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false, ClipsDescendants = true }, frame)
+    renderStatus()
+    local shown = {}
+    local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
+    uiLog = function(tone, msg)
+        local safe = string.gsub(string.gsub(string.gsub(tostring(msg), "&","&amp;"),"<","&lt;"),">","&gt;")
+        table.insert(shown, '<font color="'..(TONES[tone] or TONES.info)..'">'..safe..'</font>')
+        while #shown > 3 do table.remove(shown,1) end
+        logBox.Text = table.concat(shown, "\n")
+    end
+    create("Frame", { Position = UDim2.fromOffset(8,105), Size = UDim2.new(1,-16,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+
+    -- Main button: check family list + invite non-members
+    local checkBtn = toggleButton(frame, 8, 116, width-16,
+        "CHECK FAMILY LIST + SEND REQUESTS [OFF]", THEME.fam, function(b)
+        if CheckMode then
+            CheckMode = false
+            b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
+            b.BackgroundColor3 = THEME.fam
+            say("Family check stopped", "warn")
+            return
+        end
+        b.Text = "CHECK FAMILY LIST + SEND REQUESTS [ON]"
+        b.BackgroundColor3 = THEME.ok
+        task.spawn(checkAndInviteWithAutoFamily)
+        task.spawn(function()
+            while CheckMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then
+                b.Text = "CHECK FAMILY LIST + SEND REQUESTS [OFF]"
+                b.BackgroundColor3 = THEME.fam
+            end
+        end)
+    end)
+
+    -- Info lines
+    text(frame, 8, 154, width-16, 14, "Reads family_list via ClientData", 10, THEME.dim)
+    text(frame, 8, 168, width-16, 14, "Invites every online player not in it", 10, THEME.dim)
+    text(frame, 8, 182, width-16, 14, "Auto-creates a family if none exists", 10, THEME.dim)
+    text(frame, 8, 196, width-16, 14, "Uses FamilyAPI/InvitePlayer + CreateFamily", 10, THEME.dim)
+
+    create("Frame", { Position = UDim2.fromOffset(8, 216), Size = UDim2.new(1,-16,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+    text(frame, 8, 222, width-16, 14, "COCOON FAM v1.0 — family checker + inviter", 10, THEME.dim)
+
+    -- Members readout
+    local memberLabel = text(frame, 8, 240, width-16, 14, "Family members: —", 10, THEME.accent, true)
+    task.spawn(function()
+        while frame.Parent do
+            pcall(function()
+                local _, names = getFamilyMembers()
+                if #names > 0 then
+                    memberLabel.Text = "Family members: " .. table.concat(names, ", ")
+                else
+                    memberLabel.Text = "Family members: —"
+                end
+            end)
+            task.wait(2)
+        end
+    end)
+end
+
+env.COCOON_FAM = {
+    Stop = function() CheckMode = false end,
+    CheckAndInvite = checkAndInvite,
+    CheckAndInviteWithAutoFamily = checkAndInviteWithAutoFamily,
+    GetFamilyMembers = getFamilyMembers,
+}
+
+mainWindow()
+say("Loaded v1.0. Family checker ready.", "ok")
