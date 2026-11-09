@@ -1,8 +1,9 @@
 -- ==================================================================
--- COCOON v3.5 — Continuous concurrent Hold/Place/Eject
--- - NON-STOP: repeats passes over all players+pets until button OFF
--- - 2 workers (game cap: 2 held objects)
--- - Position-verified detach from food/drink (no stuck pets)
+-- COCOON v3.7 — Continuous concurrent Hold/Place/Eject
+-- - NON-STOP passes until button OFF
+-- - Works for BABIES and PETS: records the subject's spot after
+--   placement, then position-verified pickup after the dwell
+-- - Teleports next to subject before every HoldBaby (distance check)
 -- - Guaranteed eject on stop/error
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -15,14 +16,15 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- seconds per furniture
+local FURNITURE_DWELL   = 20
 local BETWEEN_SUBJECTS  = 0.8
 local BETWEEN_FURNITURE = 0.4
-local UNSTICK_TIMEOUT   = 60      -- max seconds to keep trying to detach a pet
-local DETACH_RADIUS     = 6       -- studs: closer than this = still on furniture
+local UNSTICK_TIMEOUT   = 60
+local DETACH_RADIUS     = 6
 local EJECT_TIME        = 0.4
-local MAX_CONCURRENT    = 2       -- game allows holding 2 objects at once
-local PASS_COOLDOWN     = 2       -- seconds between full passes
+local MAX_CONCURRENT    = 2
+local PASS_COOLDOWN     = 2
+local DEBUG_POS         = true
 
 -- Furniture for PETS (HousingAPI/ActivateFurniture)
 local PET_FURNITURE = {
@@ -91,6 +93,7 @@ local function callAPI(name, args, fire)
     return ok
 end
 
+-- ================= POSITION / TELEPORT =================
 local function getPosition(obj)
     if not obj or not obj.Parent then return nil end
     local ok, pos = pcall(function() return obj:GetPivot().Position end)
@@ -98,11 +101,27 @@ local function getPosition(obj)
     return nil
 end
 
-local function stillOnFurniture(obj, fCframe)
-    if not fCframe then return false end
+local function playerPosition()
+    local char = player.Character
+    if not char then return nil end
+    return getPosition(char)
+end
+
+local function teleportNear(pos)
+    local char = player.Character
+    if not char or not pos then return end
+    pcall(function()
+        char:PivotTo(CFrame.new(pos + Vector3.new(0, 3, 4)))
+    end)
+    task.wait(0.25)
+end
+
+-- Is the subject still at the spot it was placed on?
+local function stillAtSpot(obj, spotPos)
+    if not spotPos then return false end
     local pos = getPosition(obj)
     if not pos then return false end
-    return (pos - fCframe.Position).Magnitude < DETACH_RADIUS
+    return (pos - spotPos).Magnitude < DETACH_RADIUS
 end
 
 -- ================= BUTTON 1: CREATE FAMILY + INVITE ALL =================
@@ -135,10 +154,20 @@ local heldSubjects = {}
 local activeWorkers = 0
 local passNumber, passDone, passTotal = 0, 0, 0
 
-local function hold(obj)
+-- Hold: go to the subject first (server distance check), then fire HoldBaby
+local function hold(obj, why)
+    local pos = getPosition(obj)
+    if pos then
+        if DEBUG_POS then
+            print(string.format("[COCOON][pos] %s: subject at %.1f,%.1f,%.1f | player at %s",
+                why or "hold", pos.X, pos.Y, pos.Z, tostring(playerPosition())))
+        end
+        teleportNear(pos)
+    end
     callAPI("AdoptAPI/HoldBaby", { obj })
     task.wait(0.5)
 end
+
 local function eject(obj)
     if obj then
         callAPI("AdoptAPI/EjectBaby", { obj }, true)
@@ -156,21 +185,30 @@ local function ejectAllHeld()
     end
 end
 
--- POSITION-VERIFIED pickup: fire HoldBaby, check the subject's actual
--- position, retry until it has really left the furniture.
-local function pickupFromFurniture(obj, fCframe, why)
+-- POSITION-VERIFIED pickup: teleport next to the subject, fire HoldBaby
+-- (exactly like the SimpleSpy capture), wait, check if it left its spot.
+-- Works for babies and pets. Retry until detached or timeout.
+local function pickupFromSpot(obj, spotPos, why)
     local waited = 0
     while waited < UNSTICK_TIMEOUT do
         if not TasksMode then return false end
         if obj and not obj.Parent then return true end
 
+        local pos = getPosition(obj)
+        if pos then
+            teleportNear(pos)
+            if DEBUG_POS then
+                print(string.format("[COCOON][pos] %s: subject at %.1f,%.1f,%.1f | player at %s",
+                    why, pos.X, pos.Y, pos.Z, tostring(playerPosition())))
+            end
+        end
         callAPI("AdoptAPI/HoldBaby", { obj })
         task.wait(1.5)
 
-        if not stillOnFurniture(obj, fCframe) then
+        if not stillAtSpot(obj, spotPos) then
             return true
         end
-        setNow(string.format("%s: still on furniture (%d/%ds), retrying pickup...",
+        setNow(string.format("%s: still on furniture (%d/%ds), retrying...",
             why, waited, UNSTICK_TIMEOUT))
         waited += 1.5
     end
@@ -184,7 +222,7 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
     heldSubjects[workerIndex] = obj
 
     say(kind .. ": " .. name .. " (held)", "info")
-    hold(obj)
+    hold(obj, kind .. " " .. name .. " initial hold")
 
     local n = #fList
     for i = 1, n do
@@ -196,6 +234,11 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         else
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { obj, f.id, f.mode }, true)
         end
+
+        -- record where the subject ended up (its "spot" on this furniture)
+        task.wait(0.5)
+        local spot = getPosition(obj)
+
         local t = 0
         while t < FURNITURE_DWELL and TasksMode do
             setNow(string.format("P%d %s %s on %s — %.0f/%ds",
@@ -204,10 +247,12 @@ local function processSubject(kind, obj, fList, offset, workerIndex)
         end
         task.wait(BETWEEN_FURNITURE)
 
-        if kind == "Pet" and i < n and f.cframe then
-            if stillOnFurniture(obj, f.cframe) then
-                say(kind .. " " .. name .. ": waiting to detach from " .. f.label, "warn")
-                if not pickupFromFurniture(obj, f.cframe, kind .. " " .. name .. " @ " .. f.label) then
+        -- UNSTICK for babies AND pets: if still sitting at the recorded
+        -- spot, keep firing HoldBaby until it has really been picked up.
+        if i < n and spot then
+            if stillAtSpot(obj, spot) then
+                say(kind .. " " .. name .. ": detaching from " .. f.label, "warn")
+                if not pickupFromSpot(obj, spot, kind .. " " .. name .. " @ " .. f.label) then
                     say(kind .. " " .. name .. ": unstick failed, ejecting", "warn")
                     break
                 end
@@ -241,7 +286,6 @@ local function workerLoop(workerIndex)
     end
 end
 
--- One pass = process every baby + pet currently on the server
 local function runOnePass()
     passNumber += 1
     passDone, passTotal = 0, 0
@@ -271,7 +315,6 @@ local function runOnePass()
         task.spawn(workerLoop, i)
     end
 
-    -- wait for this pass to drain
     while TasksMode and (#queue > 0 or activeWorkers > 0) do
         setNow(string.format("Pass %d | Active: %d | Left: %d | Done: %d/%d",
             passNumber, activeWorkers, #queue, passDone, passTotal))
@@ -280,7 +323,6 @@ local function runOnePass()
     ejectAllHeld()
 end
 
--- NON-STOP: keep doing passes until the button is switched OFF
 local function startAllTasks()
     TasksMode = true
     while TasksMode do
@@ -352,7 +394,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3.5", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v3.7", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -435,12 +477,12 @@ local function mainWindow()
     end)
 
     text(frame, 8, 216, width-16, 14, "Loops forever until button is OFF", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Pass X: done Y/Z = this pass progress", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Position-verified detach (no stuck pets)", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Babies & pets: verified pickup after task", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Teleports next to subject before pickup", 10, THEME.dim)
     text(frame, 8, 258, width-16, 14, "Guaranteed eject (stop/error safe)", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 278), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 284, width-16, 14, "COCOON v3.5 — nonstop concurrent tasks", 10, THEME.dim)
+    text(frame, 8, 284, width-16, 14, "COCOON v3.7 — nonstop concurrent tasks", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -457,4 +499,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v3.5. Nonstop passes until button OFF.", "ok")
+say("Loaded v3.7. Baby + pet verified pickup, nonstop passes.", "ok")
