@@ -1,9 +1,9 @@
 -- ==================================================================
--- COCOON v8 — Family Builder + Pipelined Needs Loop
--- Needs order per subject: sleep -> bored -> bath
+-- COCOON v9 — Batch: hold all -> place each on furniture -> wait 15s
+--              -> hold back all -> eject all
 -- Hold:   AdoptAPI/HoldBaby:InvokeServer(unpack({ [1] = Char }))
 -- Eject:  AdoptAPI/EjectBaby:FireServer(unpack({ [1] = Char }))
--- Furniture discovered live from HouseInteriors.furniture
+-- Place:  InteractablesAPI/MakeBabyUseFurniture:FireServer(Char, folderId, partName)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,26 +14,22 @@ local env = getgenv and getgenv() or {}
 if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
-local INVITE_DELAY      = 1.0
-local FAMILY_SETTLE     = 2.0
-local FURNITURE_DWELL   = 20
-local BETWEEN_SUBJECTS  = 1.5
-local BETWEEN_FURNITURE = 0.8
-local MAX_TASK_PASSES   = 1
+local INVITE_DELAY     = 1.0
+local FAMILY_SETTLE    = 2.0
+local BATCH_DWELL      = 15     -- seconds subjects sit on furniture together
+local HOLD_STEP_DELAY  = 0.8    -- between each HoldBaby InvokeServer
+local PLACE_STEP_DELAY = 0.6    -- between each MakeBabyUseFurniture FireServer
+local EJECT_STEP_DELAY = 0.6    -- between each EjectBaby FireServer
 
--- Need order per subject type (first two used for babies, all used for pets)
-local BABY_NEEDS = { "sleep", "bored", "bath" }
-local PET_NEEDS  = { "sleep", "bored", "bath", "dirty", "food", "drink", "toilet" }
+-- Rotation of needs — subjects are assigned needs round-robin so multiple
+-- alts sit on different furniture at the same time.
+local NEED_ROTATION = { "sleep", "bored", "bath" }
 
--- Furniture model names per need (used by discovery filter)
+-- Furniture model names per need
 local NEED_MODELS = {
     sleep  = { "BasicBed",  "ModernBed", "Bed" },
     bored  = { "Piano",     "ToyBox",    "BallPit" },
     bath   = { "ModernShower", "CheapPetBathtub", "Bathtub" },
-    dirty  = { "CheapPetBathtub", "Bathtub" },
-    food   = { "PetFoodBowl", "FoodBowl", "BasicFoodBowl" },
-    drink  = { "PetWaterBowl", "WaterBowl", "BasicWaterBowl" },
-    toilet = { "AilmentsRefresh2024LitterBox", "LitterBox" },
 }
 
 -- ================= STATUS / LOG =================
@@ -71,16 +67,12 @@ local function otherPlayers()
     end
     return list
 end
-local function allSubjects()
+local function allCharacters()
     local list = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character then table.insert(list, p.Character) end
     end
     return list
-end
-local function petsOnServer()
-    local f = workspace:FindFirstChild("Pets"); if not f then return {} end
-    return f:GetChildren()
 end
 
 -- ================= API HELPERS =================
@@ -88,8 +80,7 @@ local API_ROOT = ReplicatedStorage:WaitForChild("API")
 local function api(name) return API_ROOT:FindFirstChild(name) end
 
 local function callAPI(name, args, fire)
-    local node = api(name)
-    if not node then say("API missing: " .. name, "bad"); return false end
+    local node = api(name); if not node then say("API missing: " .. name, "bad"); return false end
     args = args or {}
     local ok, err = pcall(function()
         if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
@@ -98,24 +89,18 @@ local function callAPI(name, args, fire)
     return ok
 end
 
--- ============ Invites (A: FindFirstChild, B: Players[name]) ============
+-- Invites
 local function inviteMethodA(name)
     if type(name) ~= "string" or name == "" then return false end
-    local target = game:GetService("Players"):FindFirstChild(name)
-    if not target then return false end
-    local args = { [1] = target }
-    local node = game:GetService("ReplicatedStorage").API:FindFirstChild("FamilyAPI/InvitePlayer")
-    if not node then return false end
-    return pcall(function() node:InvokeServer(unpack(args)) end)
+    local target = game:GetService("Players"):FindFirstChild(name); if not target then return false end
+    local node = api("FamilyAPI/InvitePlayer"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = target })) end)
 end
 local function inviteMethodB(name)
     if type(name) ~= "string" or name == "" then return false end
-    local target = game:GetService("Players")[name]
-    if not target then return false end
-    local args = { [1] = target }
-    local node = game:GetService("ReplicatedStorage").API:FindFirstChild("FamilyAPI/InvitePlayer")
-    if not node then return false end
-    return pcall(function() node:InvokeServer(unpack(args)) end)
+    local target = game:GetService("Players")[name]; if not target then return false end
+    local node = api("FamilyAPI/InvitePlayer"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = target })) end)
 end
 
 -- ==================================================================
@@ -176,13 +161,11 @@ local function findFurnitureForNeed(need, ownerName)
     local wanted = NEED_MODELS[need]; if not wanted then return nil end
     local wantedSet = {}; for _, n in ipairs(wanted) do wantedSet[string.lower(n)] = true end
     local all = scanAllFurniture()
-    local primary = {}
-    for _, f in ipairs(all) do
-        if wantedSet[string.lower(f.modelName)] then
-            if not ownerName or f.owner == ownerName then table.insert(primary, f) end
+    if ownerName then
+        for _, f in ipairs(all) do
+            if wantedSet[string.lower(f.modelName)] and f.owner == ownerName then return f end
         end
     end
-    if #primary > 0 then return primary[1] end
     for _, f in ipairs(all) do
         if wantedSet[string.lower(f.modelName)] then return f end
     end
@@ -195,8 +178,7 @@ end
 local FamilyMode = false
 
 local function ensureFamily()
-    local node = api("FamilyAPI/CreateFamily")
-    if not node then return false end
+    local node = api("FamilyAPI/CreateFamily"); if not node then return false end
     local ok = pcall(function() node:InvokeServer() end)
     if ok then say("Family created", "ok") else say("CreateFamily failed — continuing", "warn") end
     task.wait(FAMILY_SETTLE); return true
@@ -228,153 +210,108 @@ local function createFamilyAndInvite()
 end
 
 -- ==================================================================
--- PIPELINED NEEDS LOOP
+-- BATCH LOOP  (hold all -> place each -> wait -> hold all -> eject)
 -- ==================================================================
--- Strategy:
---   1. Hold subject A, place it on its first need, start dwell
---   2. While A is dwelling, HOLD subject B and place it on its first need
---   3. Let both dwell in parallel; when A's timer ends, place it on its next
---      need (or eject it) and slot the next subject into the freed slot
---   4. Result: two subjects are always in-flight, so dwell time of A overlaps
---      with B being held/placed.
-
 local TasksMode = false
 
--- Hold / eject use EXACT spy shapes:
---   HoldBaby:InvokeServer(unpack({ [1] = Char }))
---   EjectBaby:FireServer(unpack({ [1] = Char }))
+-- Exact spy shapes:
 local function holdSubject(char)
-    setNow("Hold: " .. (char.Name or "?"))
-    local node = api("AdoptAPI/HoldBaby")
-    if not node then return false end
-    local args = { [1] = char }
-    return pcall(function() node:InvokeServer(unpack(args)) end)
+    local node = api("AdoptAPI/HoldBaby"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = char })) end)
 end
 local function ejectSubject(char)
-    setNow("Eject: " .. (char.Name or "?"))
-    local node = api("AdoptAPI/EjectBaby")
-    if not node then return false end
-    local args = { [1] = char }
-    return pcall(function() node:FireServer(unpack(args)) end)
+    local node = api("AdoptAPI/EjectBaby"); if not node then return false end
+    return pcall(function() node:FireServer(unpack({ [1] = char })) end)
 end
-
--- Fire baby furniture with exact spy shape
 local function fireBabyFurniture(char, folderId, partName)
-    local node = api("InteractablesAPI/MakeBabyUseFurniture")
-    if not node then return false end
-    local args = { [1] = char, [2] = folderId, [3] = partName }
-    return pcall(function() node:FireServer(unpack(args)) end)
+    local node = api("InteractablesAPI/MakeBabyUseFurniture"); if not node then return false end
+    return pcall(function() node:FireServer(unpack({ [1] = char, [2] = folderId, [3] = partName })) end)
 end
 
--- Pet furniture via HousingAPI/ActivateFurniture
-local function firePetFurniture(pet, folderId, partName, cframe)
-    local node = api("HousingAPI/ActivateFurniture")
-    if not node then return false end
-    local args = { player, folderId, partName, { cframe = cframe }, pet }
-    return pcall(function() node:InvokeServer(unpack(args)) end)
-end
-
--- A subject job is a coroutine per subject, running its need list serially.
--- The pipeline staggers "start" of the next subject by BETWEEN_SUBJECTS
--- so we always have ~2 subjects in flight.
-
-local function runSubject(char, needs, fire, isPet)
-    if not char or not char.Parent then return end
-    say((isPet and "Pet: " or "Baby: ") .. (char.Name or "?"), "info")
-    if not holdSubject(char) then
-        say("Hold failed for " .. (char.Name or "?"), "bad")
-        return
+-- Abortable wait
+local function waitAbortable(seconds, label)
+    local t = 0
+    while t < seconds and TasksMode do
+        setNow(string.format("%s — %d/%ds", label, t, seconds))
+        task.wait(1); t += 1
     end
-    task.wait(1)
-
-    for idx, need in ipairs(needs) do
-        if not TasksMode then break end
-        local f = findFurnitureForNeed(need, char.Name) or findFurnitureForNeed(need)
-        if not f then
-            say("No furniture for " .. need .. " (" .. (char.Name or "?") .. ")", "warn")
-        else
-            setGoal((char.Name or "?") .. " -> " .. need .. " [" .. f.folderId .. "." .. f.partName .. "]", { f.modelName })
-            if isPet then
-                firePetFurniture(char, f.folderId, f.partName, f.cframe)
-            else
-                fire(f, char)
-            end
-            -- dwell, abortable by TasksMode
-            local t = 0
-            while t < FURNITURE_DWELL and TasksMode do
-                setNow(string.format("%s %s — %d/%ds", (char.Name or "?"), need, t, FURNITURE_DWELL))
-                task.wait(1); t += 1
-            end
-            task.wait(BETWEEN_FURNITURE)
-        end
-    end
-
-    if TasksMode then ejectSubject(char) end
-    task.wait(0.8)
 end
 
 local function startAllTasks()
     if TasksMode then return end
     TasksMode = true
 
-    -- Combined work queue: babies first, then pets
-    local jobs = {}
-    for _, c in ipairs(allSubjects()) do
-        table.insert(jobs, { char = c, needs = BABY_NEEDS, isPet = false })
+    -- Build batch: only subjects that still have a character
+    local subjects = allCharacters()
+    if #subjects == 0 then
+        say("No subjects in server", "warn"); TasksMode = false; return
     end
-    for _, pet in ipairs(petsOnServer()) do
-        table.insert(jobs, { char = pet, needs = PET_NEEDS, isPet = true })
-    end
+    say("Batch of " .. #subjects .. " subjects", "info")
 
-    say("Jobs queued: " .. #jobs, "info")
-
-    -- Pipeline: launch up to 2 subjects at once.
-    local active = {}
-    local function launch(job)
-        local co = coroutine.create(function()
-            runSubject(
-                job.char,
-                job.needs,
-                function(f, char) fireBabyFurniture(char, f.folderId, f.partName) end,
-                job.isPet
-            )
-        end)
-        table.insert(active, co)
-        task.spawn(function() coroutine.resume(co) end)
+    -- Assign a need per subject (round-robin across sleep / bored / bath)
+    local assignments = {}
+    for i, char in ipairs(subjects) do
+        local need = NEED_ROTATION[((i - 1) % #NEED_ROTATION) + 1]
+        assignments[i] = { char = char, need = need }
     end
 
-    local i = 1
-    while i <= #jobs and TasksMode do
-        -- top off to 2 active
-        while #active < 2 and i <= #jobs and TasksMode do
-            launch(jobs[i]); i += 1
-            if #active > 1 then task.wait(BETWEEN_SUBJECTS) end
+    -- ------------------------------------------------------------------
+    -- PHASE 1: HOLD all subjects
+    -- ------------------------------------------------------------------
+    setGoal("Phase 1/4 — Hold all (" .. #subjects .. ")")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Hold " .. (a.char.Name or "?"), { "(" .. i .. "/" .. #subjects .. ")" })
+        holdSubject(a.char)
+        task.wait(HOLD_STEP_DELAY)
+    end
+    say("Held " .. #subjects .. " subjects", "ok")
+
+    -- ------------------------------------------------------------------
+    -- PHASE 2: PLACE each subject on its assigned furniture
+    -- ------------------------------------------------------------------
+    setGoal("Phase 2/4 — Place on furniture")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        local f = findFurnitureForNeed(a.need, a.char.Name) or findFurnitureForNeed(a.need)
+        if not f then
+            say("No furniture for " .. a.need .. " (" .. (a.char.Name or "?") .. ")", "warn")
+            a.placed = false
+        else
+            setGoal("Place " .. (a.char.Name or "?") .. " -> " .. a.need .. " [" .. f.folderId .. "." .. f.partName .. "]",
+                { f.modelName })
+            fireBabyFurniture(a.char, f.folderId, f.partName)
+            a.placed = true
         end
-
-        -- reap finished coroutines
-        local newActive = {}
-        for _, co in ipairs(active) do
-            if coroutine.status(co) ~= "dead" then
-                table.insert(newActive, co)
-            else
-                task.wait(BETWEEN_SUBJECTS)
-            end
-        end
-        active = newActive
-        task.wait(0.5)
+        task.wait(PLACE_STEP_DELAY)
     end
 
-    -- wait for remaining
-    while #active > 0 and TasksMode do
-        local newActive = {}
-        for _, co in ipairs(active) do
-            if coroutine.status(co) ~= "dead" then table.insert(newActive, co) else task.wait(BETWEEN_SUBJECTS) end
-        end
-        active = newActive
-        task.wait(0.5)
+    -- ------------------------------------------------------------------
+    -- PHASE 3: WAIT together
+    -- ------------------------------------------------------------------
+    setGoal("Phase 3/4 — Dwell (" .. BATCH_DWELL .. "s)")
+    waitAbortable(BATCH_DWELL, "Dwell")
+    say("Dwell finished", "ok")
+
+    -- ------------------------------------------------------------------
+    -- PHASE 4: HOLD back all + eject all
+    -- ------------------------------------------------------------------
+    setGoal("Phase 4/4 — Retrieve + eject")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Re-hold " .. (a.char.Name or "?"), { "(" .. i .. "/" .. #subjects .. ")" })
+        holdSubject(a.char)   -- hold back from furniture
+        task.wait(HOLD_STEP_DELAY)
+    end
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Eject " .. (a.char.Name or "?"), { "(" .. i .. "/" .. #subjects .. ")" })
+        ejectSubject(a.char)
+        task.wait(EJECT_STEP_DELAY)
     end
 
-    say("Task loop finished", "ok")
+    say("Batch finished — all subjects dropped", "ok")
+    setGoal("Idle")
     TasksMode = false
 end
 
@@ -434,7 +371,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v8", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v9", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -494,7 +431,7 @@ local function mainWindow()
         if TasksMode then
             TasksMode = false
             b.Text = "DO ALL NEEDS [OFF]"; b.BackgroundColor3 = THEME.task
-            say("Needs runner stopped", "warn"); return
+            say("Batch runner stopped", "warn"); return
         end
         b.Text = "DO ALL NEEDS [ON]"; b.BackgroundColor3 = THEME.ok
         task.spawn(startAllTasks)
@@ -504,15 +441,15 @@ local function mainWindow()
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, "Needs order: sleep -> bored -> bath", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Pipeline: 2 subjects in flight (overlapped dwell)", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Baby: HoldBaby:InvokeServer({Char}) / EjectBaby:FireServer({Char})", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Furniture: MakeBabyUseFurniture:FireServer(Char, folderId, partName)", 10, THEME.dim)
-    text(frame, 8, 272, width-16, 14, "Pets: HousingAPI/ActivateFurniture, extra needs after bath", 10, THEME.dim)
-    text(frame, 8, 286, width-16, 14, "20s per furniture use", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Flow: hold all -> place -> wait 15s -> re-hold -> eject", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Rotation: sleep, bored, bath (round-robin)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Hold: HoldBaby:InvokeServer({Char})", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Place: MakeBabyUseFurniture:FireServer(Char, folderId, partName)", 10, THEME.dim)
+    text(frame, 8, 272, width-16, 14, "Eject: EjectBaby:FireServer({Char})", 10, THEME.dim)
+    text(frame, 8, 286, width-16, 14, "15s dwell, then all retrieved and dropped together", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 304), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 310, width-16, 14, "COCOON v8 — pipeline + exact spy shapes", 10, THEME.dim)
+    text(frame, 8, 310, width-16, 14, "COCOON v9 — batch hold/place/wait/retrieve/eject", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -528,4 +465,4 @@ env.COCOON = {
 }
 
 mainWindow()
-say("Loaded v8. Needs: sleep -> bored -> bath. Pipeline: 2 in flight.", "ok")
+say("Loaded v9. Batch flow: hold all -> place -> 15s -> re-hold -> eject.", "ok")
