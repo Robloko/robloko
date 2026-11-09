@@ -1,6 +1,5 @@
--- FURNITURE INSPECTOR (correct nesting)
--- Target: workspace.HouseInteriors.furniture[<houseKey>].<FurnitureModel>.UseBlocks[.UseBlock]
--- Place in a LocalScript or run via executor.
+-- COMPACT FURNITURE INSPECTOR
+-- Target: workspace.HouseInteriors.furniture[<houseKey>].<Model>
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -8,131 +7,105 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 
 local TRACKED_NAMES = {
-    "ModernShower",
-    "BasicBed",
-    "PetFoodBowl",
-    "PetWaterBowl",
-    "CheapPetBathtub",
-    "Piano",
-    "AilmentsRefresh2024LitterBox",
+    "BasicBed","PetFoodBowl","PetWaterBowl","CheapPetBathtub",
+    "Piano","AilmentsRefresh2024LitterBox","ModernShower",
 }
 local trackedSet = {}
 for _, n in ipairs(TRACKED_NAMES) do trackedSet[n:lower()] = n end
 
-local function sep(c, n) return string.rep(c or "=", n or 74) end
-
-local function findActivationPart(model)
-    -- exact order the PetFarm script uses
+local function hasUsablePart(model)
     local ub = model:FindFirstChild("UseBlocks")
     if ub then
-        for _, pname in ipairs({"UseBlock", "Seat1"}) do
-            local p = ub:FindFirstChild(pname)
-            if p and p:IsA("BasePart") then return p, "UseBlocks/" .. p.Name end
+        for _, p in ipairs({"UseBlock","Seat1"}) do
+            local x = ub:FindFirstChild(p)
+            if x and x:IsA("BasePart") then return true end
         end
     end
-    for _, pname in ipairs({"UseBlock", "Seat1"}) do
-        local p = model:FindFirstChild(pname)
-        if p and p:IsA("BasePart") then return p, p.Name end
+    for _, p in ipairs({"UseBlock","Seat1"}) do
+        local x = model:FindFirstChild(p)
+        if x and x:IsA("BasePart") then return true end
     end
     for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("BasePart") then return d, "(fallback) " .. d.Name end
+        if d:IsA("BasePart") then return true end
     end
-    return nil, nil
+    return false
 end
 
 local function report()
-    print(sep("="))
-    print("FURNITURE INSPECTION  →  workspace.HouseInteriors.furniture[<houseKey>]")
-    print("Player: " .. player.Name .. "   Time: " .. os.date("%Y-%m-%d %H:%M:%S"))
-    print(sep("="))
-
     local hi = Workspace:FindFirstChild("HouseInteriors")
-    if not hi then warn("HouseInteriors not found.") return end
-
-    local furniture = hi:FindFirstChild("furniture")
+    local furniture = hi and hi:FindFirstChild("furniture")
     if not furniture then
-        warn("'furniture' folder not found inside HouseInteriors.")
-        print("Children of HouseInteriors:")
-        for _, c in ipairs(hi:GetChildren()) do
-            print(string.format("   - %s (%s)", c.Name, c.ClassName))
-        end
+        warn("[Inspector] furniture folder missing")
         return
     end
 
-    print("furniture class: " .. furniture.ClassName)
-    local houseKeys = furniture:GetChildren()
-    print(string.format("House keys under furniture: %d", #houseKeys))
-    for _, hk in ipairs(houseKeys) do
-        print(string.format("   • [%s]  (%s)", hk.Name, hk.ClassName))
-    end
-    print("")
+    local counts = {}
+    local totalModels, totalUsable, houseCount = 0, 0, 0
+    local trackedFound = {}
 
-    local foundTracked = {}   -- [trackedName] = { houseKey, modelPath, partPath }
-    local totalModels = 0
-    local totalPartsReported = 0
-
-    for _, houseKeyFolder in ipairs(houseKeys) do
-        -- Accept Folder or Model as the house container
-        if houseKeyFolder:IsA("Folder") or houseKeyFolder:IsA("Model") then
-            print(sep("-"))
-            print(string.format("🏠 House key: %s  (%s)", houseKeyFolder.Name, houseKeyFolder.ClassName))
-
-            local models = {}
-            for _, child in ipairs(houseKeyFolder:GetChildren()) do
-                if child:IsA("Model") then
-                    table.insert(models, child)
-                end
-            end
-
-            if #models == 0 then
-                print("   (no Model children)")
-            else
-                table.sort(models, function(a, b) return a.Name:lower() < b.Name:lower() end)
-                for _, model in ipairs(models) do
+    for _, house in ipairs(furniture:GetChildren()) do
+        if house:IsA("Folder") or house:IsA("Model") then
+            houseCount += 1
+            for _, model in ipairs(house:GetChildren()) do
+                if model:IsA("Model") then
                     totalModels += 1
-                    local lower = model.Name:lower()
-                    local trackedName = trackedSet[lower]
-                    local tag = trackedName and "  ✅ TRACKED" or ""
-
-                    local part, partPath = findActivationPart(model)
-                    if part then totalPartsReported += 1 end
-
-                    local posInfo = part and string.format("@ %.1f, %.1f, %.1f", part.Position.X, part.Position.Y, part.Position.Z) or "@ <none>"
-                    print(string.format("   • %-35s %s%s", model.Name, posInfo, tag))
-                    if part then
-                        print(string.format("       part path: %s.%s.%s", houseKeyFolder.Name, model.Name, partPath))
-                    else
-                        print(string.format("       ❌ no BasePart found under %s", model.Name))
+                    local key = model.Name:lower()
+                    local entry = counts[key]
+                    if not entry then
+                        entry = { display = model.Name, total = 0, usable = 0, houses = {} }
+                        counts[key] = entry
                     end
-
-                    if trackedName and not foundTracked[trackedName] then
-                        foundTracked[trackedName] = {
-                            houseKey = houseKeyFolder.Name,
-                            model = model.Name,
-                            partPath = partPath,
-                        }
-                    end
+                    entry.total += 1
+                    local usable = hasUsablePart(model)
+                    if usable then entry.usable += 1; totalUsable += 1 end
+                    entry.houses[house.Name] = (entry.houses[house.Name] or 0) + 1
+                    if trackedSet[key] then trackedFound[key] = true end
                 end
             end
         end
     end
 
-    print("")
-    print(sep("="))
-    print("SUMMARY")
-    print(sep("-"))
-    print(string.format("Total furniture models: %d   with usable parts: %d", totalModels, totalPartsReported))
-    print("")
-    print("Tracked furniture status:")
+    local list = {}
+    for key, e in pairs(counts) do
+        table.insert(list, { key = key, e = e, tracked = trackedSet[key] ~= nil })
+    end
+    table.sort(list, function(a, b)
+        if a.tracked ~= b.tracked then return a.tracked end
+        return a.e.display:lower() < b.e.display:lower()
+    end)
+
+    print(string.rep("=", 66))
+    print(string.format("FURNITURE  |  player=%s  houses=%d  models=%d  usable=%d",
+        player.Name, houseCount, totalModels, totalUsable))
+    print(string.rep("-", 66))
+    print(string.format("%-34s %5s %7s  %s", "NAME", "COUNT", "USABLE", "HOUSE(S)"))
+    print(string.rep("-", 66))
+
+    for _, item in ipairs(list) do
+        local e = item.e
+        local houses = {}
+        for hk, n in pairs(e.houses) do
+            table.insert(houses, n > 1 and (hk .. "×" .. n) or hk)
+        end
+        table.sort(houses)
+        local houseStr = table.concat(houses, ", ")
+        if #houseStr > 26 then houseStr = #houses .. " house(s)" end
+        local mark = item.tracked and "✅ " or "   "
+        print(string.format("%s%-31s %5d %7d  %s",
+            mark, e.display, e.total, e.usable, houseStr))
+    end
+
+    print(string.rep("-", 66))
+    print("TRACKED CHECK:")
     for _, name in ipairs(TRACKED_NAMES) do
-        local f = foundTracked[name]
-        if f then
-            print(string.format("   ✅ %-32s %s.%s.%s", name, f.houseKey, f.model, f.partPath))
+        local e = counts[name:lower()]
+        if e then
+            print(string.format("   ✅ %-32s %d (usable %d)", name, e.total, e.usable))
         else
-            print(string.format("   ❌ %-32s NOT FOUND", name))
+            print(string.format("   ❌ %-32s 0", name))
         end
     end
-    print(sep("="))
+    print(string.rep("=", 66))
 end
 
 report()
