@@ -1,4 +1,4 @@
--- COMPACT FURNITURE INSPECTOR
+-- COMPACT FURNITURE INSPECTOR (names + counts only)
 -- Target: workspace.HouseInteriors.furniture[<houseKey>].<Model>
 
 local Players = game:GetService("Players")
@@ -6,106 +6,32 @@ local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 
-local TRACKED_NAMES = {
-    "BasicBed","PetFoodBowl","PetWaterBowl","CheapPetBathtub",
-    "Piano","AilmentsRefresh2024LitterBox","ModernShower",
-}
-local trackedSet = {}
-for _, n in ipairs(TRACKED_NAMES) do trackedSet[n:lower()] = n end
+local counts = {}
 
-local function hasUsablePart(model)
-    local ub = model:FindFirstChild("UseBlocks")
-    if ub then
-        for _, p in ipairs({"UseBlock","Seat1"}) do
-            local x = ub:FindFirstChild(p)
-            if x and x:IsA("BasePart") then return true end
-        end
-    end
-    for _, p in ipairs({"UseBlock","Seat1"}) do
-        local x = model:FindFirstChild(p)
-        if x and x:IsA("BasePart") then return true end
-    end
-    for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("BasePart") then return true end
-    end
-    return false
+local hi = Workspace:FindFirstChild("HouseInteriors")
+local furniture = hi and hi:FindFirstChild("furniture")
+if not furniture then
+    warn("[Inspector] furniture folder missing")
+    return
 end
 
-local function report()
-    local hi = Workspace:FindFirstChild("HouseInteriors")
-    local furniture = hi and hi:FindFirstChild("furniture")
-    if not furniture then
-        warn("[Inspector] furniture folder missing")
-        return
-    end
-
-    local counts = {}
-    local totalModels, totalUsable, houseCount = 0, 0, 0
-    local trackedFound = {}
-
-    for _, house in ipairs(furniture:GetChildren()) do
-        if house:IsA("Folder") or house:IsA("Model") then
-            houseCount += 1
-            for _, model in ipairs(house:GetChildren()) do
-                if model:IsA("Model") then
-                    totalModels += 1
-                    local key = model.Name:lower()
-                    local entry = counts[key]
-                    if not entry then
-                        entry = { display = model.Name, total = 0, usable = 0, houses = {} }
-                        counts[key] = entry
-                    end
-                    entry.total += 1
-                    local usable = hasUsablePart(model)
-                    if usable then entry.usable += 1; totalUsable += 1 end
-                    entry.houses[house.Name] = (entry.houses[house.Name] or 0) + 1
-                    if trackedSet[key] then trackedFound[key] = true end
-                end
+for _, house in ipairs(furniture:GetChildren()) do
+    if house:IsA("Folder") or house:IsA("Model") then
+        for _, model in ipairs(house:GetChildren()) do
+            if model:IsA("Model") then
+                local key = model.Name:lower()
+                counts[key] = counts[key] or { display = model.Name, total = 0 }
+                counts[key].total += 1
             end
         end
     end
-
-    local list = {}
-    for key, e in pairs(counts) do
-        table.insert(list, { key = key, e = e, tracked = trackedSet[key] ~= nil })
-    end
-    table.sort(list, function(a, b)
-        if a.tracked ~= b.tracked then return a.tracked end
-        return a.e.display:lower() < b.e.display:lower()
-    end)
-
-    print(string.rep("=", 66))
-    print(string.format("FURNITURE  |  player=%s  houses=%d  models=%d  usable=%d",
-        player.Name, houseCount, totalModels, totalUsable))
-    print(string.rep("-", 66))
-    print(string.format("%-34s %5s %7s  %s", "NAME", "COUNT", "USABLE", "HOUSE(S)"))
-    print(string.rep("-", 66))
-
-    for _, item in ipairs(list) do
-        local e = item.e
-        local houses = {}
-        for hk, n in pairs(e.houses) do
-            table.insert(houses, n > 1 and (hk .. "×" .. n) or hk)
-        end
-        table.sort(houses)
-        local houseStr = table.concat(houses, ", ")
-        if #houseStr > 26 then houseStr = #houses .. " house(s)" end
-        local mark = item.tracked and "✅ " or "   "
-        print(string.format("%s%-31s %5d %7d  %s",
-            mark, e.display, e.total, e.usable, houseStr))
-    end
-
-    print(string.rep("-", 66))
-    print("TRACKED CHECK:")
-    for _, name in ipairs(TRACKED_NAMES) do
-        local e = counts[name:lower()]
-        if e then
-            print(string.format("   ✅ %-32s %d (usable %d)", name, e.total, e.usable))
-        else
-            print(string.format("   ❌ %-32s 0", name))
-        end
-    end
-    print(string.rep("=", 66))
 end
 
-report()
+local list = {}
+for _, e in pairs(counts) do table.insert(list, e) end
+table.sort(list, function(a, b) return a.display:lower() < b.display:lower() end)
+
+print(string.format("FURNITURE (%s):", player.Name))
+for _, e in ipairs(list) do
+    print(string.format("  %s x%d", e.display, e.total))
+end
