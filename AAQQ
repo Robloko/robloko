@@ -1,6 +1,8 @@
 -- ==================================================================
--- COCOON v3 — Server Stats + Family Builder + Needs Loop
--- Workflow per subject: Hold -> fulfill need (sleep/bath/bored/dirty/food/drink) -> Eject
+-- COCOON v4 — Server Stats + Family Builder + Needs Loop
+-- Workflow per subject: Hold -> fulfill needs -> Eject -> next
+-- Family invites use the exact SimpleSpy shape:
+--   InvitePlayer:InvokeServer(unpack({ [1] = <Player> }))
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,13 +14,14 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 
 -- ================= CONFIG =================
 local INVITE_DELAY      = 1.0
-local FURNITURE_DWELL   = 20      -- seconds per furniture use
+local INVITE_RETRY_WAIT = 1.5
+local FAMILY_SETTLE     = 2.0     -- wait after CreateFamily before inviting
+local FURNITURE_DWELL   = 20
 local BETWEEN_SUBJECTS  = 1.5
 local BETWEEN_FURNITURE = 0.8
 local MAX_TASK_PASSES   = 1
 
--- Need -> furniture mapping for PETS (HousingAPI/ActivateFurniture)
--- mode: "UseBlock" or "Seat1"; cframe from your capture
+-- PET furniture keyed by need
 local PET_FURNITURE = {
     dirty  = { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927) },
     food   = { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0) },
@@ -28,19 +31,16 @@ local PET_FURNITURE = {
     bored  = { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0) },
 }
 
--- Need -> furniture mapping for BABIES (InteractablesAPI/MakeBabyUseFurniture)
--- No cframe arg for babies.
+-- BABY furniture keyed by need (no cframe arg for MakeBabyUseFurniture)
 local BABY_FURNITURE = {
     dirty = { id = "f-23", mode = "UseBlock" },
-    bored = { id = "f-32", mode = "Seat1" },
-    -- Add bath / sleep / food / drink here once you have the IDs
+    bored = { id = "f-32", mode = "Seat1"    },
     -- bath  = { id = "f-??", mode = "UseBlock" },
-    -- sleep = { id = "f-??", mode = "Seat1" },
+    -- sleep = { id = "f-??", mode = "Seat1"    },
 }
 
--- Which needs to run for each subject type, in order.
 local PET_NEEDS  = { "dirty", "food", "drink", "toilet", "sleep", "bored" }
-local BABY_NEEDS = { "dirty", "bored" }   -- extend as you map more IDs
+local BABY_NEEDS = { "dirty", "bored" }
 
 -- ================= STATUS / LOG =================
 local ui = {}
@@ -50,7 +50,7 @@ local status = { now = "Ready", goal = "Pick an action", queue = {} }
 local function renderStatus()
     if ui.now then
         pcall(function()
-            ui.now.Text = status.now
+            ui.now.Text  = status.now
             ui.goal.Text = status.goal
             ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
         end)
@@ -72,11 +72,12 @@ local function countPets()
 end
 local function otherPlayers()
     local list = {}
-    for _, p in ipairs(Players:GetPlayers()) do if p ~= player then table.insert(list, p) end end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then table.insert(list, p) end
+    end
     return list
 end
 local function allSubjects()
-    -- include yourself too, so "do all tasks" covers everyone
     local list = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character then table.insert(list, p.Character) end
@@ -89,15 +90,40 @@ local function petsOnServer()
 end
 
 -- ================= API HELPERS =================
-local function api(name) return ReplicatedStorage:WaitForChild("API"):FindFirstChild(name) end
+local API_ROOT = ReplicatedStorage:WaitForChild("API")
+local function api(name) return API_ROOT:FindFirstChild(name) end
+
 local function callAPI(name, args, fire)
     local node = api(name)
     if not node then say("API missing: " .. name, "bad"); return false end
+    args = args or {}
     local ok, err = pcall(function()
-        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
+        if fire then
+            node:FireServer(unpack(args))
+        else
+            node:InvokeServer(unpack(args))
+        end
     end)
     if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
     return ok
+end
+
+-- EXACT port of SimpleSpy capture for InvitePlayer
+local function invitePlayer(targetPlayer)
+    if typeof(targetPlayer) ~= "Instance" or not targetPlayer:IsA("Player") then
+        say("invitePlayer: not a Player -> " .. tostring(targetPlayer), "bad")
+        return false
+    end
+    local node = api("FamilyAPI/InvitePlayer")
+    if not node then say("FamilyAPI/InvitePlayer missing", "bad"); return false end
+    local ok, err = pcall(function()
+        node:InvokeServer(unpack({ [1] = targetPlayer }))
+    end)
+    if not ok then
+        say("Invite failed for " .. targetPlayer.Name .. ": " .. tostring(err), "bad")
+        return false
+    end
+    return true
 end
 
 -- ================= FAMILY BUILDER =================
@@ -110,7 +136,6 @@ local function leaveFamily()
 end
 
 local function ensureFamily()
-    -- Try create; if it fails, assume already in one and continue.
     local node = api("FamilyAPI/CreateFamily")
     if not node then say("FamilyAPI/CreateFamily missing", "bad"); return false end
     local ok = pcall(function() node:InvokeServer() end)
@@ -119,7 +144,7 @@ local function ensureFamily()
     else
         say("Family created", "ok")
     end
-    task.wait(1)
+    task.wait(FAMILY_SETTLE)   -- fresh family rejects instant invites
     return true
 end
 
@@ -127,11 +152,26 @@ local function inviteAll()
     local targets = otherPlayers()
     if #targets == 0 then say("No other players to invite", "warn"); return end
     setGoal("Inviting " .. #targets .. " player(s)")
+
     for _, p in ipairs(targets) do
         if not FamilyMode then break end
+        if p.Parent ~= Players then
+            say("Skipping " .. p.Name .. " (left server)", "warn")
+            continue
+        end
+
         setGoal("Inviting " .. #targets, { p.Name })
-        callAPI("FamilyAPI/InvitePlayer", { p })
-        say("Family invite -> " .. p.Name, "ok")
+        local ok = invitePlayer(p)
+        if ok then
+            say("Family invite -> " .. p.Name, "ok")
+        else
+            task.wait(INVITE_RETRY_WAIT)
+            if invitePlayer(p) then
+                say("Family invite (retry) -> " .. p.Name, "ok")
+            else
+                say("Family invite FAILED -> " .. p.Name, "bad")
+            end
+        end
         task.wait(INVITE_DELAY)
     end
     say("Family invite pass finished", "ok")
@@ -167,7 +207,6 @@ local function dwell(seconds, label)
     end
 end
 
--- PET: hold -> each need -> eject
 local function processPet(pet)
     if not pet or not pet.Parent then return end
     currentSubject = pet
@@ -177,7 +216,7 @@ local function processPet(pet)
         if not TasksMode then break end
         local f = PET_FURNITURE[need]
         if not f then
-            say("No furniture mapped for pet need: " .. need, "warn")
+            say("No furniture for pet need: " .. need, "warn")
         else
             setGoal("Pet " .. (pet.Name or "?") .. " -> " .. need, { f.id })
             callAPI("HousingAPI/ActivateFurniture",
@@ -191,7 +230,6 @@ local function processPet(pet)
     task.wait(BETWEEN_SUBJECTS)
 end
 
--- BABY: hold -> each need -> eject
 local function processBaby(char)
     if not char or not char.Parent then return end
     currentSubject = char
@@ -201,7 +239,7 @@ local function processBaby(char)
         if not TasksMode then break end
         local f = BABY_FURNITURE[need]
         if not f then
-            say("No furniture mapped for baby need: " .. need, "warn")
+            say("No furniture for baby need: " .. need, "warn")
         else
             setGoal("Baby " .. (char.Name or "?") .. " -> " .. need, { f.id })
             callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, f.id, f.mode }, true)
@@ -299,7 +337,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v3", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v4", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -351,7 +389,7 @@ local function mainWindow()
     create("Frame", { Position = UDim2.fromOffset(8,129), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
 
-    -- Button 1: Create family + invite all
+    -- Button 1
     toggleButton(frame, 8, 140, width-16, "CREATE FAMILY + INVITE ALL", THEME.fam, function(b)
         if FamilyMode then
             FamilyMode = false
@@ -362,7 +400,7 @@ local function mainWindow()
         task.spawn(createFamilyAndInvite)
     end)
 
-    -- Button 2: Do all player needs (sleep/bath/bored/dirty/...)
+    -- Button 2
     local taskBtn = toggleButton(frame, 8, 178, width-16, "DO ALL PLAYER NEEDS [OFF]", THEME.task, function(b)
         if TasksMode then
             TasksMode = false
@@ -386,11 +424,11 @@ local function mainWindow()
     text(frame, 8, 216, width-16, 14, "Per subject: Hold -> needs -> Eject", 10, THEME.dim)
     text(frame, 8, 230, width-16, 14, "Babies: dirty, bored (add more IDs in BABY_FURNITURE)", 10, THEME.dim)
     text(frame, 8, 244, width-16, 14, "Pets: dirty, food, drink, toilet, sleep, bored", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Targets: every player (incl. you) + every pet", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Invites: InvokeServer({ Player }) + retry", 10, THEME.dim)
     text(frame, 8, 272, width-16, 14, "20s per furniture use", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 290), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 296, width-16, 14, "COCOON v3 — family builder + needs loop", 10, THEME.dim)
+    text(frame, 8, 296, width-16, 14, "COCOON v4 — invite fix + needs loop", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -398,8 +436,9 @@ env.COCOON = {
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
+    InvitePlayer = invitePlayer,        -- expose for manual testing
     DoAllTasksOnce = doAllTasksOnce,
 }
 
 mainWindow()
-say("Loaded. Family builder + needs loop (sleep/bath/bored/dirty/food/drink).", "ok")
+say("Loaded v4. Invite uses InvokeServer({ Player }) + retry. Needs loop ready.", "ok")
