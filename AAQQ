@@ -1,9 +1,8 @@
 -- ==================================================================
--- COCOON v6 — Server Stats + Family Builder + Needs Loop
--- Family invites use TWO exact SimpleSpy shapes:
---   A: local args = { [1] = game:GetService("Players"):FindFirstChild("Name") }
---   B: local args = { [1] = game:GetService("Players").Name }
---   then ReplicatedStorage.API:FindFirstChild("FamilyAPI/InvitePlayer"):InvokeServer(unpack(args))
+-- COCOON v7 — Server Stats + Family Builder + Needs Loop
+-- Dynamic furniture discovery from:
+--   workspace.HouseInteriors.furniture["Player/1/nil/true/f-XX"].<FurnitureModel>.UseBlocks.<Seat1|UseBlock>
+-- Baby needs fire: InteractablesAPI/MakeBabyUseFurniture(char, folderId, partName)
 -- ==================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,26 +20,20 @@ local BETWEEN_SUBJECTS  = 1.5
 local BETWEEN_FURNITURE = 0.8
 local MAX_TASK_PASSES   = 1
 
--- PET furniture keyed by need
-local PET_FURNITURE = {
-    dirty  = { id = "f-5",  mode = "UseBlock", cframe = CFrame.new(39.4566, 4000.7026, -9008.4346) * CFrame.Angles(-3.1415927, 0, -3.1415927) },
-    food   = { id = "f-24", mode = "UseBlock", cframe = CFrame.new(20.9018, 4000.6199, -9018.0059) * CFrame.Angles(0, -1.5707964, 0) },
-    drink  = { id = "f-9",  mode = "UseBlock", cframe = CFrame.new(20.9035, 4000.6199, -9021.0029) * CFrame.Angles(0, -1.5707964, 0) },
-    toilet = { id = "f-28", mode = "Seat1",    cframe = CFrame.new(38.3518, 4003.1553, -9012.5)    * CFrame.Angles(0, 1.5707964, 0) },
-    sleep  = { id = "f-31", mode = "Seat1",    cframe = CFrame.new(12.2982, 4002.6306, -9029.9854) * CFrame.Angles(0, -1.5707964, 0) },
-    bored  = { id = "f-32", mode = "Seat1",    cframe = CFrame.new(18.2910, 4003.4504, -9029.9668) * CFrame.Angles(1.5707964, 0, 0) },
-}
-
--- BABY furniture keyed by need (no cframe arg for MakeBabyUseFurniture)
-local BABY_FURNITURE = {
-    dirty = { id = "f-23", mode = "UseBlock" },
-    bored = { id = "f-32", mode = "Seat1"    },
-    -- bath  = { id = "f-??", mode = "UseBlock" },
-    -- sleep = { id = "f-??", mode = "Seat1"    },
-}
-
+-- Which needs to run per subject type
 local PET_NEEDS  = { "dirty", "food", "drink", "toilet", "sleep", "bored" }
-local BABY_NEEDS = { "dirty", "bored" }
+local BABY_NEEDS = { "dirty", "bored", "bath", "sleep" }  -- bath/sleep use dynamic discovery
+
+-- Known furniture model names by need (used for discovery filter)
+local NEED_MODELS = {
+    dirty  = { "CheapPetBathtub", "ModernShower", "Bathtub" },
+    food   = { "PetFoodBowl",    "FoodBowl",     "BasicFoodBowl" },
+    drink  = { "PetWaterBowl",   "WaterBowl",    "BasicWaterBowl" },
+    toilet = { "AilmentsRefresh2024LitterBox", "LitterBox" },
+    sleep  = { "BasicBed",       "ModernBed",    "Bed" },
+    bored  = { "Piano",          "ToyBox" },
+    bath   = { "ModernShower",   "CheapPetBathtub", "Bathtub" },
+}
 
 -- ================= STATUS / LOG =================
 local ui = {}
@@ -98,80 +91,134 @@ local function callAPI(name, args, fire)
     if not node then say("API missing: " .. name, "bad"); return false end
     args = args or {}
     local ok, err = pcall(function()
-        if fire then
-            node:FireServer(unpack(args))
-        else
-            node:InvokeServer(unpack(args))
-        end
+        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
     end)
     if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
     return ok
 end
 
--- ============ INVITE METHOD A (spy capture #1) ============
--- local args = { [1] = game:GetService("Players"):FindFirstChild("Name") }
--- ReplicatedStorage.API:FindFirstChild("FamilyAPI/InvitePlayer"):InvokeServer(unpack(args))
+-- ============ INVITE METHOD A (FindFirstChild) ============
 local function inviteMethodA(name)
-    if type(name) ~= "string" or name == "" then
-        say("MethodA: bad name -> " .. tostring(name), "bad")
-        return false
-    end
+    if type(name) ~= "string" or name == "" then return false end
     local target = game:GetService("Players"):FindFirstChild(name)
-    if not target then
-        say("MethodA: no Player named " .. name, "bad")
-        return false
-    end
-    local args = {
-        [1] = target
-    }
+    if not target then return false end
+    local args = { [1] = target }
     local node = game:GetService("ReplicatedStorage").API:FindFirstChild("FamilyAPI/InvitePlayer")
-    if not node then say("FamilyAPI/InvitePlayer missing", "bad"); return false end
-    local ok, err = pcall(function()
-        node:InvokeServer(unpack(args))
-    end)
-    if not ok then
-        say("MethodA invite failed for " .. name .. ": " .. tostring(err), "bad")
-        return false
-    end
-    return true
+    if not node then return false end
+    return pcall(function() node:InvokeServer(unpack(args)) end)
 end
 
--- ============ INVITE METHOD B (spy capture #2) ============
--- local args = { [1] = game:GetService("Players").Name }
--- ReplicatedStorage.API:FindFirstChild("FamilyAPI/InvitePlayer"):InvokeServer(unpack(args))
+-- ============ INVITE METHOD B (Players[name]) ============
 local function inviteMethodB(name)
-    if type(name) ~= "string" or name == "" then
-        say("MethodB: bad name -> " .. tostring(name), "bad")
-        return false
-    end
-    local target = game:GetService("Players")[name]   -- == Players.Name (dot access)
-    if not target then
-        say("MethodB: no Player named " .. name, "bad")
-        return false
-    end
-    local args = {
-        [1] = target
-    }
+    if type(name) ~= "string" or name == "" then return false end
+    local target = game:GetService("Players")[name]
+    if not target then return false end
+    local args = { [1] = target }
     local node = game:GetService("ReplicatedStorage").API:FindFirstChild("FamilyAPI/InvitePlayer")
-    if not node then say("FamilyAPI/InvitePlayer missing", "bad"); return false end
-    local ok, err = pcall(function()
-        node:InvokeServer(unpack(args))
-    end)
-    if not ok then
-        say("MethodB invite failed for " .. name .. ": " .. tostring(err), "bad")
-        return false
+    if not node then return false end
+    return pcall(function() node:InvokeServer(unpack(args)) end)
+end
+
+-- ==================================================================
+-- DYNAMIC FURNITURE DISCOVERY
+-- ==================================================================
+-- The tree looks like:
+--   workspace.HouseInteriors.furniture["Player/1/nil/true/f-24"].<Model>.UseBlocks.<Seat1|UseBlock>
+--   or, for some models: <Model>.UseBlock (a BasePart directly)
+-- or the model itself may be the activation part.
+
+local function ownerFromFolder(folderName)
+    -- "3kachalka478/1/nil/true/f-24" -> "3kachalka478"
+    return (string.match(folderName, "^([^/]+)/") or folderName)
+end
+local function folderIdFromFolder(folderName)
+    return (string.match(folderName, "f%-%d+") or folderName)
+end
+
+-- Resolve the activation part inside a furniture model.
+-- Priority: UseBlocks.<Seat1|UseBlock> -> <Seat1|UseBlock> direct child -> first BasePart
+local function resolveActivation(model)
+    if not model or not model:IsA("Model") then return nil end
+    local useBlocks = model:FindFirstChild("UseBlocks")
+    if useBlocks then
+        for _, name in ipairs({ "Seat1", "UseBlock" }) do
+            local part = useBlocks:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                return { partName = name, cframe = part.CFrame, position = part.Position }
+            end
+        end
     end
-    return true
+    for _, name in ipairs({ "Seat1", "UseBlock" }) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            return { partName = name, cframe = part.CFrame, position = part.Position }
+        end
+    end
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") then
+            return { partName = d.Name, cframe = d.CFrame, position = d.Position }
+        end
+    end
+    return nil
+end
+
+-- Scan all furniture folders once. Returns a list:
+--   { owner, folderName, folderId, modelName, model, partName, cframe, position }
+local function scanAllFurniture()
+    local out = {}
+    local hi = workspace:FindFirstChild("HouseInteriors")
+    if not hi then return out end
+    local furniture = hi:FindFirstChild("furniture")
+    if not furniture then return out end
+    for _, folder in ipairs(furniture:GetChildren()) do
+        local owner = ownerFromFolder(folder.Name)
+        local folderId = folderIdFromFolder(folder.Name)
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Model") then
+                local act = resolveActivation(child)
+                if act then
+                    table.insert(out, {
+                        owner = owner,
+                        folderName = folder.Name,
+                        folderId = folderId,
+                        modelName = child.Name,
+                        model = child,
+                        partName = act.partName,
+                        cframe = act.cframe,
+                        position = act.position,
+                    })
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- Find the best matching furniture entry for a given need, optionally owned by a specific player.
+local function findFurnitureForNeed(need, ownerName)
+    local wanted = NEED_MODELS[need]
+    if not wanted then return nil end
+    local wantedSet = {}
+    for _, n in ipairs(wanted) do wantedSet[string.lower(n)] = true end
+    local candidates = {}
+    for _, f in ipairs(scanAllFurniture()) do
+        if wantedSet[string.lower(f.modelName)] then
+            if not ownerName or f.owner == ownerName then
+                table.insert(candidates, f)
+            end
+        end
+    end
+    if #candidates == 0 and ownerName then
+        -- fallback: any owner
+        for _, f in ipairs(scanAllFurniture()) do
+            if wantedSet[string.lower(f.modelName)] then table.insert(candidates, f) end
+        end
+    end
+    return candidates[1]
 end
 
 -- ================= FAMILY BUILDER =================
 local FamilyMode = false
-
-local function leaveFamily()
-    say("Leaving current family...", "info")
-    callAPI("FamilyAPI/LeaveFamily", {})
-    task.wait(0.8)
-end
 
 local function ensureFamily()
     local node = api("FamilyAPI/CreateFamily")
@@ -186,8 +233,6 @@ local function ensureFamily()
     return true
 end
 
--- Invites alternate: first half of roster uses Method A, second half Method B.
--- On failure, retries once using the OTHER method.
 local function inviteAll()
     local targets = otherPlayers()
     if #targets == 0 then say("No other players to invite", "warn"); return end
@@ -202,30 +247,16 @@ local function inviteAll()
         end
 
         local useA = (i <= half) or (half == 0 and i == 1)
-        local primaryName  = useA and "A" or "B"
-        local fallbackName = useA and "B" or "A"
+        setGoal("Inviting " .. #targets, { p.Name .. (useA and " (A)" or " (B)") })
 
-        setGoal("Inviting " .. #targets, { p.Name .. " (" .. primaryName .. ")" })
-
-        local ok
-        if useA then
-            ok = inviteMethodA(p.Name)
-        else
-            ok = inviteMethodB(p.Name)
-        end
-
+        local ok = useA and inviteMethodA(p.Name) or inviteMethodB(p.Name)
         if ok then
-            say("Invite (" .. primaryName .. ") -> " .. p.Name, "ok")
+            say("Invite (" .. (useA and "A" or "B") .. ") -> " .. p.Name, "ok")
         else
             task.wait(1.5)
-            local ok2
-            if useA then
-                ok2 = inviteMethodB(p.Name)
-            else
-                ok2 = inviteMethodA(p.Name)
-            end
+            local ok2 = useA and inviteMethodB(p.Name) or inviteMethodA(p.Name)
             if ok2 then
-                say("Invite (" .. fallbackName .. " retry) -> " .. p.Name, "ok")
+                say("Invite (" .. (useA and "B" or "A") .. " retry) -> " .. p.Name, "ok")
             else
                 say("Invite FAILED (A+B) -> " .. p.Name, "bad")
             end
@@ -265,6 +296,7 @@ local function dwell(seconds, label)
     end
 end
 
+-- PET: hold -> activate furniture per need via HousingAPI/ActivateFurniture
 local function processPet(pet)
     if not pet or not pet.Parent then return end
     currentSubject = pet
@@ -272,13 +304,13 @@ local function processPet(pet)
     hold(pet)
     for _, need in ipairs(PET_NEEDS) do
         if not TasksMode then break end
-        local f = PET_FURNITURE[need]
+        local f = findFurnitureForNeed(need, player.Name) or findFurnitureForNeed(need)
         if not f then
-            say("No furniture for pet need: " .. need, "warn")
+            say("No furniture found for pet need: " .. need, "warn")
         else
-            setGoal("Pet " .. (pet.Name or "?") .. " -> " .. need, { f.id })
+            setGoal("Pet " .. (pet.Name or "?") .. " -> " .. need .. " [" .. f.folderId .. "." .. f.partName .. "]", { f.modelName })
             callAPI("HousingAPI/ActivateFurniture",
-                { player, f.id, f.mode, { cframe = f.cframe }, pet })
+                { player, f.folderId, f.partName, { cframe = f.cframe }, pet })
             dwell(FURNITURE_DWELL, "Pet " .. need)
             task.wait(BETWEEN_FURNITURE)
         end
@@ -288,6 +320,19 @@ local function processPet(pet)
     task.wait(BETWEEN_SUBJECTS)
 end
 
+-- BABY: hold -> fire InteractablesAPI/MakeBabyUseFurniture(char, folderId, partName)
+-- Exact shape from SimpleSpy captures.
+local function fireBabyFurniture(char, folderId, partName)
+    local node = api("InteractablesAPI/MakeBabyUseFurniture")
+    if not node then say("MakeBabyUseFurniture missing", "bad"); return false end
+    local args = {
+        [1] = char,
+        [2] = folderId,
+        [3] = partName,
+    }
+    return pcall(function() node:FireServer(unpack(args)) end)
+end
+
 local function processBaby(char)
     if not char or not char.Parent then return end
     currentSubject = char
@@ -295,12 +340,13 @@ local function processBaby(char)
     hold(char)
     for _, need in ipairs(BABY_NEEDS) do
         if not TasksMode then break end
-        local f = BABY_FURNITURE[need]
+        -- babies get their own furniture (owner = char.Name)
+        local f = findFurnitureForNeed(need, char.Name) or findFurnitureForNeed(need)
         if not f then
-            say("No furniture for baby need: " .. need, "warn")
+            say("No furniture found for baby need: " .. need, "warn")
         else
-            setGoal("Baby " .. (char.Name or "?") .. " -> " .. need, { f.id })
-            callAPI("InteractablesAPI/MakeBabyUseFurniture", { char, f.id, f.mode }, true)
+            setGoal("Baby " .. (char.Name or "?") .. " -> " .. need .. " [" .. f.folderId .. "." .. f.partName .. "]", { f.modelName })
+            fireBabyFurniture(char, f.folderId, f.partName)
             dwell(FURNITURE_DWELL, "Baby " .. need)
             task.wait(BETWEEN_FURNITURE)
         end
@@ -395,7 +441,7 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v6", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v7", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
@@ -408,7 +454,7 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 260, 350
+    local width, height = 260, 360
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
@@ -446,11 +492,7 @@ local function mainWindow()
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
 
     toggleButton(frame, 8, 140, width-16, "CREATE FAMILY + INVITE ALL", THEME.fam, function(b)
-        if FamilyMode then
-            FamilyMode = false
-            say("Family builder stopped", "warn")
-            return
-        end
+        if FamilyMode then FamilyMode = false; say("Family builder stopped", "warn"); return end
         say("Family builder started (A/B alternating)", "info")
         task.spawn(createFamilyAndInvite)
     end)
@@ -458,32 +500,26 @@ local function mainWindow()
     local taskBtn = toggleButton(frame, 8, 178, width-16, "DO ALL PLAYER NEEDS [OFF]", THEME.task, function(b)
         if TasksMode then
             TasksMode = false
-            b.Text = "DO ALL PLAYER NEEDS [OFF]"
-            b.BackgroundColor3 = THEME.task
-            say("Needs runner stopped", "warn")
-            return
+            b.Text = "DO ALL PLAYER NEEDS [OFF]"; b.BackgroundColor3 = THEME.task
+            say("Needs runner stopped", "warn"); return
         end
-        b.Text = "DO ALL PLAYER NEEDS [ON]"
-        b.BackgroundColor3 = THEME.ok
+        b.Text = "DO ALL PLAYER NEEDS [ON]"; b.BackgroundColor3 = THEME.ok
         task.spawn(startAllTasks)
         task.spawn(function()
             while TasksMode and frame.Parent do task.wait(0.5) end
-            if b.Parent then
-                b.Text = "DO ALL PLAYER NEEDS [OFF]"
-                b.BackgroundColor3 = THEME.task
-            end
+            if b.Parent then b.Text = "DO ALL PLAYER NEEDS [OFF]"; b.BackgroundColor3 = THEME.task end
         end)
     end)
 
-    text(frame, 8, 216, width-16, 14, "Per subject: Hold -> needs -> Eject", 10, THEME.dim)
-    text(frame, 8, 230, width-16, 14, "Babies: dirty, bored (add more IDs in BABY_FURNITURE)", 10, THEME.dim)
-    text(frame, 8, 244, width-16, 14, "Pets: dirty, food, drink, toilet, sleep, bored", 10, THEME.dim)
-    text(frame, 8, 258, width-16, 14, "Invite A: FindFirstChild(name) | Invite B: Players[name]", 10, THEME.dim)
-    text(frame, 8, 272, width-16, 14, "First half -> A, second half -> B (auto fallback)", 10, THEME.dim)
+    text(frame, 8, 216, width-16, 14, "Furniture discovered live from HouseInteriors.furniture", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "Baby: MakeBabyUseFurniture(char, folderId, partName)", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Pet: HousingAPI/ActivateFurniture(player, fId, part, cframe, pet)", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Needs pets: dirty food drink toilet sleep bored", 10, THEME.dim)
+    text(frame, 8, 272, width-16, 14, "Needs babies: dirty bored bath sleep", 10, THEME.dim)
     text(frame, 8, 286, width-16, 14, "20s per furniture use", 10, THEME.dim)
     create("Frame", { Position = UDim2.fromOffset(8, 304), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 310, width-16, 14, "COCOON v6 — dual invite methods", 10, THEME.dim)
+    text(frame, 8, 310, width-16, 14, "COCOON v7 — dynamic furniture", 10, THEME.dim)
 end
 
 env.COCOON = {
@@ -491,10 +527,12 @@ env.COCOON = {
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
-    InviteA = inviteMethodA,          -- manual: env.COCOON.InviteA("3kachalka474")
-    InviteB = inviteMethodB,          -- manual: env.COCOON.InviteB("3kachalka474")
+    InviteA = inviteMethodA,
+    InviteB = inviteMethodB,
     DoAllTasksOnce = doAllTasksOnce,
+    ScanFurniture = scanAllFurniture,        -- debug: env.COCOON.ScanFurniture()
+    FindFurniture = findFurnitureForNeed,    -- debug: env.COCOON.FindFurniture("dirty")
 }
 
 mainWindow()
-say("Loaded v6. Invites split A (FindFirstChild) / B (Players[name]) with fallback.", "ok")
+say("Loaded v7. Dynamic furniture discovery from HouseInteriors.furniture.", "ok")
