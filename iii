@@ -1,0 +1,146 @@
+-- Inspect Family List
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+
+local function getPlayerData()
+    local success, result = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        return clientData.get_data()[player.Name]
+    end)
+    if not success then
+        warn("❌ Failed to require/get ClientData:", result)
+        return nil
+    end
+    return result
+end
+
+-- Deep print any value with indentation
+local function deepPrint(value, indent, maxDepth, currentDepth)
+    indent = indent or ""
+    maxDepth = maxDepth or 4
+    currentDepth = currentDepth or 0
+
+    if currentDepth > maxDepth then
+        print(indent .. "... (max depth reached)")
+        return
+    end
+
+    if type(value) ~= "table" then
+        print(indent .. tostring(value) .. " [" .. type(value) .. "]")
+        return
+    end
+
+    -- Detect if this is an array (numeric keys only) or dictionary
+    local isArray = true
+    local count = 0
+    for k, _ in pairs(value) do
+        count = count + 1
+        if type(k) ~= "number" then
+            isArray = false
+            break
+        end
+    end
+
+    if count == 0 then
+        print(indent .. "{} (empty table)")
+        return
+    end
+
+    if isArray then
+        print(indent .. "[Array with " .. count .. " entries]")
+        for i, v in ipairs(value) do
+            print(indent .. "  [" .. i .. "]:")
+            deepPrint(v, indent .. "    ", maxDepth, currentDepth + 1)
+        end
+    else
+        print(indent .. "{Dictionary with " .. count .. " keys}")
+        -- Sort keys for readability
+        local keys = {}
+        for k, _ in pairs(value) do
+            table.insert(keys, k)
+        end
+        table.sort(keys, function(a, b)
+            return tostring(a) < tostring(b)
+        end)
+
+        for _, k in ipairs(keys) do
+            local v = value[k]
+            print(indent .. "  [" .. tostring(k) .. "] (" .. type(v) .. "):")
+            deepPrint(v, indent .. "    ", maxDepth, currentDepth + 1)
+        end
+    end
+end
+
+-- Inspect family_list specifically
+local function inspectFamilyList()
+    local data = getPlayerData()
+    if not data then return end
+
+    print("=================================")
+    print("🔍 INSPECTING family_list")
+    print("Player:", player.Name)
+    print("=================================")
+
+    -- Check if family_list exists directly or nested
+    local familyList = data.family_list
+
+    -- Also check common nested locations
+    if familyList == nil then
+        print("ℹ️ data.family_list is nil, searching nested locations...")
+        local candidates = {
+            { "data", data },
+            { "data.inventory", data.inventory },
+            { "data.family", data.family },
+            { "data.families", data.families },
+            { "data.social", data.social },
+            { "data.player_data", data.player_data },
+        }
+        for _, pair in ipairs(candidates) do
+            local path, container = pair[1], pair[2]
+            if type(container) == "table" and container.family_list ~= nil then
+                print("✅ Found family_list at: " .. path .. ".family_list")
+                familyList = container.family_list
+                break
+            end
+        end
+    end
+
+    if familyList == nil then
+        print("❌ family_list not found anywhere in player data")
+        print("")
+        print("Available top-level keys:")
+        for k, v in pairs(data) do
+            print("  - " .. tostring(k) .. " (" .. type(v) .. ")")
+        end
+        return
+    end
+
+    print("")
+    print("📂 family_list structure:")
+    print("=================================")
+    deepPrint(familyList, "", 5, 0)
+
+    -- Extra summary if it's an array/table of families
+    if type(familyList) == "table" then
+        local count = 0
+        for _ in pairs(familyList) do count = count + 1 end
+        print("")
+        print("📊 Summary: " .. count .. " entries in family_list")
+
+        -- If entries are tables with common family fields, summarize them
+        local sampleKey = nil
+        for k, _ in pairs(familyList) do sampleKey = k; break end
+        if sampleKey ~= nil and type(familyList[sampleKey]) == "table" then
+            local fields = {}
+            for k, _ in pairs(familyList[sampleKey]) do
+                table.insert(fields, tostring(k))
+            end
+            table.sort(fields)
+            print("🧩 Fields per entry: " .. table.concat(fields, ", "))
+        end
+    end
+end
+
+inspectFamilyList()
