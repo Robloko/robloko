@@ -1,0 +1,638 @@
+-- ==================================================================
+-- COCOON v12 — Family Builder + Needs Loop + "Fill All Bathtubs"
+-- CheapPetBathtub button: for each player, find their OWN CheapPetBathtub
+-- via furniture inspection and place them on it. Wait 15s -> eject.
+-- Hold:   AdoptAPI/HoldBaby:InvokeServer(unpack({ [1] = Char }))
+-- Eject:  AdoptAPI/EjectBaby:FireServer(unpack({ [1] = Char }))
+-- Place:  InteractablesAPI/MakeBabyUseFurniture:FireServer(Char, folderId, partName)
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local player = Players.LocalPlayer
+
+local env = getgenv and getgenv() or {}
+if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
+
+-- ================= CONFIG =================
+local INVITE_DELAY     = 1.0
+local FAMILY_SETTLE    = 2.0
+local BATCH_DWELL      = 15
+local HOLD_STEP_DELAY  = 0.8
+local PLACE_STEP_DELAY = 0.6
+local EJECT_STEP_DELAY = 0.6
+local BETWEEN_PASSES   = 3.0
+
+local NEED_ROTATION = { "sleep", "bored", "bath" }
+
+local NEED_MODELS = {
+    sleep  = { "BasicBed",  "ModernBed", "Bed" },
+    bored  = { "Piano",     "ToyBox",    "BallPit" },
+    bath   = { "ModernShower", "CheapPetBathtub", "Bathtub" },
+}
+
+-- ================= STATUS / LOG =================
+local ui = {}
+local uiLog = nil
+local status = { now = "Ready", goal = "Pick an action", queue = {} }
+
+local function renderStatus()
+    if ui.now then
+        pcall(function()
+            ui.now.Text  = status.now
+            ui.goal.Text = status.goal
+            ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
+        end)
+    end
+end
+local function setGoal(t, q) status.goal = t or ""; status.queue = q or {}; renderStatus() end
+local function setNow(t) status.now = t or ""; renderStatus() end
+local function say(text, tone)
+    setNow(text)
+    if uiLog then pcall(uiLog, tone or "info", text) end
+    print("[COCOON] " .. tostring(text))
+end
+
+-- ================= COUNTERS =================
+local function countPlayers() return #Players:GetPlayers() end
+local function countPets()
+    local f = workspace:FindFirstChild("Pets"); if not f then return 0 end
+    return #f:GetChildren()
+end
+local function otherPlayers()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then table.insert(list, p) end
+    end
+    return list
+end
+local function allCharacters()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then table.insert(list, p.Character) end
+    end
+    return list
+end
+
+-- ================= API HELPERS =================
+local API_ROOT = ReplicatedStorage:WaitForChild("API")
+local function api(name) return API_ROOT:FindFirstChild(name) end
+
+local function callAPI(name, args, fire)
+    local node = api(name); if not node then say("API missing: " .. name, "bad"); return false end
+    args = args or {}
+    local ok, err = pcall(function()
+        if fire then node:FireServer(unpack(args)) else node:InvokeServer(unpack(args)) end
+    end)
+    if not ok then say("Call failed " .. name .. ": " .. tostring(err), "bad") end
+    return ok
+end
+
+-- Invites
+local function inviteMethodA(name)
+    if type(name) ~= "string" or name == "" then return false end
+    local target = game:GetService("Players"):FindFirstChild(name); if not target then return false end
+    local node = api("FamilyAPI/InvitePlayer"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = target })) end)
+end
+local function inviteMethodB(name)
+    if type(name) ~= "string" or name == "" then return false end
+    local target = game:GetService("Players")[name]; if not target then return false end
+    local node = api("FamilyAPI/InvitePlayer"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = target })) end)
+end
+
+-- ==================================================================
+-- FURNITURE INSPECTION  (adapted from your inspector script)
+-- ==================================================================
+-- Walks workspace.HouseInteriors.furniture[<houseKey>] recursively and
+-- returns every instance whose name matches one of TARGETS.
+-- Each entry: { owner, folderId, folderName, modelName, model, path }
+local function ownerFromFolder(folderName) return (string.match(folderName, "^([^/]+)/") or folderName) end
+local function folderIdFromFolder(folderName) return (string.match(folderName, "f%-%d+") or folderName) end
+
+local function resolveActivation(model)
+    if not model or not model:IsA("Model") then return nil end
+    local useBlocks = model:FindFirstChild("UseBlocks")
+    if useBlocks then
+        for _, name in ipairs({ "Seat1", "UseBlock" }) do
+            local part = useBlocks:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                return { partName = name, cframe = part.CFrame, position = part.Position }
+            end
+        end
+    end
+    for _, name in ipairs({ "Seat1", "UseBlock" }) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            return { partName = name, cframe = part.CFrame, position = part.Position }
+        end
+    end
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") then
+            return { partName = d.Name, cframe = d.CFrame, position = d.Position }
+        end
+    end
+    return nil
+end
+
+local function scanAllFurniture()
+    local out = {}
+    local hi = Workspace:FindFirstChild("HouseInteriors"); if not hi then return out end
+    local furniture = hi:FindFirstChild("furniture"); if not furniture then return out end
+    for _, folder in ipairs(furniture:GetChildren()) do
+        local owner = ownerFromFolder(folder.Name)
+        local folderId = folderIdFromFolder(folder.Name)
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Model") then
+                local act = resolveActivation(child)
+                if act then
+                    table.insert(out, {
+                        owner = owner, folderName = folder.Name, folderId = folderId,
+                        modelName = child.Name, model = child,
+                        partName = act.partName, cframe = act.cframe, position = act.position,
+                        path = "HouseInteriors.furniture." .. folder.Name .. "." .. child.Name,
+                    })
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function findFurnitureForNeed(need, ownerName)
+    local wanted = NEED_MODELS[need]; if not wanted then return nil end
+    local wantedSet = {}; for _, n in ipairs(wanted) do wantedSet[string.lower(n)] = true end
+    local all = scanAllFurniture()
+    if ownerName then
+        for _, f in ipairs(all) do
+            if wantedSet[string.lower(f.modelName)] and f.owner == ownerName then return f end
+        end
+    end
+    for _, f in ipairs(all) do
+        if wantedSet[string.lower(f.modelName)] then return f end
+    end
+    return nil
+end
+
+-- ==================================================================
+-- BATHTUB SPECIFIC SCAN  (uses inspector logic)
+-- Returns map:  ownerName -> { modelName, folderId, partName, cframe, path }
+-- If an owner has multiple CheapPetBathtubs, the first one wins.
+-- ==================================================================
+local BATHTUB_NAME = "CheapPetBathtub"
+local function findBathtubPerOwner()
+    local perOwner = {}
+    local hi = Workspace:FindFirstChild("HouseInteriors"); if not hi then return perOwner end
+    local furniture = hi:FindFirstChild("furniture"); if not furniture then return perOwner end
+
+    for _, folder in ipairs(furniture:GetChildren()) do
+        local owner = ownerFromFolder(folder.Name)
+        local folderId = folderIdFromFolder(folder.Name)
+
+        -- Walk every descendant (models can be nested inside folders)
+        local function walk(node)
+            for _, child in ipairs(node:GetChildren()) do
+                if child.Name:lower() == BATHTUB_NAME:lower()
+                    and (child:IsA("Model") or child:IsA("Folder")) then
+                    local act = resolveActivation(child)
+                    if act and not perOwner[owner] then
+                        perOwner[owner] = {
+                            owner = owner,
+                            folderId = folderId,
+                            folderName = folder.Name,
+                            modelName = child.Name,
+                            partName = act.partName,
+                            cframe = act.cframe,
+                            path = "HouseInteriors.furniture." .. folder.Name .. "..." .. child.Name,
+                        }
+                    end
+                end
+                if child:IsA("Folder") or child:IsA("Model") then
+                    walk(child)
+                end
+            end
+        end
+        walk(folder)
+    end
+    return perOwner
+end
+
+-- ==================================================================
+-- FAMILY BUILDER
+-- ==================================================================
+local FamilyMode = false
+
+local function ensureFamily()
+    local node = api("FamilyAPI/CreateFamily"); if not node then return false end
+    local ok = pcall(function() node:InvokeServer() end)
+    if ok then say("Family created", "ok") else say("CreateFamily failed — continuing", "warn") end
+    task.wait(FAMILY_SETTLE); return true
+end
+
+local function inviteAll()
+    local targets = otherPlayers()
+    if #targets == 0 then say("No other players to invite", "warn"); return end
+    setGoal("Inviting " .. #targets)
+    local half = math.floor(#targets / 2)
+    for i, p in ipairs(targets) do
+        if not FamilyMode then break end
+        if p.Parent == Players then
+            local useA = (i <= half) or (half == 0 and i == 1)
+            local ok = useA and inviteMethodA(p.Name) or inviteMethodB(p.Name)
+            if not ok then task.wait(1.5); ok = useA and inviteMethodB(p.Name) or inviteMethodA(p.Name) end
+            say("Invite -> " .. p.Name .. (ok and " ok" or " FAILED"), ok and "ok" or "bad")
+        end
+        task.wait(INVITE_DELAY)
+    end
+end
+
+local function createFamilyAndInvite()
+    if FamilyMode then return end
+    FamilyMode = true
+    ensureFamily()
+    if FamilyMode then inviteAll() end
+    FamilyMode = false
+end
+
+-- ==================================================================
+-- CORE: hold/eject/place
+-- ==================================================================
+local TasksMode = false
+
+local function holdSubject(char)
+    local node = api("AdoptAPI/HoldBaby"); if not node then return false end
+    return pcall(function() node:InvokeServer(unpack({ [1] = char })) end)
+end
+local function ejectSubject(char)
+    local node = api("AdoptAPI/EjectBaby"); if not node then return false end
+    return pcall(function() node:FireServer(unpack({ [1] = char })) end)
+end
+local function fireBabyFurniture(char, folderId, partName)
+    local node = api("InteractablesAPI/MakeBabyUseFurniture"); if not node then return false end
+    return pcall(function() node:FireServer(unpack({ [1] = char, [2] = folderId, [3] = partName })) end)
+end
+
+local function waitAbortable(seconds, label)
+    local t = 0
+    while t < seconds and TasksMode do
+        setNow(string.format("%s — %d/%ds", label, t, seconds))
+        task.wait(1); t += 1
+    end
+end
+
+-- ==================================================================
+-- BUTTON 2 — Do All Needs (round-robin, unique need per subject)
+-- ==================================================================
+local function runPass(subjects, passNumber, totalPasses)
+    if #subjects == 0 then return end
+
+    local assignments, assigned = {}, {}
+    for i, char in ipairs(subjects) do
+        local need = NEED_ROTATION[i]
+        if need and not assigned[need] then
+            assignments[#assignments + 1] = { char = char, need = need }
+            assigned[need] = true
+        else
+            say("No free need slot for " .. (char.Name or "?"), "warn")
+        end
+    end
+    if #assignments == 0 then return end
+
+    local prefix = string.format("Pass %d/%d", passNumber, totalPasses)
+
+    setGoal(prefix .. " — Phase 1/4 Hold")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then return end
+        setGoal(prefix .. " — Hold " .. (a.char.Name or "?"), { "(" .. i .. "/" .. #assignments .. ")" })
+        holdSubject(a.char)
+        task.wait(HOLD_STEP_DELAY)
+    end
+
+    setGoal(prefix .. " — Phase 2/4 Place")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then return end
+        local f = findFurnitureForNeed(a.need, a.char.Name) or findFurnitureForNeed(a.need)
+        if not f then
+            say("No furniture for " .. a.need .. " (" .. (a.char.Name or "?") .. ")", "warn")
+        else
+            setGoal(prefix .. " — Place " .. (a.char.Name or "?") .. " -> " .. a.need, { f.folderId .. "." .. f.partName })
+            fireBabyFurniture(a.char, f.folderId, f.partName)
+        end
+        task.wait(PLACE_STEP_DELAY)
+    end
+
+    setGoal(prefix .. " — Phase 3/4 Dwell " .. BATCH_DWELL .. "s")
+    waitAbortable(BATCH_DWELL, prefix .. " dwell")
+
+    setGoal(prefix .. " — Phase 4/4 Retrieve")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then return end
+        setGoal(prefix .. " — Re-hold " .. (a.char.Name or "?"))
+        holdSubject(a.char)
+        task.wait(HOLD_STEP_DELAY)
+    end
+    for i, a in ipairs(assignments) do
+        if not TasksMode then return end
+        setGoal(prefix .. " — Eject " .. (a.char.Name or "?"))
+        ejectSubject(a.char)
+        task.wait(EJECT_STEP_DELAY)
+    end
+end
+
+local function startAllTasks()
+    if TasksMode then return end
+    TasksMode = true
+
+    local cycleNumber = 0
+    while TasksMode do
+        cycleNumber += 1
+        local chars = allCharacters()
+        if #chars == 0 then
+            say("No subjects in server — waiting", "warn")
+            waitAbortable(5, "waiting")
+        else
+            local chunkSize = #NEED_ROTATION
+            local totalPasses = math.ceil(#chars / chunkSize)
+            for pi = 1, totalPasses do
+                if not TasksMode then break end
+                local slice = {}
+                for k = (pi - 1) * chunkSize + 1, math.min(pi * chunkSize, #chars) do
+                    table.insert(slice, chars[k])
+                end
+                runPass(slice, pi, totalPasses)
+                if TasksMode and pi < totalPasses then task.wait(BETWEEN_PASSES) end
+            end
+            say("Cycle " .. cycleNumber .. " done (" .. #chars .. " subjects)", "ok")
+            if TasksMode then task.wait(BETWEEN_PASSES) end
+        end
+    end
+    say("Needs loop stopped", "ok")
+end
+
+-- ==================================================================
+-- BUTTON 3 — Fill All Bathtubs (each player to own CheapPetBathtub)
+-- ==================================================================
+local BathtubMode = false
+
+local function fillAllBathtubs()
+    if BathtubMode then return end
+    BathtubMode = true
+    TasksMode = true   -- so waitAbortable works and abort logic is shared
+
+    -- 1. Discover bathtubs per owner
+    setGoal("Bathtubs — scanning furniture")
+    local tubs = findBathtubPerOwner()
+    local ownersFound = {}
+    for owner, _ in pairs(tubs) do table.insert(ownersFound, owner) end
+    table.sort(ownersFound)
+    say("Found CheapPetBathtub for " .. #ownersFound .. " owner(s)", "info")
+
+    if #ownersFound == 0 then
+        say("No CheapPetBathtub found in HouseInteriors.furniture", "bad")
+        BathtubMode, TasksMode = false, false
+        return
+    end
+
+    -- 2. Build assignments — each player -> their own tub (matched by name)
+    local assignments = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then
+            local tub = tubs[p.Name]
+            if not tub then
+                -- Fallback: try prefix match (folder name may include /1/nil/true)
+                for owner, t in pairs(tubs) do
+                    if owner:sub(1, #p.Name) == p.Name then tub = t; break end
+                end
+            end
+            if tub then
+                assignments[#assignments + 1] = { char = p.Character, tub = tub, playerName = p.Name }
+            else
+                say("No CheapPetBathtub for " .. p.Name, "warn")
+            end
+        end
+    end
+
+    if #assignments == 0 then
+        say("No player had a matching CheapPetBathtub", "bad")
+        BathtubMode, TasksMode = false, false
+        return
+    end
+    say("Placing " .. #assignments .. " player(s) in their own bathtub", "info")
+
+    -- 3. Hold every assigned player
+    setGoal("Bathtubs — Phase 1/3 Hold")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Bathtubs — Hold " .. a.playerName, { "(" .. i .. "/" .. #assignments .. ")" })
+        holdSubject(a.char)
+        task.wait(HOLD_STEP_DELAY)
+    end
+
+    -- 4. Place each on its OWN tub
+    setGoal("Bathtubs — Phase 2/3 Place")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Bathtubs — " .. a.playerName .. " -> " .. a.tub.folderId .. "." .. a.tub.partName,
+            { a.tub.modelName })
+        fireBabyFurniture(a.char, a.tub.folderId, a.tub.partName)
+        task.wait(PLACE_STEP_DELAY)
+    end
+
+    -- 5. Dwell
+    setGoal("Bathtubs — Phase 3/3 Dwell " .. BATCH_DWELL .. "s")
+    waitAbortable(BATCH_DWELL, "Bathtub dwell")
+    say("Bathtub dwell done", "ok")
+
+    -- 6. Re-hold + eject (so nobody stays stuck on the tub)
+    setGoal("Bathtubs — Retrieve")
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Bathtubs — Re-hold " .. a.playerName, { "(" .. i .. "/" .. #assignments .. ")" })
+        holdSubject(a.char)
+        task.wait(HOLD_STEP_DELAY)
+    end
+    for i, a in ipairs(assignments) do
+        if not TasksMode then break end
+        setGoal("Bathtubs — Eject " .. a.playerName, { "(" .. i .. "/" .. #assignments .. ")" })
+        ejectSubject(a.char)
+        task.wait(EJECT_STEP_DELAY)
+    end
+
+    say("Bathtub fill finished — all players ejected", "ok")
+    BathtubMode = false
+    TasksMode = false
+end
+
+-- ================= UI =================
+GC = GC or {}; GC.LogFolder = "COCOON"
+local THEME = {
+    bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
+    text = Color3.fromRGB(230,230,235), dim = Color3.fromRGB(130,130,145), accent = Color3.fromRGB(150,120,255),
+    ok = Color3.fromRGB(90,200,120), bad = Color3.fromRGB(230,90,90),
+    fam = Color3.fromRGB(80,180,120), task = Color3.fromRGB(200,130,60),
+    tub = Color3.fromRGB(70,150,210),
+}
+local function guiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then return hui end
+    local ok2, core = pcall(function() return game:GetService("CoreGui") end)
+    if ok2 and core then return core end
+    return player:WaitForChild("PlayerGui")
+end
+local function create(cls, props, parent)
+    local o = Instance.new(cls); for k,v in pairs(props) do o[k]=v end; o.Parent=parent; return o
+end
+local function corner(p, r) create("UICorner", { CornerRadius = UDim.new(0, r or 6) }, p) end
+local function makeDraggable(h, t)
+    local d, si, sp
+    h.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            d, si, sp = true, i.Position, t.Position
+            i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then d = false end end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if d and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local dl = i.Position - si
+            t.Position = UDim2.new(sp.X.Scale, sp.X.Offset + dl.X, sp.Y.Scale, sp.Y.Offset + dl.Y)
+        end
+    end)
+end
+local function text(p, x, y, w, h, v, s, c, b)
+    return create("TextLabel", { Position = UDim2.fromOffset(x,y), Size = UDim2.fromOffset(w,h),
+        BackgroundTransparency = 1, Text = v or "", TextColor3 = c or THEME.text, TextSize = s or 12,
+        Font = b and Enum.Font.GothamMedium or Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd }, p)
+end
+local function toggleButton(p, x, y, w, label, color, onClick)
+    local b = create("TextButton", { Position = UDim2.fromOffset(x,y), Size = UDim2.fromOffset(w,30),
+        BackgroundColor3 = color, BorderSizePixel = 0, Text = label, TextColor3 = THEME.text,
+        Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = true }, p)
+    corner(b, 4); create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
+    b.MouseButton1Click:Connect(function() pcall(onClick, b) end)
+    return b
+end
+local function window(w, h)
+    if ui.screen and ui.screen.Parent then ui.screen:Destroy() end
+    ui.screen = create("ScreenGui", { Name = "COCOON", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
+    local f = create("Frame", { Size = UDim2.fromOffset(w,h), Position = UDim2.new(0,16,0.5,-h/2),
+        BackgroundColor3 = THEME.bg, BorderSizePixel = 0 }, ui.screen)
+    corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
+    local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
+    makeDraggable(hd, f)
+    text(hd, 10, 0, w-40, 26, "COCOON v12", 13, THEME.text, true)
+    local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
+        BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
+    cl.MouseButton1Click:Connect(function()
+        FamilyMode, TasksMode, BathtubMode = false, false, false
+        uiLog = nil; ui.now = nil; f:Destroy()
+    end)
+    create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, f)
+    return f
+end
+
+local function mainWindow()
+    local width, height = 260, 400
+    local frame = window(width, height)
+
+    local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
+        BackgroundColor3 = THEME.field, BorderSizePixel = 0 }, frame)
+    corner(statsBg, 4)
+    local playersLabel = text(statsBg, 6, 3, (width-26)/2, 16, "Players: 0", 12, THEME.accent, true)
+    local petsLabel    = text(statsBg, (width-16)/2+3, 3, (width-26)/2, 16, "Pets: 0", 12, THEME.ok, true)
+    task.spawn(function()
+        while frame.Parent do
+            pcall(function()
+                playersLabel.Text = "Players: " .. countPlayers()
+                petsLabel.Text    = "Pets: " .. countPets()
+            end)
+            task.wait(1.5)
+        end
+    end)
+
+    text(frame, 8, 57, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now  = text(frame, 34, 57, width-42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 72, width-16, 12, status.goal, 10, THEME.dim)
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8,86), Size = UDim2.fromOffset(width-16,40),
+        BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim,
+        Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false, ClipsDescendants = true }, frame)
+    renderStatus()
+    local shown = {}
+    local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
+    uiLog = function(tone, msg)
+        local safe = string.gsub(string.gsub(string.gsub(tostring(msg), "&","&amp;"),"<","&lt;"),">","&gt;")
+        table.insert(shown, '<font color="'..(TONES[tone] or TONES.info)..'">'..safe..'</font>')
+        while #shown > 3 do table.remove(shown,1) end
+        logBox.Text = table.concat(shown, "\n")
+    end
+    create("Frame", { Position = UDim2.fromOffset(8,129), Size = UDim2.new(1,-16,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+
+    -- Button 1
+    toggleButton(frame, 8, 140, width-16, "CREATE FAMILY + INVITE ALL", THEME.fam, function(b)
+        if FamilyMode then FamilyMode = false; say("Family builder stopped", "warn"); return end
+        say("Family builder started", "info")
+        task.spawn(createFamilyAndInvite)
+    end)
+
+    -- Button 2 — Do All Needs (loop, unique need per subject)
+    local taskBtn = toggleButton(frame, 8, 178, width-16, "DO ALL NEEDS [OFF]", THEME.task, function(b)
+        if TasksMode then
+            TasksMode = false
+            b.Text = "DO ALL NEEDS [OFF]"; b.BackgroundColor3 = THEME.task
+            say("Needs loop stopped", "warn"); return
+        end
+        b.Text = "DO ALL NEEDS [ON]"; b.BackgroundColor3 = THEME.ok
+        task.spawn(startAllTasks)
+        task.spawn(function()
+            while TasksMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then b.Text = "DO ALL NEEDS [OFF]"; b.BackgroundColor3 = THEME.task end
+        end)
+    end)
+
+    -- Button 3 — Fill All Bathtubs (each player -> own CheapPetBathtub)
+    local tubBtn = toggleButton(frame, 8, 216, width-16, "FILL ALL BATHTUBS [OFF]", THEME.tub, function(b)
+        if BathtubMode then
+            BathtubMode = false; TasksMode = false
+            b.Text = "FILL ALL BATHTUBS [OFF]"; b.BackgroundColor3 = THEME.tub
+            say("Bathtub run stopped", "warn"); return
+        end
+        b.Text = "FILL ALL BATHTUBS [ON]"; b.BackgroundColor3 = THEME.ok
+        task.spawn(fillAllBathtubs)
+        task.spawn(function()
+            while BathtubMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then b.Text = "FILL ALL BATHTUBS [OFF]"; b.BackgroundColor3 = THEME.tub end
+        end)
+    end)
+
+    text(frame, 8, 254, width-16, 14, "Needs: sleep / bored / bath (1 subject each)", 10, THEME.dim)
+    text(frame, 8, 268, width-16, 14, "Bathtub: each player -> own CheapPetBathtub", 10, THEME.dim)
+    text(frame, 8, 282, width-16, 14, "Discovered from HouseInteriors.furniture", 10, THEME.dim)
+    text(frame, 8, 296, width-16, 14, "Hold: HoldBaby:InvokeServer({Char})", 10, THEME.dim)
+    text(frame, 8, 310, width-16, 14, "Place: MakeBabyUseFurniture:FireServer(Char, folderId, partName)", 10, THEME.dim)
+    text(frame, 8, 324, width-16, 14, "Eject: EjectBaby:FireServer({Char})", 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 342), Size = UDim2.new(1,-16,0,1),
+        BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
+    text(frame, 8, 348, width-16, 14, "COCOON v12 — bathtub fill button", 10, THEME.dim)
+end
+
+env.COCOON = {
+    Stop = function() FamilyMode, TasksMode, BathtubMode = false, false, false end,
+    CountPlayers = countPlayers,
+    CountPets = countPets,
+    CreateFamilyAndInvite = createFamilyAndInvite,
+    InviteA = inviteMethodA,
+    InviteB = inviteMethodB,
+    ScanFurniture = scanAllFurniture,
+    FindFurniture = findFurnitureForNeed,
+    FindBathtubs = findBathtubPerOwner,  -- debug: env.COCOON.FindBathtubs()
+    StartTasks = startAllTasks,
+    FillAllBathtubs = fillAllBathtubs,
+}
+
+mainWindow()
+say("Loaded v12. Bathtub fill button added.", "ok")
