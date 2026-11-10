@@ -1,7 +1,6 @@
 -- ==================================================================
--- COCOON v18 — Players: Bathtubs (15s) -> Beds (15s) -> Piano (20s) -> loop
--- + Pet Farm: pets rotate through pet furniture (15s each), never sharing
---   furniture or tasks with players.
+-- COCOON v17 — Bathtubs(15s) -> Beds(15s) -> Piano(20s) -> loop
+--           + Pet Farm (pets -> bathtub/water/food/litter/bed/piano, 15s each)
 -- Hold:   AdoptAPI/HoldBaby:InvokeServer(unpack({ [1] = Char }))
 -- Eject:  AdoptAPI/EjectBaby:FireServer(unpack({ [1] = Char }))
 -- Place:  InteractablesAPI/MakeBabyUseFurniture:FireServer(Char, folderId, partName)
@@ -27,28 +26,25 @@ local BETWEEN_PHASES   = 2.0
 local BETWEEN_CYCLES   = 3.0
 
 -- Pet farm config
-local PET_FARM_DWELL        = 15
-local PET_FARM_STEP_DELAY   = 0.5
-local PET_FARM_ROTATE_DELAY = 2.0
+local PET_PLACE_DELAY  = 0.6
+local PET_DWELL        = 15
+local PET_BETWEEN      = 2.0
 
--- Player furniture phases, in order.
+-- Furniture phases, in order. dwell = seconds each subject sits on this furniture.
 local PHASES = {
     { name = "CheapPetBathtub", label = "Bathtub", dwell = 15 },
     { name = "BasicBed",        label = "Bed",     dwell = 15 },
     { name = "Piano",           label = "Piano",   dwell = 20 },
 }
 
--- Pet furniture pool (scanned from HouseInteriors).
--- NOTE: BasicBed and Piano are listed for pets too, but the reservation
--- system below guarantees a piece of furniture can only be used by
--- players OR pets at any given moment — never both.
-local PET_FURNITURE = {
-    { name = "CheapPetBathtub",                    label = "PetBathtub" },
-    { name = "AilmentsRefresh2024CheapWaterBowl",  label = "WaterBowl" },
-    { name = "AilmentsRefresh2024CheapFoodBowl",   label = "FoodBowl" },
-    { name = "AilmentsRefresh2024LitterBox",       label = "LitterBox" },
-    { name = "BasicBed",                           label = "Bed" },
-    { name = "Piano",                              label = "Piano" },
+-- Pet furniture phases (one after another; dwell defaults to PET_DWELL = 15s)
+local PET_PHASES = {
+    { name = "CheapPetBathtub",                   label = "PetBathtub" },
+    { name = "AilmentsRefresh2024CheapWaterBowl", label = "PetWaterBowl" },
+    { name = "AilmentsRefresh2024CheapFoodBowl",  label = "PetFoodBowl" },
+    { name = "AilmentsRefresh2024LitterBox",      label = "PetLitterBox" },
+    { name = "BasicBed",                          label = "PetBed" },
+    { name = "Piano",                             label = "PetPiano", dwell = 20 }, -- optional override
 }
 
 -- ================= STATUS / LOG =================
@@ -86,47 +82,6 @@ local function otherPlayers()
     end
     return list
 end
-local function getPets()
-    local f = workspace:FindFirstChild("Pets"); if not f then return {} end
-    local list = {}
-    for _, pet in ipairs(f:GetChildren()) do table.insert(list, pet) end
-    return list
-end
-
--- ==================================================================
--- FURNITURE RESERVATION (players vs pets exclusion)
--- ==================================================================
--- A piece of furniture is uniquely identified by folderId + partName.
--- If either side reserves it, the other side MUST skip it.
-local Reservation = {
-    player = {},   -- [key] = true  (players currently using / holding this furniture)
-    pet    = {},   -- [key] = true  (pets currently using this furniture)
-}
-local function furnKey(item)
-    if not item then return nil end
-    return tostring(item.folderId) .. "|" .. tostring(item.partName)
-end
-local function reserveForPlayer(item)
-    local k = furnKey(item); if not k then return false end
-    if Reservation.pet[k] then return false end           -- pet is using it -> block
-    Reservation.player[k] = true
-    return true
-end
-local function releasePlayer(item)
-    local k = furnKey(item); if k then Reservation.player[k] = nil end
-end
-local function reserveForPet(item)
-    local k = furnKey(item); if not k then return false end
-    if Reservation.player[k] then return false end        -- player is using it -> block
-    if Reservation.pet[k] then return false end           -- another pet already on it
-    Reservation.pet[k] = true
-    return true
-end
-local function releasePet(item)
-    local k = furnKey(item); if k then Reservation.pet[k] = nil end
-end
-local function releaseAllForPlayers() Reservation.player = {} end
-local function releaseAllForPets()    Reservation.pet    = {} end
 
 -- ================= API HELPERS =================
 local API_ROOT = ReplicatedStorage:WaitForChild("API")
@@ -249,6 +204,7 @@ end
 -- CORE API SHAPES
 -- ==================================================================
 local LoopMode = false
+local PetFarmMode = false
 
 local function holdSubject(char)
     local node = api("AdoptAPI/HoldBaby"); if not node then return false end
@@ -270,12 +226,116 @@ local function waitAbortable(seconds, label)
         task.wait(1); t += 1
     end
 end
+
+-- ==================================================================
+-- PET FARM (no holds — pets placed via MakeBabyUseFurniture)
+-- ==================================================================
+-- Game typically supports MakeBabyUseFurniture for pets too (server treats
+-- the pet model instance as the "baby"). We pass pet model instance as Char.
+local function listPets()
+    local out = {}
+    local pf = Workspace:FindFirstChild("Pets"); if not pf then return out end
+    for _, child in ipairs(pf:GetChildren()) do
+        if child:IsA("Model") then
+            table.insert(out, child)
+        end
+    end
+    return out
+end
+
+local function petLabel(pet)
+    return pet.Name
+end
+
 local function waitAbortablePet(seconds, label)
     local t = 0
     while t < seconds and PetFarmMode do
         setNow(string.format("%s — %d/%ds", label, t, seconds))
         task.wait(1); t += 1
     end
+end
+
+local function runPetPhase(targetName, label, dwell)
+    dwell = dwell or PET_DWELL
+    local items = findAllByName(targetName)
+    say(string.format("PetPhase %s: discovered %d %s", label, #items, targetName), "info")
+    if #items == 0 then
+        say("No " .. targetName .. " found — skipping pet phase", "warn")
+        return 0
+    end
+
+    local pets = listPets()
+    if #pets == 0 then say("No pets in workspace.Pets", "bad"); return 0 end
+    if #pets > #items then
+        say((#pets - #items) .. " pet(s) skipped (not enough " .. targetName .. ")", "warn")
+    end
+
+    local placed = {}
+    local itemIdx, petIdx = 1, 1
+
+    while petIdx <= #pets and itemIdx <= #items and PetFarmMode do
+        local group = {}
+        for _ = 1, 2 do
+            if petIdx <= #pets and itemIdx <= #items then
+                local pet = pets[petIdx]
+                local it  = items[itemIdx]
+                table.insert(group, { pet = pet, petName = petLabel(pet), item = it })
+                petIdx += 1
+                itemIdx += 1
+            end
+        end
+        if #group == 0 then break end
+
+        setGoal(label .. " — Place pet group")
+        for _, a in ipairs(group) do
+            if not PetFarmMode then break end
+            setGoal(label .. " — " .. a.petName .. " -> " .. a.item.folderId .. "." .. a.item.partName,
+                { a.item.modelName })
+            fireBabyFurniture(a.pet, a.item.folderId, a.item.partName)
+            task.wait(PET_PLACE_DELAY)
+        end
+
+        for _, a in ipairs(group) do table.insert(placed, a) end
+        say(string.format("%s: pets placed %d/%d", label, #placed, #pets), "ok")
+        task.wait(PET_BETWEEN)
+    end
+
+    if #placed == 0 then
+        say(label .. ": no pets placed", "bad")
+        return 0
+    end
+
+    -- Dwell — pets just sit there, no holds
+    setGoal(string.format("%s — Pet dwell %ds (%d placed)", label, dwell, #placed))
+    waitAbortablePet(dwell, label .. " pet dwell")
+    say(label .. ": pet dwell done", "ok")
+
+    -- Retrieve pets: re-place onto their own location? No — just skip.
+    -- If you want to clear, use MakeBabyUseFurniture again elsewhere; we
+    -- simply leave them and let next phase re-place to new furniture.
+    return #placed
+end
+
+local function startPetFarm()
+    if PetFarmMode then return end
+    PetFarmMode = true
+    local cycle = 0
+    while PetFarmMode do
+        cycle += 1
+        say("═══════ PET CYCLE " .. cycle .. " START ═══════", "info")
+        for _, phase in ipairs(PET_PHASES) do
+            if not PetFarmMode then break end
+            setGoal(string.format("Pet cycle %d — %s", cycle, phase.label))
+            runPetPhase(phase.name, phase.label, phase.dwell)
+            if PetFarmMode then task.wait(PET_BETWEEN) end
+        end
+        say("═══════ PET CYCLE " .. cycle .. " END ═══════", "info")
+        if PetFarmMode then
+            setGoal("Pet farm waiting…")
+            waitAbortablePet(BETWEEN_CYCLES, "pet inter-cycle pause")
+        end
+    end
+    say("Pet farm stopped", "ok")
 end
 
 -- ==================================================================
@@ -395,22 +455,14 @@ local function useBabyFormula()
 end
 
 -- ==================================================================
--- ONE FURNITURE PHASE (players) — reserves furniture while in use
+-- ONE FURNITURE PHASE (bathtub / bed / piano)
 -- ==================================================================
 local function runFurniturePhase(targetName, label, dwell)
-    local itemsRaw = findAllByName(targetName)
-    -- Filter out anything a pet currently holds a reservation on.
-    local items = {}
-    for _, it in ipairs(itemsRaw) do
-        local k = furnKey(it)
-        if not (k and Reservation.pet[k]) then table.insert(items, it) end
-    end
-    local blocked = #itemsRaw - #items
-    say(string.format("Phase %s: %d %s (dwell %ds)%s",
-        label, #items, targetName, dwell,
-        blocked > 0 and (" — " .. blocked .. " blocked by pets") or ""), "info")
+    local items = findAllByName(targetName)
+    say(string.format("Phase %s: discovered %d %s (dwell %ds)",
+        label, #items, targetName, dwell), "info")
     if #items == 0 then
-        say("No usable " .. targetName .. " — skipping phase", "warn")
+        say("No " .. targetName .. " found — skipping phase", "warn")
         return 0
     end
 
@@ -432,47 +484,37 @@ local function runFurniturePhase(targetName, label, dwell)
             if playerIdx <= #players and itemIdx <= #items then
                 local p = players[playerIdx]
                 local it = items[itemIdx]
-                -- Reserve now so pets can't grab it mid-group
-                if reserveForPlayer(it) then
-                    table.insert(group, { char = p.Character, playerName = p.Name, item = it })
-                    playerIdx += 1
-                    itemIdx += 1
-                else
-                    -- Pet grabbed it between scan & reserve; skip this item.
-                    itemIdx += 1
-                end
+                table.insert(group, { char = p.Character, playerName = p.Name, item = it })
+                playerIdx += 1
+                itemIdx += 1
             end
         end
-        if #group == 0 then
-            if itemIdx > #items then break end
-        else
-            setGoal(label .. " — Hold group")
-            for i, a in ipairs(group) do
-                if not LoopMode then break end
-                setGoal(label .. " — Hold " .. a.playerName, { "(" .. i .. "/" .. #group .. ")" })
-                holdSubject(a.char)
-                task.wait(HOLD_STEP_DELAY)
-            end
+        if #group == 0 then break end
 
-            setGoal(label .. " — Place group")
-            for _, a in ipairs(group) do
-                if not LoopMode then break end
-                setGoal(label .. " — " .. a.playerName .. " -> " .. a.item.folderId .. "." .. a.item.partName,
-                    { a.item.modelName })
-                fireBabyFurniture(a.char, a.item.folderId, a.item.partName)
-                task.wait(PLACE_STEP_DELAY)
-            end
-
-            for _, a in ipairs(group) do table.insert(placed, a) end
-            say(string.format("%s: placed %d/%d", label, #placed, #players), "ok")
-            task.wait(BETWEEN_GROUPS)
+        setGoal(label .. " — Hold group")
+        for i, a in ipairs(group) do
+            if not LoopMode then break end
+            setGoal(label .. " — Hold " .. a.playerName, { "(" .. i .. "/" .. #group .. ")" })
+            holdSubject(a.char)
+            task.wait(HOLD_STEP_DELAY)
         end
+
+        setGoal(label .. " — Place group")
+        for _, a in ipairs(group) do
+            if not LoopMode then break end
+            setGoal(label .. " — " .. a.playerName .. " -> " .. a.item.folderId .. "." .. a.item.partName,
+                { a.item.modelName })
+            fireBabyFurniture(a.char, a.item.folderId, a.item.partName)
+            task.wait(PLACE_STEP_DELAY)
+        end
+
+        for _, a in ipairs(group) do table.insert(placed, a) end
+        say(string.format("%s: placed %d/%d", label, #placed, #players), "ok")
+        task.wait(BETWEEN_GROUPS)
     end
 
     if #placed == 0 then
         say(label .. ": nothing placed", "bad")
-        -- release any player reservations we may have taken
-        releaseAllForPlayers()
         return 0
     end
 
@@ -500,8 +542,6 @@ local function runFurniturePhase(targetName, label, dwell)
         setGoal(label .. " — Eject " .. a.playerName, { "(" .. i .. "/" .. #placed .. ")" })
         ejectSubject(a.char)
         task.wait(EJECT_STEP_DELAY)
-        -- Free the piece now that the baby is ejected
-        releasePlayer(a.item)
     end
 
     say(label .. ": ejected all " .. #placed, "ok")
@@ -509,7 +549,7 @@ local function runFurniturePhase(targetName, label, dwell)
 end
 
 -- ==================================================================
--- MASTER LOOP (players)
+-- MASTER LOOP
 -- ==================================================================
 local function startLoop()
     if LoopMode then return end
@@ -534,139 +574,7 @@ local function startLoop()
         end
     end
 
-    -- Clear any leftover reservations when the loop ends
-    releaseAllForPlayers()
     say("Master loop stopped", "ok")
-end
-
--- ==================================================================
--- PET FARM — reserves furniture while in use
--- ==================================================================
-local PetFarmMode = false
-local petFarmActive = false
-
--- Scan pet furniture, excluding pieces currently reserved by players.
-local function scanPetFurniture()
-    local pool = {}
-    for _, fdef in ipairs(PET_FURNITURE) do
-        local found = findAllByName(fdef.name)
-        for _, item in ipairs(found) do
-            local k = furnKey(item)
-            if not (k and (Reservation.player[k] or Reservation.pet[k])) then
-                table.insert(pool, { kind = fdef.label, item = item })
-            end
-        end
-    end
-    return pool
-end
-
-local function placePetOnFurnitureAlt(pet, item)
-    local node = api("InteractablesAPI/MakePetUseFurniture")
-    if not node then return false end
-    return pcall(function()
-        node:FireServer(unpack({ [1] = pet, [2] = item.folderId, [3] = item.partName }))
-    end)
-end
-local function placePetOnFurniture(pet, item)
-    local node = api("InteractablesAPI/MakeBabyUseFurniture"); if not node then return false end
-    return pcall(function()
-        node:FireServer(unpack({ [1] = pet, [2] = item.folderId, [3] = item.partName }))
-    end)
-end
-local function petUseFurniture(pet, item)
-    if not pet or not item then return false end
-    if placePetOnFurnitureAlt(pet, item) then return true end
-    return placePetOnFurniture(pet, item)
-end
-
--- Assign each pet its own furniture instance from the filtered pool.
--- No two pets share an instance. No players are already on it.
-local function runPetFarmCycle()
-    local pets = getPets()
-    local pool = scanPetFurniture()
-
-    say(string.format("PetFarm: %d pet(s), %d usable furniture instance(s)",
-        #pets, #pool), "info")
-
-    if #pets == 0 then say("PetFarm: no pets in Workspace.Pets", "warn"); return 0 end
-    if #pool == 0 then say("PetFarm: no free pet furniture (players may be using it)", "warn"); return 0 end
-
-    local assignments = {}
-    local reservedThisCycle = {}
-    local pi = 1
-    for i, pet in ipairs(pets) do
-        if not PetFarmMode then break end
-        local assigned = nil
-        -- Walk the pool from where we left off, looking for a free instance
-        local tries = 0
-        while tries < #pool do
-            local entry = pool[pi]
-            pi = (pi % #pool) + 1
-            tries += 1
-            if entry and not reservedThisCycle[furnKey(entry.item)] then
-                if reserveForPet(entry.item) then
-                    reservedThisCycle[furnKey(entry.item)] = true
-                    assigned = entry
-                    break
-                end
-            end
-        end
-        if assigned then
-            table.insert(assignments, { pet = pet, entry = assigned })
-        end
-    end
-
-    if #assignments < #pets then
-        say(string.format("PetFarm: %d pet(s) skipped (no free furniture)",
-            #pets - #assignments), "warn")
-    end
-    if #assignments == 0 then return 0 end
-
-    setGoal("PetFarm — placing " .. #assignments .. " pet(s)")
-    for i, a in ipairs(assignments) do
-        if not PetFarmMode then break end
-        setGoal(string.format("PetFarm — %s -> %s", a.pet.Name, a.entry.kind),
-            { "(" .. i .. "/" .. #assignments .. ")" })
-        petUseFurniture(a.pet, a.entry.item)
-        task.wait(PET_FARM_STEP_DELAY)
-    end
-
-    setGoal(string.format("PetFarm — Dwell %ds (%d placed)", PET_FARM_DWELL, #assignments))
-    waitAbortablePet(PET_FARM_DWELL, "PetFarm dwell")
-    say("PetFarm: dwell done", "ok")
-
-    -- Release pet reservations after the dwell so players can use these pieces
-    for _, a in ipairs(assignments) do
-        releasePet(a.entry.item)
-    end
-
-    return #assignments
-end
-
-local function startPetFarm()
-    if PetFarmMode then return end
-    PetFarmMode = true
-
-    task.spawn(function()
-        task.wait(0.2)
-        while PetFarmMode do
-            if not petFarmActive then
-                petFarmActive = true
-                runPetFarmCycle()
-                petFarmActive = false
-            end
-            if PetFarmMode then
-                local t = 0
-                while t < PET_FARM_ROTATE_DELAY and PetFarmMode do
-                    setGoal("PetFarm — next cycle in " .. (PET_FARM_ROTATE_DELAY - t) .. "s")
-                    task.wait(0.5); t += 0.5
-                end
-            end
-        end
-        releaseAllForPets()
-        petFarmActive = false
-        say("Pet farm stopped", "warn")
-    end)
 end
 
 -- ==================================================================
@@ -678,7 +586,7 @@ local THEME = {
     text = Color3.fromRGB(230,230,235), dim = Color3.fromRGB(130,130,145), accent = Color3.fromRGB(150,120,255),
     ok = Color3.fromRGB(90,200,120), bad = Color3.fromRGB(230,90,90),
     fam = Color3.fromRGB(80,180,120), loop = Color3.fromRGB(190,140,240),
-    pet = Color3.fromRGB(240,180,80),
+    pet = Color3.fromRGB(220,170,90),
 }
 local function guiParent()
     local ok, hui = pcall(function() return gethui and gethui() end)
@@ -728,12 +636,11 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v18", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v17", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
         FamilyMode, LoopMode, PetFarmMode = false, false, false
-        releaseAllForPlayers(); releaseAllForPets()
         uiLog = nil; ui.now = nil; f:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
@@ -742,19 +649,21 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 260, 448
+    local width, height = 260, 430
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
         BackgroundColor3 = THEME.field, BorderSizePixel = 0 }, frame)
     corner(statsBg, 4)
-    local playersLabel = text(statsBg, 6, 3, (width-26)/2, 16, "Players: 0", 12, THEME.accent, true)
-    local petsLabel    = text(statsBg, (width-16)/2+3, 3, (width-26)/2, 16, "Pets: 0", 12, THEME.ok, true)
+    local playersLabel = text(statsBg, 6, 3, (width-26)/3, 16, "Players: 0", 11, THEME.accent, true)
+    local petsLabel    = text(statsBg, (width-16)/3+3, 3, (width-26)/3, 16, "Pets: 0", 11, THEME.ok, true)
+    local furnLabel    = text(statsBg, 2*(width-16)/3+3, 3, (width-26)/3, 16, "Furn: 0", 11, THEME.dim, true)
     task.spawn(function()
         while frame.Parent do
             pcall(function()
                 playersLabel.Text = "Players: " .. countPlayers()
                 petsLabel.Text    = "Pets: " .. countPets()
+                furnLabel.Text    = "Furn: " .. (#findAllByName("CheapPetBathtub") + #findAllByName("BasicBed") + #findAllByName("Piano"))
             end)
             task.wait(1.5)
         end
@@ -806,35 +715,29 @@ local function mainWindow()
             say("Pet farm stopped", "warn"); return
         end
         b.Text = "PET FARM [ON]"; b.BackgroundColor3 = THEME.ok
-        say("Pet farm started", "info")
-        startPetFarm()
+        task.spawn(startPetFarm)
         task.spawn(function()
             while PetFarmMode and frame.Parent do task.wait(0.5) end
             if b.Parent then b.Text = "PET FARM [OFF]"; b.BackgroundColor3 = THEME.pet end
         end)
     end)
 
-    text(frame, 8, 254, width-16, 14, "Players: Bathtub 15s -> Bed 15s -> Piano 20s", 10, THEME.dim)
-    text(frame, 8, 268, width-16, 14, "Formula used after piano placement", 10, THEME.dim)
-    text(frame, 8, 282, width-16, 14, "Pets: own furniture, 15s dwell, rotate", 10, THEME.dim)
-    text(frame, 8, 296, width-16, 14, "Pet furniture: PetBathtub/WaterBowl/FoodBowl", 10, THEME.dim)
-    text(frame, 8, 310, width-16, 14, "             LitterBox/Bed/Piano", 10, THEME.dim)
-    text(frame, 8, 324, width-16, 14, "Reservation: player & pet never share furniture", 10, THEME.dim)
-    text(frame, 8, 338, width-16, 14, "Pet pool excludes player-reserved pieces", 10, THEME.dim)
-    text(frame, 8, 352, width-16, 14, "Player pool excludes pet-reserved pieces", 10, THEME.dim)
-    create("Frame", { Position = UDim2.fromOffset(8, 374), Size = UDim2.new(1,-16,0,1),
+    text(frame, 8, 254, width-16, 14, "1. Bathtub — 15s", 10, THEME.dim)
+    text(frame, 8, 268, width-16, 14, "2. Bed — 15s", 10, THEME.dim)
+    text(frame, 8, 282, width-16, 14, "3. Piano — 20s (+ formula)", 10, THEME.dim)
+    text(frame, 8, 296, width-16, 14,
+        "Pet: tub -> water -> food -> litter -> bed -> piano", 10, THEME.pet)
+    text(frame, 8, 310, width-16, 14, "Each pet -> own furniture, 15s dwell, no holds", 10, THEME.dim)
+    text(frame, 8, 324, width-16, 14, "Formula used after piano placement, before dwell", 10, THEME.dim)
+    text(frame, 8, 338, width-16, 14, "MakeBabyUseFurniture:FireServer(pet, folderId, partName)", 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 356), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 380, width-16, 14, "COCOON v18 — players + pets, no overlaps", 10, THEME.dim)
-    text(frame, 8, 394, width-16, 14, "Pets: Workspace.Pets", 10, THEME.dim)
-    text(frame, 8, 408, width-16, 14, "Furniture: HouseInteriors.furniture", 10, THEME.dim)
-    text(frame, 8, 422, width-16, 14, "Tasks are independent: both loops can run", 10, THEME.dim)
+    text(frame, 8, 362, width-16, 14, "COCOON v17 — baby loop + pet farm", 10, THEME.dim)
+    text(frame, 8, 376, width-16, 14, "Baby & pet farm run independently", 10, THEME.dim)
 end
 
 env.COCOON = {
-    Stop = function()
-        FamilyMode, LoopMode, PetFarmMode = false, false, false
-        releaseAllForPlayers(); releaseAllForPets()
-    end,
+    Stop = function() FamilyMode, LoopMode, PetFarmMode = false, false, false end,
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
@@ -843,13 +746,18 @@ env.COCOON = {
     FindBathtubs = function() return findAllByName("CheapPetBathtub") end,
     FindBeds = function() return findAllByName("BasicBed") end,
     FindPianos = function() return findAllByName("Piano") end,
-    FindPetFurniture = scanPetFurniture,
-    Reservations = Reservation,
+    FindPetBathtubs = function() return findAllByName("CheapPetBathtub") end,
+    FindPetWaterBowls = function() return findAllByName("AilmentsRefresh2024CheapWaterBowl") end,
+    FindPetFoodBowls = function() return findAllByName("AilmentsRefresh2024CheapFoodBowl") end,
+    FindPetLitterBoxes = function() return findAllByName("AilmentsRefresh2024LitterBox") end,
+    FindPetBeds = function() return findAllByName("BasicBed") end,
+    FindPetPianos = function() return findAllByName("Piano") end,
     UseBabyFormula = useBabyFormula,
     StartLoop = startLoop,
     StartPetFarm = startPetFarm,
     Phases = PHASES,
+    PetPhases = PET_PHASES,
 }
 
 mainWindow()
-say("Loaded v18. Players + pets loops with shared-furniture exclusion.", "ok")
+say("Loaded v17. Baby loop + pet farm ready.", "ok")
