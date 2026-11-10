@@ -1,7 +1,7 @@
 -- ==================================================================
--- COCOON v14 — Bathtub fill + looping BasicBed fill
--- Bathtub: 2 players -> 2 distinct CheapPetBathtub -> ... -> 15s -> hold+eject
--- Bed:     same flow on BasicBed, LOOPING forever until toggled off
+-- COCOON v15 — Single button: Bathtubs -> Beds -> Loop forever
+-- One cycle = bathtub pass (15s dwell) then bed pass (15s dwell)
+-- Pair logic: 2 players per group, each on a DISTINCT furniture item.
 -- Hold:   AdoptAPI/HoldBaby:InvokeServer(unpack({ [1] = Char }))
 -- Eject:  AdoptAPI/EjectBaby:FireServer(unpack({ [1] = Char }))
 -- Place:  InteractablesAPI/MakeBabyUseFurniture:FireServer(Char, folderId, partName)
@@ -18,12 +18,13 @@ if env.COCOON and env.COCOON.Stop then pcall(env.COCOON.Stop) end
 -- ================= CONFIG =================
 local INVITE_DELAY     = 1.0
 local FAMILY_SETTLE    = 2.0
-local BATCH_DWELL      = 15
+local DWELL            = 15
 local HOLD_STEP_DELAY  = 0.8
 local PLACE_STEP_DELAY = 0.6
 local EJECT_STEP_DELAY = 0.6
-local BETWEEN_PAIRS    = 2.0
-local BETWEEN_CYCLES   = 3.0     -- pause between full bed cycles
+local BETWEEN_GROUPS   = 2.0    -- pause between (2 players -> 2 furniture) groups
+local BETWEEN_PHASES   = 2.0    -- pause between bathtub phase and bed phase
+local BETWEEN_CYCLES   = 3.0    -- pause before looping back to bathtub phase
 
 local BATHTUB_NAME = "CheapPetBathtub"
 local BED_NAME     = "BasicBed"
@@ -82,7 +83,7 @@ local function inviteMethodB(name)
 end
 
 -- ==================================================================
--- FURNITURE DISCOVERY (generic — works for CheapPetBathtub, BasicBed, …)
+-- FURNITURE DISCOVERY (generic)
 -- ==================================================================
 local function ownerFromFolder(folderName) return (string.match(folderName, "^([^/]+)/") or folderName) end
 local function folderIdFromFolder(folderName) return (string.match(folderName, "f%-%d+") or folderName) end
@@ -113,16 +114,13 @@ local function resolveActivation(model)
     return nil
 end
 
--- Generic: find ALL instances of a named furniture across all houses
 local function findAllByName(targetName)
     local out = {}
     local hi = Workspace:FindFirstChild("HouseInteriors"); if not hi then return out end
     local furniture = hi:FindFirstChild("furniture"); if not furniture then return out end
-
     for _, folder in ipairs(furniture:GetChildren()) do
         local owner = ownerFromFolder(folder.Name)
         local folderId = folderIdFromFolder(folder.Name)
-
         local function walk(node, prefix)
             for _, child in ipairs(node:GetChildren()) do
                 if child.Name:lower() == targetName:lower()
@@ -130,13 +128,9 @@ local function findAllByName(targetName)
                     local act = resolveActivation(child)
                     if act then
                         table.insert(out, {
-                            owner = owner,
-                            folderId = folderId,
-                            folderName = folder.Name,
-                            modelName = child.Name,
-                            model = child,
-                            partName = act.partName,
-                            cframe = act.cframe,
+                            owner = owner, folderId = folderId, folderName = folder.Name,
+                            modelName = child.Name, model = child,
+                            partName = act.partName, cframe = act.cframe,
                             path = prefix .. "." .. child.Name,
                         })
                     end
@@ -191,11 +185,7 @@ end
 -- ==================================================================
 -- CORE API SHAPES
 -- ==================================================================
-local TasksMode = false       -- set true while any batch runs (for waitAbortable)
-local BathtubMode = false
-local BedMode = false
-
-local function anyActive() return TasksMode or BathtubMode or BedMode end
+local LoopMode = false
 
 local function holdSubject(char)
     local node = api("AdoptAPI/HoldBaby"); if not node then return false end
@@ -212,141 +202,140 @@ end
 
 local function waitAbortable(seconds, label)
     local t = 0
-    while t < seconds and anyActive() do
+    while t < seconds and LoopMode do
         setNow(string.format("%s — %d/%ds", label, t, seconds))
         task.wait(1); t += 1
     end
 end
 
 -- ==================================================================
--- GENERIC PAIR-FILL (used by BOTH bathtub and bed)
+-- PAIR-FILL for ONE furniture phase
 -- ==================================================================
--- Returns true if it completed; the caller sets its own mode flags.
-local function runPairFill(tubList, label, isActive, perPairCallback)
-    if #tubList == 0 then
-        say("No " .. label .. " found", "bad")
-        return false
+-- Returns number of players placed.
+local function runFurniturePhase(targetName, label)
+    local items = findAllByName(targetName)
+    say("Phase " .. label .. ": discovered " .. #items .. " " .. targetName, "info")
+    if #items == 0 then
+        say("No " .. targetName .. " found — skipping phase", "warn")
+        return 0
     end
 
-    -- Player queue
     local players = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character then table.insert(players, p) end
     end
-    say("Players to place: " .. #players, "info")
-    if #players == 0 then say("No players in server", "bad"); return false end
-    if #players > #tubList then
-        say((#players - #tubList) .. " player(s) will be skipped (not enough " .. label .. ")", "warn")
+    if #players == 0 then say("No players in server", "bad"); return 0 end
+    if #players > #items then
+        say((#players - #items) .. " player(s) skipped (not enough " .. targetName .. ")", "warn")
     end
 
     local placed = {}
-    local tubIdx, playerIdx = 1, 1
+    local itemIdx, playerIdx = 1, 1
 
-    while playerIdx <= #players and tubIdx <= #tubList and isActive() do
-        -- Take up to 2 players + 2 distinct tubs
+    while playerIdx <= #players and itemIdx <= #items and LoopMode do
+        -- Take up to 2 players -> 2 distinct items
         local group = {}
         for _ = 1, 2 do
-            if playerIdx <= #players and tubIdx <= #tubList then
+            if playerIdx <= #players and itemIdx <= #items then
                 local p = players[playerIdx]
-                local t = tubList[tubIdx]
-                table.insert(group, { char = p.Character, playerName = p.Name, tub = t })
+                local it = items[itemIdx]
+                table.insert(group, { char = p.Character, playerName = p.Name, item = it })
                 playerIdx += 1
-                tubIdx += 1
+                itemIdx += 1
             end
         end
         if #group == 0 then break end
 
-        setGoal(label .. " group (" .. #placed + 1 .. "-" .. (#placed + #group) .. "/" .. #players .. ") — Hold")
+        -- HOLD each
+        setGoal(label .. " — Hold group")
         for i, a in ipairs(group) do
-            if not isActive() then break end
-            setGoal("Hold " .. a.playerName, { "(" .. i .. "/" .. #group .. ")" })
+            if not LoopMode then break end
+            setGoal(label .. " — Hold " .. a.playerName, { "(" .. i .. "/" .. #group .. ")" })
             holdSubject(a.char)
             task.wait(HOLD_STEP_DELAY)
         end
 
-        setGoal(label .. " group — Place")
+        -- PLACE each on its own furniture
+        setGoal(label .. " — Place group")
         for _, a in ipairs(group) do
-            if not isActive() then break end
-            setGoal(a.playerName .. " -> " .. a.tub.folderId .. "." .. a.tub.partName, { a.tub.modelName })
-            fireBabyFurniture(a.char, a.tub.folderId, a.tub.partName)
+            if not LoopMode then break end
+            setGoal(label .. " — " .. a.playerName .. " -> " .. a.item.folderId .. "." .. a.item.partName,
+                { a.item.modelName })
+            fireBabyFurniture(a.char, a.item.folderId, a.item.partName)
             task.wait(PLACE_STEP_DELAY)
         end
 
         for _, a in ipairs(group) do table.insert(placed, a) end
-        say("Placed " .. #placed .. "/" .. #players .. " (" .. label .. " " .. (tubIdx - 1) .. "/" .. #tubList .. ")", "ok")
-        task.wait(BETWEEN_PAIRS)
+        say(string.format("%s: placed %d/%d", label, #placed, #players), "ok")
+        task.wait(BETWEEN_GROUPS)
     end
 
-    if #placed == 0 then say("No players were placed", "bad"); return false end
+    if #placed == 0 then
+        say(label .. ": nothing placed", "bad")
+        return 0
+    end
 
-    setGoal(label .. " dwell " .. BATCH_DWELL .. "s — " .. #placed .. " placed")
-    waitAbortable(BATCH_DWELL, label .. " dwell")
-    say(label .. " dwell finished", "ok")
+    -- DWELL
+    setGoal(label .. " — Dwell " .. DWELL .. "s (" .. #placed .. " placed)")
+    waitAbortable(DWELL, label .. " dwell")
+    say(label .. ": dwell done", "ok")
 
-    setGoal(label .. " retrieve all")
+    -- RE-HOLD all
+    setGoal(label .. " — Retrieve all")
     for i, a in ipairs(placed) do
-        if not isActive() then break end
-        setGoal("Re-hold " .. a.playerName, { "(" .. i .. "/" .. #placed .. ")" })
+        if not LoopMode then break end
+        setGoal(label .. " — Re-hold " .. a.playerName, { "(" .. i .. "/" .. #placed .. ")" })
         holdSubject(a.char)
         task.wait(HOLD_STEP_DELAY)
     end
+
+    -- EJECT all
+    setGoal(label .. " — Eject all")
     for i, a in ipairs(placed) do
-        if not isActive() then break end
-        setGoal("Eject " .. a.playerName, { "(" .. i .. "/" .. #placed .. ")" })
+        if not LoopMode then break end
+        setGoal(label .. " — Eject " .. a.playerName, { "(" .. i .. "/" .. #placed .. ")" })
         ejectSubject(a.char)
         task.wait(EJECT_STEP_DELAY)
     end
 
-    say(label .. " finished — " .. #placed .. " ejected", "ok")
-    return true
+    say(label .. ": ejected all " .. #placed, "ok")
+    return #placed
 end
 
 -- ==================================================================
--- BATHTUB BUTTON (single run)
+-- MASTER LOOP: Bathtubs -> Beds -> repeat
 -- ==================================================================
-local function fillAllBathtubs()
-    if BathtubMode then return end
-    BathtubMode = true
-
-    local tubs = findAllByName(BATHTUB_NAME)
-    say("Discovered " .. #tubs .. " " .. BATHTUB_NAME .. "(s)", "info")
-    runPairFill(tubs, "Bathtub", function() return BathtubMode end)
-
-    BathtubMode = false
-end
-
--- ==================================================================
--- BED BUTTON (LOOPING)
--- ==================================================================
-local function fillAllBedsOnce()
-    local beds = findAllByName(BED_NAME)
-    say("Discovered " .. #beds .. " " .. BED_NAME .. "(s)", "info")
-    return runPairFill(beds, "Bed", function() return BedMode end)
-end
-
-local function startBedLoop()
-    if BedMode then return end
-    BedMode = true
+local function startLoop()
+    if LoopMode then return end
+    LoopMode = true
 
     local cycle = 0
-    while BedMode do
+    while LoopMode do
         cycle += 1
-        setGoal("Bed cycle " .. cycle)
-        say("=== Bed cycle " .. cycle .. " start ===", "info")
-        local ok = fillAllBedsOnce()
-        if not ok then
-            say("Bed cycle " .. cycle .. " aborted (no beds or players)", "warn")
-            if BedMode then
-                -- Don't spam busy-loop; wait for beds/players to appear
-                waitAbortable(5, "waiting for beds/players")
-            end
-        else
-            say("=== Bed cycle " .. cycle .. " complete — looping ===", "ok")
-            if BedMode then task.wait(BETWEEN_CYCLES) end
+        say("═══════ CYCLE " .. cycle .. " START ═══════", "info")
+
+        -- Phase 1: Bathtubs
+        setGoal("Cycle " .. cycle .. " — Bathtub phase")
+        local tubCount = runFurniturePhase(BATHTUB_NAME, "Bathtub")
+        if not LoopMode then break end
+        task.wait(BETWEEN_PHASES)
+
+        -- Phase 2: Beds
+        setGoal("Cycle " .. cycle .. " — Bed phase")
+        local bedCount = runFurniturePhase(BED_NAME, "Bed")
+        if not LoopMode then break end
+
+        say(string.format("Cycle %d done — bathtubs:%d  beds:%d",
+            cycle, tubCount, bedCount), "ok")
+        say("═══════ CYCLE " .. cycle .. " END ═══════", "info")
+
+        if LoopMode then
+            setGoal("Waiting " .. BETWEEN_CYCLES .. "s before next cycle")
+            waitAbortable(BETWEEN_CYCLES, "inter-cycle pause")
         end
     end
 
-    say("Bed loop stopped", "ok")
+    say("Master loop stopped", "ok")
 end
 
 -- ==================================================================
@@ -357,7 +346,7 @@ local THEME = {
     bg = Color3.fromRGB(18,18,22), line = Color3.fromRGB(40,40,48), field = Color3.fromRGB(28,28,34),
     text = Color3.fromRGB(230,230,235), dim = Color3.fromRGB(130,130,145), accent = Color3.fromRGB(150,120,255),
     ok = Color3.fromRGB(90,200,120), bad = Color3.fromRGB(230,90,90),
-    fam = Color3.fromRGB(80,180,120), tub = Color3.fromRGB(70,150,210), bed = Color3.fromRGB(180,120,220),
+    fam = Color3.fromRGB(80,180,120), loop = Color3.fromRGB(190,140,240),
 }
 local function guiParent()
     local ok, hui = pcall(function() return gethui and gethui() end)
@@ -407,11 +396,11 @@ local function window(w, h)
     corner(f, 8); create("UIStroke", { Color = THEME.line, Thickness = 1 }, f)
     local hd = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1 }, f)
     makeDraggable(hd, f)
-    text(hd, 10, 0, w-40, 26, "COCOON v14", 13, THEME.text, true)
+    text(hd, 10, 0, w-40, 26, "COCOON v15", 13, THEME.text, true)
     local cl = create("TextButton", { Position = UDim2.fromOffset(w-26,1), Size = UDim2.fromOffset(22,22),
         BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, hd)
     cl.MouseButton1Click:Connect(function()
-        FamilyMode, TasksMode, BathtubMode, BedMode = false, false, false, false
+        FamilyMode, LoopMode = false, false
         uiLog = nil; ui.now = nil; f:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0,26), Size = UDim2.new(1,0,0,1),
@@ -420,7 +409,7 @@ local function window(w, h)
 end
 
 local function mainWindow()
-    local width, height = 260, 380
+    local width, height = 260, 340
     local frame = window(width, height)
 
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8,29), Size = UDim2.fromOffset(width-16,22),
@@ -457,55 +446,42 @@ local function mainWindow()
     create("Frame", { Position = UDim2.fromOffset(8,129), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
 
+    -- Family button
     button(frame, 8, 140, width-16, "CREATE FAMILY + INVITE ALL", THEME.fam, function(b)
         if FamilyMode then FamilyMode = false; say("Family builder stopped", "warn"); return end
         say("Family builder started", "info")
         task.spawn(createFamilyAndInvite)
     end)
 
-    -- Bathtub (single run)
-    button(frame, 8, 178, width-16, "FILL ALL BATHTUBS [OFF]", THEME.tub, function(b)
-        if BathtubMode then
-            BathtubMode = false
-            b.Text = "FILL ALL BATHTUBS [OFF]"; b.BackgroundColor3 = THEME.tub
-            say("Bathtub run stopped", "warn"); return
+    -- SINGLE master loop button
+    button(frame, 8, 178, width-16, "BATH+BED LOOP [OFF]", THEME.loop, function(b)
+        if LoopMode then
+            LoopMode = false
+            b.Text = "BATH+BED LOOP [OFF]"; b.BackgroundColor3 = THEME.loop
+            say("Master loop stopped", "warn"); return
         end
-        b.Text = "FILL ALL BATHTUBS [ON]"; b.BackgroundColor3 = THEME.ok
-        task.spawn(fillAllBathtubs)
+        b.Text = "BATH+BED LOOP [ON]"; b.BackgroundColor3 = THEME.ok
+        task.spawn(startLoop)
         task.spawn(function()
-            while BathtubMode and frame.Parent do task.wait(0.5) end
-            if b.Parent then b.Text = "FILL ALL BATHTUBS [OFF]"; b.BackgroundColor3 = THEME.tub end
+            while LoopMode and frame.Parent do task.wait(0.5) end
+            if b.Parent then b.Text = "BATH+BED LOOP [OFF]"; b.BackgroundColor3 = THEME.loop end
         end)
     end)
 
-    -- Bed (LOOPING)
-    button(frame, 8, 216, width-16, "BED FILL LOOP [OFF]", THEME.bed, function(b)
-        if BedMode then
-            BedMode = false
-            b.Text = "BED FILL LOOP [OFF]"; b.BackgroundColor3 = THEME.bed
-            say("Bed loop stopped", "warn"); return
-        end
-        b.Text = "BED FILL LOOP [ON]"; b.BackgroundColor3 = THEME.ok
-        task.spawn(startBedLoop)
-        task.spawn(function()
-            while BedMode and frame.Parent do task.wait(0.5) end
-            if b.Parent then b.Text = "BED FILL LOOP [OFF]"; b.BackgroundColor3 = THEME.bed end
-        end)
-    end)
-
-    text(frame, 8, 254, width-16, 14, "Both: 2 players -> 2 distinct furniture -> repeat", 10, THEME.dim)
-    text(frame, 8, 268, width-16, 14, "Then 15s dwell -> hold back all -> eject all", 10, THEME.dim)
-    text(frame, 8, 282, width-16, 14, "Bathtub runs ONCE; Bed LOOPS until toggled off", 10, THEME.dim)
-    text(frame, 8, 296, width-16, 14, "Hold: HoldBaby:InvokeServer({Char})", 10, THEME.dim)
-    text(frame, 8, 310, width-16, 14, "Place: MakeBabyUseFurniture:FireServer(Char, folderId, partName)", 10, THEME.dim)
-    text(frame, 8, 324, width-16, 14, "Eject: EjectBaby:FireServer({Char})", 10, THEME.dim)
-    create("Frame", { Position = UDim2.fromOffset(8, 342), Size = UDim2.new(1,-16,0,1),
+    text(frame, 8, 216, width-16, 14, "One cycle = bathtubs (15s) -> beds (15s)", 10, THEME.dim)
+    text(frame, 8, 230, width-16, 14, "2 players -> 2 distinct furniture, repeat", 10, THEME.dim)
+    text(frame, 8, 244, width-16, 14, "Then hold back all -> eject all", 10, THEME.dim)
+    text(frame, 8, 258, width-16, 14, "Loops forever until toggled off", 10, THEME.dim)
+    text(frame, 8, 272, width-16, 14, "Hold: HoldBaby:InvokeServer({Char})", 10, THEME.dim)
+    text(frame, 8, 286, width-16, 14, "Place: MakeBabyUseFurniture:FireServer(Char, folderId, partName)", 10, THEME.dim)
+    text(frame, 8, 300, width-16, 14, "Eject: EjectBaby:FireServer({Char})", 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 318), Size = UDim2.new(1,-16,0,1),
         BackgroundColor3 = THEME.line, BorderSizePixel = 0 }, frame)
-    text(frame, 8, 348, width-16, 14, "COCOON v14 — bed loop", 10, THEME.dim)
+    text(frame, 8, 324, width-16, 14, "COCOON v15 — bath+bed master loop", 10, THEME.dim)
 end
 
 env.COCOON = {
-    Stop = function() FamilyMode, TasksMode, BathtubMode, BedMode = false, false, false, false end,
+    Stop = function() FamilyMode, LoopMode = false, false end,
     CountPlayers = countPlayers,
     CountPets = countPets,
     CreateFamilyAndInvite = createFamilyAndInvite,
@@ -513,9 +489,8 @@ env.COCOON = {
     InviteB = inviteMethodB,
     FindBathtubs = function() return findAllByName(BATHTUB_NAME) end,
     FindBeds = function() return findAllByName(BED_NAME) end,
-    FillAllBathtubs = fillAllBathtubs,
-    StartBedLoop = startBedLoop,
+    StartLoop = startLoop,
 }
 
 mainWindow()
-say("Loaded v14. Bathtub (once) + Bed (looping) pair-fill.", "ok")
+say("Loaded v15. Single button: bathtubs -> beds -> loop.", "ok")
