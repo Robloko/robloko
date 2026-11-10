@@ -1,6 +1,8 @@
 --[[
-    Food Inspector + Baby Formula Auto-Equip/Use Script
-    Combines inventory inspection with auto-equip and dialog handling
+    Food Inspector + Auto-Buy Baby Formula + Equip/Use Script
+    - Inspects food inventory
+    - If baby formula missing → buys it from shop
+    - Equips, uses, clicks dialog, then ends use
 --]]
 
 local Players = game:GetService("Players")
@@ -8,6 +10,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
+
+local BABY_FORMULA_ID = "babyformula" -- shop item ID
+local BABY_FORMULA_CATEGORY = "food"  -- shop category
 
 -- ============================================================
 -- PART 1: INSPECT FOOD INVENTORY
@@ -56,22 +61,48 @@ end
 -- PART 2: FIND BABY FORMULA
 -- ============================================================
 local function findBabyFormula(foods)
-    -- Common naming patterns for baby formula
     local patterns = { "baby", "formula", "babyformula", "baby_formula", "infant", "milk" }
 
     for _, food in ipairs(foods) do
         local lowerName = string.lower(food.name)
         for _, pattern in ipairs(patterns) do
             if string.find(lowerName, pattern) then
-                print(string.format("[BabyFormula] Found match: %s (ID: %s, Amount: %d)",
+                print(string.format("[BabyFormula] Found in inventory: %s (ID: %s, Amount: %d)",
                     food.name, food.id, food.amount))
                 return food
             end
         end
     end
 
-    print("[BabyFormula] No baby formula found in inventory.")
+    print("[BabyFormula] Not found in inventory.")
     return nil
+end
+
+-- ============================================================
+-- PART 2b: BUY BABY FORMULA FROM SHOP
+-- ============================================================
+local function buyBabyFormula()
+    print("[Shop] Attempting to buy baby formula...")
+    local args = {
+        [1] = BABY_FORMULA_CATEGORY,
+        [2] = BABY_FORMULA_ID,
+        [3] = {
+            ["buy_count"] = 1
+        }
+    }
+
+    local ok, err = pcall(function()
+        ReplicatedStorage.API:FindFirstChild("ShopAPI/BuyItem"):InvokeServer(unpack(args))
+    end)
+
+    if ok then
+        print("[Shop] Buy request sent successfully.")
+        task.wait(1) -- give server time to process
+        return true
+    else
+        warn("[Shop] Buy failed: " .. tostring(err))
+        return false
+    end
 end
 
 -- ============================================================
@@ -89,32 +120,28 @@ local function equipTool(toolId)
         ReplicatedStorage.API:FindFirstChild("ToolAPI/Equip"):InvokeServer(unpack(args))
     end)
     if ok then
-        print("[Equip] Equipped tool: " .. toolId)
+        print("[Equip] Equipped: " .. toolId)
+        return true
     else
         warn("[Equip] Failed: " .. tostring(err))
+        return false
     end
 end
 
 local function useToolStart(toolId)
-    local args = {
-        [1] = toolId,
-        [2] = "START"
-    }
+    local args = { [1] = toolId, [2] = "START" }
     pcall(function()
         ReplicatedStorage.API:FindFirstChild("ToolAPI/ServerUseTool"):InvokeServer(unpack(args))
     end)
-    print("[Use] Started using tool: " .. toolId)
+    print("[Use] START: " .. toolId)
 end
 
 local function useToolEnd(toolId)
-    local args = {
-        [1] = toolId,
-        [2] = "END"
-    }
+    local args = { [1] = toolId, [2] = "END" }
     pcall(function()
         ReplicatedStorage.API:FindFirstChild("ToolAPI/ServerUseTool"):InvokeServer(unpack(args))
     end)
-    print("[Use] Ended use of tool: " .. toolId)
+    print("[Use] END: " .. toolId)
 end
 
 -- ============================================================
@@ -133,7 +160,6 @@ local function clickDialogButton()
     local buttons = normalDialog:FindFirstChild("Buttons")
     if not buttons then return false end
 
-    -- Try ButtonTemplate first, then fall back to any visible GuiButton
     local button = buttons:FindFirstChild("ButtonTemplate")
     if not button then
         for _, child in ipairs(buttons:GetChildren()) do
@@ -153,19 +179,16 @@ local function clickDialogButton()
         else
             button.MouseButton1Click:Fire()
         end
-        print("[Dialog] Clicked button: " .. button.Name)
+        print("[Dialog] Clicked: " .. button.Name)
         return true
     end
     return false
 end
 
--- Wait up to N seconds for a dialog button to appear & click it
 local function waitAndClickDialog(timeoutSeconds)
     local start = tick()
     while tick() - start < (timeoutSeconds or 10) do
-        if clickDialogButton() then
-            return true
-        end
+        if clickDialogButton() then return true end
         task.wait(0.25)
     end
     return false
@@ -177,18 +200,31 @@ end
 local foods = printAvailableFood()
 local formula = findBabyFormula(foods)
 
-if formula then
-    print(string.format("[Main] Using baby formula: %s (ID: %s)", formula.name, formula.id))
+if not formula then
+    print("[Main] Baby formula missing — buying from shop...")
+    buyBabyFormula()
 
-    -- Equip
-    equipTool(formula.id)
+    -- Re-read inventory to confirm purchase & get its real instance ID
+    foods = printAvailableFood()
+    formula = findBabyFormula(foods)
+end
+
+if not formula then
+    warn("[Main] Still couldn't obtain baby formula. Aborting.")
+    return
+end
+
+print(string.format("[Main] Using baby formula: %s (ID: %s)", formula.name, formula.id))
+
+-- Equip
+if equipTool(formula.id) then
     task.wait(0.5)
 
     -- Use (START)
     useToolStart(formula.id)
     task.wait(0.5)
 
-    -- Wait for & click dialog button that appears (this is usually the "use/feed" confirmation)
+    -- Click dialog button if it shows up
     if not waitAndClickDialog(8) then
         print("[Main] No dialog button appeared — continuing anyway.")
     end
@@ -198,5 +234,5 @@ if formula then
     useToolEnd(formula.id)
     print("[Main] Done.")
 else
-    print("[Main] Aborting — no baby formula to equip.")
+    warn("[Main] Equip failed — aborting.")
 end
