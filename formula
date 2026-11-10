@@ -1,0 +1,202 @@
+--[[
+    Food Inspector + Baby Formula Auto-Equip/Use Script
+    Combines inventory inspection with auto-equip and dialog handling
+--]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- PART 1: INSPECT FOOD INVENTORY
+-- ============================================================
+local function printAvailableFood()
+    local foods = {}
+
+    local success, errorMsg = pcall(function()
+        local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+        local playerData = clientData.get_data()[player.Name]
+
+        if playerData and playerData.inventory and playerData.inventory.food then
+            for foodId, foodData in pairs(playerData.inventory.food) do
+                if foodData.id then
+                    table.insert(foods, {
+                        id = foodId,
+                        name = foodData.id,
+                        amount = foodData.amount or 1
+                    })
+                end
+            end
+        end
+    end)
+
+    if not success then
+        print("[FoodInspector] Error reading food inventory: " .. tostring(errorMsg))
+        return {}
+    end
+
+    if #foods == 0 then
+        print("[FoodInspector] No food found in your inventory!")
+        return {}
+    end
+
+    print("=== AVAILABLE FOOD IN INVENTORY ===")
+    for i, food in ipairs(foods) do
+        print(string.format("%d. %s (ID: %s) - Amount: %d", i, food.name, food.id, food.amount))
+    end
+    print("Total food items: " .. #foods)
+    print("===================================")
+
+    return foods
+end
+
+-- ============================================================
+-- PART 2: FIND BABY FORMULA
+-- ============================================================
+local function findBabyFormula(foods)
+    -- Common naming patterns for baby formula
+    local patterns = { "baby", "formula", "babyformula", "baby_formula", "infant", "milk" }
+
+    for _, food in ipairs(foods) do
+        local lowerName = string.lower(food.name)
+        for _, pattern in ipairs(patterns) do
+            if string.find(lowerName, pattern) then
+                print(string.format("[BabyFormula] Found match: %s (ID: %s, Amount: %d)",
+                    food.name, food.id, food.amount))
+                return food
+            end
+        end
+    end
+
+    print("[BabyFormula] No baby formula found in inventory.")
+    return nil
+end
+
+-- ============================================================
+-- PART 3: EQUIP & USE TOOL
+-- ============================================================
+local function equipTool(toolId)
+    local args = {
+        [1] = toolId,
+        [2] = {
+            ["equip_as_last"] = false,
+            ["use_sound_delay"] = true
+        }
+    }
+    local ok, err = pcall(function()
+        ReplicatedStorage.API:FindFirstChild("ToolAPI/Equip"):InvokeServer(unpack(args))
+    end)
+    if ok then
+        print("[Equip] Equipped tool: " .. toolId)
+    else
+        warn("[Equip] Failed: " .. tostring(err))
+    end
+end
+
+local function useToolStart(toolId)
+    local args = {
+        [1] = toolId,
+        [2] = "START"
+    }
+    pcall(function()
+        ReplicatedStorage.API:FindFirstChild("ToolAPI/ServerUseTool"):InvokeServer(unpack(args))
+    end)
+    print("[Use] Started using tool: " .. toolId)
+end
+
+local function useToolEnd(toolId)
+    local args = {
+        [1] = toolId,
+        [2] = "END"
+    }
+    pcall(function()
+        ReplicatedStorage.API:FindFirstChild("ToolAPI/ServerUseTool"):InvokeServer(unpack(args))
+    end)
+    print("[Use] Ended use of tool: " .. toolId)
+end
+
+-- ============================================================
+-- PART 4: CLICK DIALOG BUTTON (with timeout)
+-- ============================================================
+local function clickDialogButton()
+    local dialogApp = PlayerGui:FindFirstChild("DialogApp")
+    if not dialogApp then return false end
+
+    local dialog = dialogApp:FindFirstChild("Dialog")
+    if not dialog then return false end
+
+    local normalDialog = dialog:FindFirstChild("NormalDialog")
+    if not normalDialog then return false end
+
+    local buttons = normalDialog:FindFirstChild("Buttons")
+    if not buttons then return false end
+
+    -- Try ButtonTemplate first, then fall back to any visible GuiButton
+    local button = buttons:FindFirstChild("ButtonTemplate")
+    if not button then
+        for _, child in ipairs(buttons:GetChildren()) do
+            if child:IsA("GuiButton") and child.Visible and child.Active then
+                button = child
+                break
+            end
+        end
+    end
+
+    if button and button.Visible and button.Active and button:IsA("GuiButton") then
+        if firesignal then
+            firesignal(button.MouseButton1Down)
+            task.wait(0.05)
+            firesignal(button.MouseButton1Up)
+            firesignal(button.MouseButton1Click)
+        else
+            button.MouseButton1Click:Fire()
+        end
+        print("[Dialog] Clicked button: " .. button.Name)
+        return true
+    end
+    return false
+end
+
+-- Wait up to N seconds for a dialog button to appear & click it
+local function waitAndClickDialog(timeoutSeconds)
+    local start = tick()
+    while tick() - start < (timeoutSeconds or 10) do
+        if clickDialogButton() then
+            return true
+        end
+        task.wait(0.25)
+    end
+    return false
+end
+
+-- ============================================================
+-- MAIN EXECUTION
+-- ============================================================
+local foods = printAvailableFood()
+local formula = findBabyFormula(foods)
+
+if formula then
+    print(string.format("[Main] Using baby formula: %s (ID: %s)", formula.name, formula.id))
+
+    -- Equip
+    equipTool(formula.id)
+    task.wait(0.5)
+
+    -- Use (START)
+    useToolStart(formula.id)
+    task.wait(0.5)
+
+    -- Wait for & click dialog button that appears (this is usually the "use/feed" confirmation)
+    if not waitAndClickDialog(8) then
+        print("[Main] No dialog button appeared — continuing anyway.")
+    end
+    task.wait(0.5)
+
+    -- End use
+    useToolEnd(formula.id)
+    print("[Main] Done.")
+else
+    print("[Main] Aborting — no baby formula to equip.")
+end
