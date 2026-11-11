@@ -9725,6 +9725,7 @@ GC.DoAuto = true
 GC.FireAll = true
 GC.FireAllServerChecked = false
 GC.DoAssist = true
+GC.AutoSkipTurnSeconds = 20 -- a "Your turn" task not done in this many seconds is skipped by itself (0 = wait for you, up to 10 min)
 GC.PetsPageFirst = true
 GC.GrindMinutes = 180
 GC.StepTimeout = 150
@@ -9905,14 +9906,16 @@ local function runGuide()
 				log("WARN", "travel failed: " .. tostring(why))
 			end
 		end
-		show(def.title, def.description, "Your turn! Do it now, or press Skip")
+		local limit = (tonumber(GC.AutoSkipTurnSeconds) or 0) > 0 and GC.AutoSkipTurnSeconds or 600
+		show(def.title, def.description, limit < 600 and ("Your turn! Skipping by itself in " .. limit .. " s")
+			or "Your turn! Do it now, or press Skip")
 		local started = os.clock()
 		local timedOut = false
 		while running and not skipPressed and not isCompleted(id) do
 			task.wait(0.5)
 			flushCalls()
-			if os.clock() - started > 600 then
-				log("WARN", id .. ": 10 min without completion -> next")
+			if os.clock() - started > limit then
+				log("WARN", id .. ": " .. limit .. " s without completion -> next")
 				timedOut = true
 				break
 			end
@@ -9933,7 +9936,7 @@ local function runGuide()
 			say("Skipped " .. def.title)
 			table.insert(report.skipped, id)
 			pcall(sendDevLog, id, def.title, os.clock() - assistStart, assistCalls,
-				timedOut and "your turn: not done in 10 min" or "your turn: skipped")
+				timedOut and ("your turn: not done in " .. limit .. " s") or "your turn: skipped")
 		end
 	end
 	local firstNoted = false
