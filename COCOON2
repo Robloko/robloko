@@ -9,7 +9,6 @@ if env.AutoAchievements and env.AutoAchievements.Stop then
 	pcall(env.AutoAchievements.Stop)
 end
 local running = false
-local farmOn = false -- the Pet & Baby Farm loop (separate from the Achievements)
 local uiLog = nil
 local ui = {}
 GC.LogFolder = "AutoAchievements"
@@ -676,10 +675,9 @@ end
 -- so only `Needs` and `giveItem` are new names in this script's scope.
 GC.BabyNeeds = true -- joins the Babies team and does the baby's needs too
 -- the developer's presets from cocoon.txt (Config.Presets): "" = no preset, or Off, Balanced, Skelicorn, PotionFarm, Focus.
--- Here a preset picks which pet / baby needs are on and whether the Achievements buy eggs (Farm.BuyEgg); baby needs
--- follow GC.BabyNeeds whatever the preset says. Its event / neon parts are cocoon.txt TaskManager features, not carried.
+-- Here a preset picks which pet / baby needs are on and whether baby needs run; its event / egg / neon parts are
+-- cocoon.txt's TaskManager features, which this script does not carry.
 GC.Preset = "PotionFarm" -- the window's Preset list changes it
-GC.PetBabyFarm = true -- the Pet & Baby Farm (pet needs + baby needs + Transfer jobs) starts by itself when the script loads
 GC.CpuSaver = false -- cocoon.txt's CPU saver at start: black screen, 3D drawing off, 15 FPS, lowest quality, sound off
 GC.Transfer = { -- YOUR own accounts only, through the game's mannequin outfit sales + Cash Register (never a trade)
 	MainUserId = 0, -- the Main's UserId (the ALT pays this account)
@@ -6599,8 +6597,7 @@ do
 		                end
 		                task.wait(3)
 		            end
-		            -- cocoonA: a ride gets the same prep (a carried or unequipped pet never sits in the stroller)
-		            if kind == "walk" or kind == "ride" then
+		            if kind == "walk" then
 		                -- v3.0.77 (user log 2026-10-26: unequip + equip before the walk reset it): equipped only when it
 		                -- is not; never carried around while walking (a carried pet is put down)
 		                ctx.maid:Give(function()
@@ -6624,7 +6621,7 @@ do
 		                    end
 		                end
 		            end
-		            local stroller, seatPet
+		            local stroller
 		            if kind == "ride" then
 		                local item = ctx.gameData:findItems(GameConstants.StrollerCategory, { "stroller-default" })[1]
 		                    or (function()
@@ -6639,44 +6636,36 @@ do
 		                if not item then
 		                    return false, "no stroller in your backpack"
 		                end
-		                -- the pet's model and data are read fresh each time: after a re-seat the old model can be gone
-		                seatPet = function()
-		                    local model, reason
-		                    ctx.waitUntil(function()
-		                        model, reason = ctx.petLocator:findModel(entry.petUnique)
-		                        return model ~= nil
-		                    end, 8)
-		                    if not model then
-		                        return false, "pet model: " .. tostring(reason)
-		                    end
-		                    local wrappers = ctx.gameData:get(GameConstants.DataKeys.PetWrappers)
-		                    local sit
-		                    for _, wrapper in pairs(type(wrappers) == "table" and wrappers or {}) do
-		                        if type(wrapper) == "table" and wrapper.pet_unique == entry.petUnique then
-		                            sit = table.clone(wrapper)
-		                        end
-		                    end
-		                    if not sit then
-		                        return false, "no data for the pet"
-		                    end
-		                    sit.char = model
-		                    sit.controller = Players.LocalPlayer
-		                    sit.entity_controller = Players.LocalPlayer
-		                    sit.player = Players.LocalPlayer
-		                    ctx.interaction:send("EquipItem", item.unique, { chars_to_sit = { sit } })
-		                    task.wait(1)
-		                    return true
+		                local model, reason
+		                ctx.waitUntil(function()
+		                    model, reason = ctx.petLocator:findModel(entry.petUnique)
+		                    return model ~= nil
+		                end, 8)
+		                if not model then
+		                    return false, "pet model: " .. tostring(reason)
 		                end
+		                local wrappers = ctx.gameData:get(GameConstants.DataKeys.PetWrappers)
+		                local sit
+		                for _, wrapper in pairs(type(wrappers) == "table" and wrappers or {}) do
+		                    if type(wrapper) == "table" and wrapper.pet_unique == entry.petUnique then
+		                        sit = table.clone(wrapper)
+		                    end
+		                end
+		                if not sit then
+		                    return false, "no data for the pet"
+		                end
+		                sit.char = model
+		                sit.controller = Players.LocalPlayer
+		                sit.entity_controller = Players.LocalPlayer
+		                sit.player = Players.LocalPlayer
 		                stroller = item.unique
 		                ctx.maid:Give(function()
 		                    ctx.interaction:send("UnequipStroller")
 		                    ctx.interaction:send("UnequipItem", stroller, nil)
 		                end)
 		                ctx.logger:info("Tasks", "Putting your pet in the stroller (" .. tostring(item.id) .. ")")
-		                local seated, whySeat = seatPet()
-		                if not seated then
-		                    return false, whySeat
-		                end
+		                ctx.interaction:send("EquipItem", stroller, { chars_to_sit = { sit } })
+		                task.wait(1)
 		            end
 		            local STALL = 15
 		            local unique = entry.petUnique
@@ -6725,7 +6714,6 @@ do
 		            -- NOT running, pet 40 studs away"): a pet more than 20 studs behind for 6 s while the walk does not count
 		            -- is equipped again (the game puts it back next to me), at most 4 times a walk
 		            local farSince, reequips, reequipBusy = nil, 0, false
-		            local reseats, lastSeatAt = 0, 0
 		            -- v2.1.5 (reports 2026-10-12: ride "moved 1500 studs" every 7 s, at (17505, -15021) NOT ON MAINMAP:
 		            -- the stroller flings the character into the void - a white / empty screen for the user): the walk
 		            -- stays near where it began; a jump of more than FLING studs = back to the start, still; 3 = stop
@@ -6831,29 +6819,6 @@ do
 		                if tickCount % 4 == 0 then
 		                    elapsed += 2
 		                    local e, active = sample()
-		                    -- cocoonA (user: "pet is not sitting on the stroller"): a ride that does not count for 6 s takes
-		                    -- the stroller off and seats the pet again, at most 3 times a ride
-		                    if kind == "ride" and seatPet and not active and not reequipBusy and reseats < 3
-		                        and elapsed - lastSeatAt >= 6 then
-		                        reseats, lastSeatAt, reequipBusy = reseats + 1, elapsed, true
-		                        ctx.logger:info("Tasks", string.format("ride: the pet is not in the stroller: seating it again (%d of 3)", reseats))
-		                        task.spawn(function()
-		                            ctx.interaction:send("UnequipStroller")
-		                            ctx.interaction:send("UnequipItem", stroller, nil)
-		                            task.wait(1)
-		                            if carrying(ctx) then
-		                                local model = ctx.petLocator:findModel(unique)
-		                                if model then
-		                                    ctx.interaction:send("DropPet", model)
-		                                end
-		                            end
-		                            if not ctx.gameData:isPetEquipped(unique) then
-		                                equipPetAgain(ctx, unique)
-		                            end
-		                            pcall(seatPet)
-		                            reequipBusy = false
-		                        end)
-		                    end
 		                    if kind == "walk" and not active and not reequipBusy and reequips < 4 then
 		                        local far = petDistance()
 		                        if far and far > 20 then
@@ -8149,10 +8114,11 @@ do
 		end
 		local preset = GC.Preset ~= "" and GC.Preset or nil
 		local config, warnings = Config.build({ Preset = preset, Farm = { AutoNeeds = { Enabled = true, Skip = {} },
-			BabyMode = GC.BabyNeeds, Transfer = GC.Transfer } }) -- baby needs follow GC.BabyNeeds, also under PotionFarm
+			BabyMode = (not preset) and GC.BabyNeeds or nil, Transfer = GC.Transfer } }) -- a preset decides BabyMode itself
 		for _, warning in ipairs(warnings) do
 			log("WARN", "Config: " .. warning)
 		end
+		GC.BabyNeeds = config.Farm.BabyMode
 		local maid, state = Maid.new(), State.new()
 		local gameData = import("Game/GameData").new(logger)
 		if not gameData:start(maid) then
@@ -8387,18 +8353,6 @@ do
 		end
 		return list
 	end
-	-- true when the chosen preset turns egg buying off (Farm.BuyEgg = false, e.g. PotionFarm); no preset = cocoon2's own rules
-	local eggRule = {}
-	function Needs.eggsOff()
-		if GC.Preset == "" then
-			return false
-		end
-		if eggRule.preset ~= GC.Preset then
-			local ok, config = pcall(Config.build, { Preset = GC.Preset })
-			eggRule.preset, eggRule.off = GC.Preset, ok and config.Farm.BuyEgg == false
-		end
-		return eggRule.off
-	end
 	-- a new preset is used from the next need on (the running one finishes first)
 	function Needs.setPreset(id)
 		if id ~= "" and not Config.findPreset(id) then
@@ -8454,6 +8408,7 @@ do
 				string.format("Tickets  %d  (%s)", tickets, signed(tickets - startTickets)),
 				string.format("Age potions  %d", #itemsOf("food", { pet_age_potion = true })),
 				string.format("Pets  %d", #itemsOf("pets")),
+				string.format("Preset  %s   Baby needs  %s", GC.Preset ~= "" and GC.Preset or "none", GC.BabyNeeds and "on" or "off"),
 				string.format("On for  %dh %dm", minutes // 60, minutes % 60), "",
 				"Now: " .. tostring(status.now), tostring(status.goal), "", "Tap to close",
 			}, "\n")
@@ -8614,9 +8569,6 @@ end
 GC.EGG_PRICE = 350
 GC.TREE_PRICE = 1450
 local function buyEgg()
-	if Needs.eggsOff() then
-		return false, "the " .. GC.Preset .. " preset turns egg buying off"
-	end
 	local ok, why = goTo("Nursery")
 	if not ok then
 		return false, why
@@ -9614,9 +9566,7 @@ local function grindStep(waiting, firstPage)
 		end
 	end
 	penClaim()
-	if farmOn then -- the Pet & Baby Farm is on: its needs are done here, between the Achievement steps
-		careStep()
-	end
+	careStep()
 end
 GC.Discord = "https://discord.gg/2kFKgdPKe"
 GC.Credit = "COCOON"
@@ -9800,9 +9750,6 @@ end
 local function canRunNow(plan)
 	if not plan.canRun then
 		return false
-	end
-	if Needs.eggsOff() and (plan.run == buyEgg or plan.price == GC.EGG_PRICE) then
-		return false -- the preset turns egg buying off
 	end
 	local ok, result = pcall(plan.canRun)
 	return ok and result == true
@@ -10065,10 +10012,9 @@ local function runGuide()
 	end
 end
 -- ==================================================================
--- cocoon1.txt modes, ported: Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY,
--- Potions (age target pets to 6), Recycle (Nursery recycler + tickets), Neon (4x full grown -> neon),
--- Mega (4x age-6 neons -> mega), Pet Pen (commit, purge trash, neon fusion, remove age-6 pets, refill:
--- neons < 6, inventory priority eggs (recycler egg first), then tickets -> recycler egg, else Bucks -> cracked egg).
+-- cocoon1.txt Pet Recycle (Nursery recycler + tickets) and Pet Pen (commit, neon fusion, purge trash, remove age-6
+-- pets, refill: neons < 6, inventory priority eggs (recycler egg first), then tickets -> recycler egg, else Bucks ->
+-- cracked egg), ported.
 -- Runs in its own function so its locals do not count against the main chunk's limit.
 -- Uses cocoonA's say / setGoal / goTo / waitUntil / itemsOf / money / getKey.
 -- ==================================================================
@@ -10077,10 +10023,6 @@ local Extra = (function()
 	local player = Players.LocalPlayer
 
 	-- ================= CONFIG (cocoon1.txt) =================
-	local TARGET_PLAYER_NAMES = { "Ndalynna", "Warrindil", "Armindse", "Ximatiann" }
-	local GIFT_TYPE = "2d_tuesdays_2025_box"
-	local POTION_TARGET_AGE = 6
-
 	local PEN_SLOTS = 4
 	local PEN_RECYCLER_EGG = "pet_recycler_2025_basic_egg"
 	local PEN_TICKET_KEY = "pet_recycler_tickets_2026"
@@ -10098,46 +10040,6 @@ local Extra = (function()
 		"sugarfest_2026_cocoadile", "egg_teaser_2026_dire_wolf", "inspector_shepherd_2026_magpie", "cracked_egg", "starter_egg",
 	}
 
-	local TARGET_EGGS = {
-		"halloween_2026_stray_cat_dragon", "halloween_2026_poltergeist_box", "halloween_2026_skelicorn",
-		"fairytale_egg_2026_fairytale_egg", "pet_progression_2026_purrowl", "admin_abuse_egg_2026_egg",
-		"winter_2024_frostclaw", "halloween_2024_scarebear", "endangered_2026_endangered_egg",
-		"lny_2026_fire_foal", "lny_2026_fire_mare", "lny_2026_fire_stallion",
-		"aztec_egg_2025_aztec_egg", "winter_2025_angus_cow", "winter_2025_angus_calf", "winter_2025_angus_bull",
-		"halloween_2025_bat_cat", "basic_egg_2022_alicorn", "basic_egg_2022_ancient_dragon",
-		"basic_egg_2022_dragonfly", "pet_recycler_2025_basic_egg", "pet_recycler_2025_crystal_egg",
-		"summer_2026_acorn_box",
-	}
-
-	local TARGET_PETS = {
-		"halloween_2026_pandaguin_glooptodog", "halloween_2026_stitches", "halloween_2026_tomb_spider",
-		"halloween_2026_jump_scare", "roblox_anniversary_2026_blue_cat", "roblox_anniversary_2026_pink_dog",
-		"birthday_2026_birthday_butterfly", "summer_2026_sheepdog", "summer_2026_river_otter",
-		"summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck", "journey_2026_pilot_gull",
-		"summerfest_2024_cow_calf", "halloween_2023_slime", "sugarfest_2026_jiggly_jerboa",
-		"sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile", "egg_teaser_2026_dire_wolf",
-		"lny_2026_fire_foal", "valentines_2026_cherub_chipmunk", "inspector_shepherd_2026_magpie",
-		"winter_2024_frostbite_cub", "winter_2025_angus_cow", "winter_2025_angus_calf",
-		"winter_2025_maine_coon", "winter_2025_turtle_doves", "winter_2025_xmas_tree_sasquatch",
-		"winter_2025_humbug", "basic_egg_2022_ant", "basic_egg_2022_mouse", "basic_egg_2022_camel",
-		"basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
-		"basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",
-		"basic_egg_2022_robot", "basic_egg_2022_corgi",
-	}
-
-	local TARGET_PETS_FOR_POTIONS = {
-		"halloween_2026_stitches", "halloween_2026_tomb_spider", "halloween_2026_jump_scare",
-		"basic_egg_2022_ant", "basic_egg_2022_mouse", "roblox_anniversary_2026_blue_cat",
-		"roblox_anniversary_2026_pink_dog", "birthday_2026_birthday_butterfly", "summer_2026_sheepdog",
-		"summer_2026_river_otter", "summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck",
-		"journey_2026_pilot_gull", "summerfest_2024_cow_calf", "halloween_2023_slime",
-		"sugarfest_2026_jiggly_jerboa", "sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile",
-		"winter_2024_frostclaw", "halloween_2024_scarebear", "egg_teaser_2026_dire_wolf",
-		"lny_2026_fire_foal", "lny_2026_fire_mare", "valentines_2026_cherub_chipmunk",
-		"inspector_shepherd_2026_magpie", "winter_2024_frostbite_cub", "winter_2025_angus_cow",
-		"winter_2025_angus_calf", "winter_2025_xmas_tree_sasquatch",
-	}
-
 	local TARGET_PETS_FOR_RECYCLE = {
 		"basic_egg_2022_camel", "basic_egg_2022_robot", "basic_egg_2022_corgi",
 		"basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
@@ -10146,23 +10048,7 @@ local Extra = (function()
 	local RECYCLE_MIN_PETS = 4
 
 	-- ================= MODES =================
-	local on = { egg = false, pet = false, gift = false, req = false, potion = false, recycle = false,
-		neon = false, mega = false, pen = false }
-
-	local function api(name)
-		return ReplicatedStorage:WaitForChild("API"):WaitForChild(name)
-	end
-
-	-- ================= HELPERS =================
-	local function findFirstAvailablePlayer()
-		for _, name in ipairs(TARGET_PLAYER_NAMES) do
-			local p = Players:FindFirstChild(name)
-			if p then
-				return p
-			end
-		end
-		return nil
-	end
+	local on = { recycle = false, pen = false }
 
 	local function getPlayerData()
 		local ok, data = pcall(function()
@@ -10171,184 +10057,17 @@ local Extra = (function()
 		return ok and data and data[player.Name] or nil
 	end
 
-	local function findTargetItems(targetList)
-		local found = {}
-		local data = getPlayerData()
-		if not data or not data.inventory then
-			return found
-		end
-		for _, invType in ipairs({ "pets", "gifts" }) do
-			for uid, itemData in pairs(data.inventory[invType] or {}) do
-				if itemData.id then
-					local id = string.lower(itemData.id)
-					for _, target in ipairs(targetList) do
-						if id == target then
-							table.insert(found, { uid = uid, name = itemData.id, amount = itemData.amount or 1 })
-							break
-						end
-					end
-				end
-			end
-		end
-		return found
+	local function api(name)
+		return ReplicatedStorage:WaitForChild("API"):WaitForChild(name)
 	end
 
-	local function findGifts()
-		local gifts = {}
-		local data = getPlayerData()
-		for uid, giftData in pairs(data and data.inventory and data.inventory.gifts or {}) do
-			if giftData.id and string.lower(giftData.id) == GIFT_TYPE then
-				table.insert(gifts, { uid = uid, amount = giftData.amount or 1 })
-			end
-		end
-		return gifts
-	end
-
-	local function giveItem(targetPlayer, uid)
-		local ok, result = pcall(function()
-			return api("TradeAPI/GiveItem"):InvokeServer(targetPlayer, uid)
-		end)
-		if ok then
-			say("Gave item to " .. targetPlayer.Name, "ok")
-			return true
-		end
-		say("Failed to give item: " .. tostring(result), "bad")
-		return false
-	end
-
+	-- ================= HELPERS =================
 	local function penTickets()
 		return tonumber(getKey(PEN_TICKET_KEY)) or 0
 	end
 
 	local function penCanAfford(price)
 		return money() >= price + PEN_KEEP_BUCKS
-	end
-
-	-- ================= POTION RELEASER =================
-	local function findPetAgePotion()
-		local data = getPlayerData()
-		for uniqueId, itemData in pairs(data and data.inventory and data.inventory.food or {}) do
-			if itemData.id == "pet_age_potion" then
-				return uniqueId
-			end
-		end
-		return nil
-	end
-
-	local function safelyUnequipFood(itemId)
-		pcall(function()
-			api("ToolAPI/Unequip"):InvokeServer(itemId)
-		end)
-	end
-
-	local function equipTool(itemId)
-		return (pcall(function()
-			api("ToolAPI/Equip"):InvokeServer(itemId, { use_sound_delay = true, equip_as_last = false })
-		end))
-	end
-
-	local function findPetsNeedingPotions()
-		local list = {}
-		local data = getPlayerData()
-		for petUniqueId, petData in pairs(data and data.inventory and data.inventory.pets or {}) do
-			if petData.id and petData.properties then
-				local petName = string.lower(petData.id)
-				local petAge = petData.properties.age or 0
-				for _, targetPet in ipairs(TARGET_PETS_FOR_POTIONS) do
-					if petName == targetPet and petAge < POTION_TARGET_AGE then
-						table.insert(list, { uid = petUniqueId, name = petData.id, age = petAge })
-						break
-					end
-				end
-			end
-		end
-		table.sort(list, function(a, b) return a.age < b.age end)
-		return list
-	end
-
-	local function getPetAge(petUniqueId)
-		local data = getPlayerData()
-		for uid, petData in pairs(data and data.inventory and data.inventory.pets or {}) do
-			if uid == petUniqueId or petData.unique == petUniqueId then
-				return petData.properties and petData.properties.age or 0, petData.id or "Unknown"
-			end
-		end
-		return nil, nil
-	end
-
-	local function usePotionOnPet(petUniqueId)
-		local currentAge, petName = getPetAge(petUniqueId)
-		if not currentAge or currentAge >= POTION_TARGET_AGE then
-			say("Pet no longer needs potion: " .. tostring(petName), "warn")
-			return false
-		end
-		if not equipTool(petUniqueId) then
-			say("Failed to equip pet: " .. tostring(petName), "bad")
-			return false
-		end
-		say("Equipped pet: " .. tostring(petName))
-		task.wait(1)
-		local potionId = findPetAgePotion()
-		if not potionId then
-			say("No potions found!", "bad")
-			return false
-		end
-		if not equipTool(potionId) then
-			say("Failed to equip potion", "bad")
-			return false
-		end
-		task.wait(1)
-		if not pcall(function() api("ToolAPI/ServerUseTool"):InvokeServer(potionId, "START") end) then
-			safelyUnequipFood(potionId)
-			say("Failed to start using potion", "bad")
-			return false
-		end
-		task.wait(1)
-		local consumeOk = pcall(function()
-			api("PetObjectAPI/CreatePetObject"):InvokeServer("__Enum_PetObjectCreatorType_2",
-				{ additional_consume_uniques = {}, pet_unique = petUniqueId, unique_id = potionId })
-		end)
-		if not consumeOk then
-			safelyUnequipFood(potionId)
-			say("Failed to create pet object for consumption", "bad")
-			return false
-		end
-		say("Waiting 9 s for potion to feed " .. tostring(petName) .. "...")
-		task.wait(9)
-		say("Potion feed complete for " .. tostring(petName), "ok")
-		safelyUnequipFood(potionId)
-		return true
-	end
-
-	local function startPotionReleaser()
-		while on.potion do
-			local pets = findPetsNeedingPotions()
-			if #pets == 0 then
-				say("No pets need potions. Waiting 30 s...", "warn")
-				task.wait(30)
-				continue
-			end
-			if not findPetAgePotion() then
-				say("No potions available", "bad")
-				task.wait(30)
-				continue
-			end
-			say(#pets .. " pets need potions")
-			for _, petData in ipairs(pets) do
-				if not on.potion then
-					break
-				end
-				local currentAge = getPetAge(petData.uid)
-				if currentAge and currentAge >= POTION_TARGET_AGE then
-					say(petData.name .. " no longer needs potion (age: " .. currentAge .. ")", "warn")
-					continue
-				end
-				if not usePotionOnPet(petData.uid) then
-					task.wait(2)
-				end
-			end
-			task.wait(5)
-		end
 	end
 
 	-- ================= PET RECYCLER =================
@@ -10436,132 +10155,6 @@ local Extra = (function()
 		end
 	end
 
-	-- ================= EGG TRADING =================
-	local function addEggsToTrade(eggs)
-		local maxEggs = math.min(#eggs, 18)
-		local added = 0
-		for i = 1, maxEggs do
-			if pcall(function() api("TradeAPI/AddItemToOffer"):FireServer(eggs[i].uid) end) then
-				added += 1
-				say("Added egg " .. i .. "/" .. maxEggs .. ": " .. eggs[i].name)
-			end
-			task.wait(0.2)
-		end
-		return added
-	end
-
-	local function tradeEggsWithPlayer(targetPlayer)
-		say("Sending trade request to " .. targetPlayer.Name)
-		if not pcall(function() api("TradeAPI/SendTradeRequest"):FireServer(targetPlayer) end) then
-			return false
-		end
-		task.wait(3)
-		if not pcall(function() return api("TradeAPI/AcceptOrDeclineTradeRequest"):InvokeServer(targetPlayer, true) end) then
-			say("Failed to accept trade request", "bad")
-			return false
-		end
-		task.wait(3)
-		local eggs = findTargetItems(TARGET_EGGS)
-		if #eggs == 0 then
-			return false
-		end
-		local added = addEggsToTrade(eggs)
-		if added == 0 then
-			return false
-		end
-		task.wait(3)
-		pcall(function() api("TradeAPI/AcceptNegotiation"):FireServer() end)
-		task.wait(6)
-		if pcall(function() api("TradeAPI/ConfirmTrade"):FireServer() end) then
-			say("Trade completed: " .. added .. " eggs to " .. targetPlayer.Name, "ok")
-			return true
-		end
-		say("Failed to confirm trade", "bad")
-		return false
-	end
-
-	local function startEggTrader()
-		while on.egg do
-			if #findTargetItems(TARGET_EGGS) == 0 then
-				say("No eggs left! Stopping.", "warn")
-				on.egg = false
-				break
-			end
-			local target = findFirstAvailablePlayer()
-			if not target then
-				say("No target player. Waiting...")
-				task.wait(10)
-			elseif tradeEggsWithPlayer(target) then
-				task.wait(math.random(8, 12))
-			else
-				say("Trade failed. Retrying in 15 s...", "warn")
-				task.wait(15)
-			end
-		end
-	end
-
-	-- ================= PET GIVER =================
-	local function startPetGiver()
-		while on.pet do
-			local target = findFirstAvailablePlayer()
-			if not target then
-				say("No target player. Waiting...")
-				task.wait(10)
-				continue
-			end
-			local pets = findTargetItems(TARGET_PETS)
-			if #pets == 0 then
-				say("No target pets left! Stopping.", "warn")
-				on.pet = false
-				break
-			end
-			task.wait(giveItem(target, pets[1].uid) and 9 or 3)
-		end
-	end
-
-	-- ================= GIFT GIVER =================
-	local function startGiftGiver()
-		while on.gift do
-			local target = findFirstAvailablePlayer()
-			if not target then
-				say("No target player. Waiting...")
-				task.wait(10)
-				continue
-			end
-			local gifts = findGifts()
-			if #gifts == 0 then
-				say("All " .. GIFT_TYPE .. " given away! Stopping.", "warn")
-				on.gift = false
-				break
-			end
-			local stack = gifts[1]
-			if giveItem(target, stack.uid) then
-				say("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name, "ok")
-				task.wait(9)
-			else
-				task.wait(3)
-			end
-		end
-	end
-
-	-- ================= TRADE REQUEST ONLY =================
-	local function startTradeRequester()
-		while on.req do
-			local target = findFirstAvailablePlayer()
-			if not target then
-				say("No target player. Waiting...")
-				task.wait(10)
-				continue
-			end
-			if pcall(function() api("TradeAPI/SendTradeRequest"):FireServer(target) end) then
-				say("Trade request sent to " .. target.Name, "ok")
-			else
-				say("Failed to send trade request", "bad")
-			end
-			task.wait(math.random(8, 15))
-		end
-	end
-
 	-- ================= NEON FUSER =================
 	local function doNeonFusion()
 		local data = getPlayerData()
@@ -10609,74 +10202,6 @@ local Extra = (function()
 			end
 		end
 		return fused
-	end
-
-	local function startNeonFuser()
-		while on.neon do
-			local fused = doNeonFusion()
-			if fused == 0 then
-				say("No 4x full-grown (age 6) pets to fuse. Waiting 30 s...", "warn")
-				task.wait(30)
-			else
-				say("NEON fusion pass complete: " .. fused .. " created", "ok")
-				task.wait(5)
-			end
-		end
-	end
-
-	-- ================= MEGA FUSER =================
-	local function doMegaFusion()
-		local data = getPlayerData()
-		if not data or not data.inventory or not data.inventory.pets then
-			say("No pet data available", "bad")
-			return 0
-		end
-		local age6Neons = {}
-		for id, pet in pairs(data.inventory.pets) do
-			if pet.id and pet.properties and pet.properties.neon and (pet.properties.age or 0) == 6 then
-				age6Neons[pet.id] = age6Neons[pet.id] or {}
-				table.insert(age6Neons[pet.id], id)
-			end
-		end
-		local fused = 0
-		for petType, petList in pairs(age6Neons) do
-			while #petList >= 4 do
-				local fusionSet = { petList[1], petList[2], petList[3], petList[4] }
-				say("Fusing 4 age-6 NEON " .. petType .. " into MEGA...")
-				local success, err = pcall(function()
-					local megaAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/DoMegaFusion")
-					if megaAPI then
-						return megaAPI:InvokeServer(fusionSet)
-					end
-					return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
-				end)
-				if success then
-					say("Created MEGA " .. petType .. "!", "ok")
-					fused += 1
-					for _ = 1, 4 do
-						table.remove(petList, 1)
-					end
-					task.wait(2)
-				else
-					say("MEGA fusion failed: " .. tostring(err), "bad")
-					break
-				end
-			end
-		end
-		return fused
-	end
-
-	local function startMegaFuser()
-		while on.mega do
-			local fused = doMegaFusion()
-			if fused == 0 then
-				say("No 4x age-6 neons to fuse into mega. Waiting 30 s...", "warn")
-				task.wait(30)
-			else
-				say("MEGA fusion pass complete: " .. fused .. " created", "ok")
-				task.wait(5)
-			end
-		end
 	end
 
 	-- ================= PET PEN (cocoon1.txt PetFarm-style) =================
@@ -10850,22 +10375,14 @@ local Extra = (function()
 		say("Pet Pen stopped", "warn")
 	end
 
-	-- the window's buttons, in cocoon1.txt's order
+	-- the window's buttons
 	local modes = {
-		{ key = "egg", label = "Eggs", start = startEggTrader },
-		{ key = "pet", label = "Pets", start = startPetGiver },
-		{ key = "gift", label = "Gifts", start = startGiftGiver },
-		{ key = "req", label = "Trade Req", start = startTradeRequester },
-		{ key = "potion", label = "Potions", start = startPotionReleaser },
 		{ key = "recycle", label = "Recycle", start = startPetRecycler },
-		{ key = "neon", label = "Neon", start = startNeonFuser },
-		{ key = "mega", label = "Mega", start = startMegaFuser },
 		{ key = "pen", label = "Pet Pen", start = startPenFiller },
 	}
 	return {
 		modes = modes,
 		on = on,
-		targets = TARGET_PLAYER_NAMES,
 		stopAll = function()
 			for key in pairs(on) do
 				on[key] = false
@@ -10877,32 +10394,10 @@ local Extra = (function()
 		PenBuyOneEgg = penBuyOneEgg, PenAddPriorityPets = penAddPriorityPets,
 	}
 end)()
--- the Pet & Baby Farm loop; while the Achievements run, they do the needs between their steps (one thing moves at a time)
-local function runFarm()
-	if not waitUntil(function() return getKey("loaded_in") == true end, 120) then
-		say("The game hasn't loaded yet: the Pet & Baby Farm is off", "bad")
-		farmOn = false
-		return
-	end
-	say("Pet & Baby Farm on", "ok")
-	while farmOn do
-		if running then
-			task.wait(1)
-		else
-			local ok, why = pcall(careStep)
-			if not ok then
-				say("Pet & Baby Farm: " .. tostring(why), "bad")
-				task.wait(3)
-			end
-		end
-	end
-	say("Pet & Baby Farm off", "warn")
-end
 local function mainWindow()
 	local width = 270
-	local frame = window(width, 402, function()
+	local frame = window(width, 326, function()
 		running = false
-		farmOn = false
 		Extra.stopAll()
 		uiLog = nil
 		ui.now = nil
@@ -10933,32 +10428,6 @@ local function mainWindow()
 		logBox.Text = table.concat(shown, "\n")
 	end
 	local half = (width - 26) / 2
-	local third = (width - 32) / 3
-	local quarter = (half - 6) / 2
-	-- switches: green text = on, red text = off; every second they are painted again (a mode can switch itself off)
-	local switches = {}
-	local function toggle(x, y, w, label, get, flip)
-		local b
-		local function paint()
-			b.TextColor3 = get() == true and THEME.ok or THEME.bad
-		end
-		b = button(frame, x, y, w, label, THEME.text, function()
-			flip()
-			paint()
-		end)
-		b.TextSize = 10
-		paint()
-		table.insert(switches, paint)
-	end
-	task.spawn(function()
-		while frame.Parent do
-			task.wait(1)
-			for _, paint in ipairs(switches) do
-				pcall(paint)
-			end
-		end
-	end)
-	-- row 1: preset list, CPU, Skip
 	local presets, presetAt = Needs.presets(), 1
 	for i, preset in ipairs(presets) do
 		if preset.id == GC.Preset then
@@ -10966,75 +10435,56 @@ local function mainWindow()
 		end
 	end
 	local presetButton, presetList
-	presetButton = button(frame, 10, 184, half, presets[presetAt].name .. "  ▾", THEME.accent, function()
+	presetButton = button(frame, 10, 184, half, "Preset: " .. presets[presetAt].name .. "  ▾", THEME.accent, function()
 		presetList.Visible = not presetList.Visible
 	end)
-	presetButton.TextSize = 11
-	-- opens upward, over the log
-	presetList = create("Frame", { Position = UDim2.fromOffset(10, 180 - (#presets * 24 + 4)),
-		Size = UDim2.fromOffset(half, #presets * 24 + 4), BackgroundColor3 = THEME.bg, BorderSizePixel = 0,
-		Visible = false, ZIndex = 10 }, frame)
+	presetList = create("Frame", { Position = UDim2.fromOffset(10, 180 - (#presets * 24 + 4)), -- opens upward, over the log Size = UDim2.fromOffset(half, #presets * 24 + 4),
+		BackgroundColor3 = THEME.bg, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, frame)
 	corner(presetList, 5)
 	create("UIStroke", { Color = THEME.line, Thickness = 1 }, presetList)
 	for i, preset in ipairs(presets) do
 		local choice = button(presetList, 2, 2 + (i - 1) * 24, half - 4, preset.name, THEME.text, function()
 			presetList.Visible = false
 			Needs.setPreset(preset.id)
-			presetButton.Text = preset.name .. "  ▾"
+			presetButton.Text = "Preset: " .. preset.name .. "  ▾"
 			say(preset.name .. ": " .. preset.about, "info")
 		end)
 		choice.ZIndex = 11
 	end
-	button(frame, 16 + half, 184, quarter, "CPU", THEME.text, function()
+	button(frame, 16 + half, 184, half, "CPU", THEME.text, function()
 		Needs.cpuSaver(true)
 	end)
-	button(frame, 22 + half + quarter, 184, quarter, "Skip", THEME.text, function()
-		skipPressed = true
-	end)
-	-- row 2: Transfer Thingy (MannequinTransfer); GC.Transfer is the live table its jobs read
+	-- Transfer Thingy (MannequinTransfer) switches; GC.Transfer is the live table its jobs read
 	local function transferToggle(x, key, label)
-		toggle(x, 214, third, label, function() return GC.Transfer[key] end, function()
+		local b
+		local function paint()
+			b.Text = label .. (GC.Transfer[key] and " ON" or " OFF")
+			b.TextColor3 = GC.Transfer[key] and THEME.ok or THEME.dim
+		end
+		b = button(frame, x, 214, (width - 32) / 3, "", THEME.dim, function()
 			GC.Transfer[key] = not GC.Transfer[key]
+			b.TextSize = 10
+			paint()
 			if GC.Transfer[key] and key ~= "Mannequin" and (tonumber(GC.Transfer.MainUserId) or 0) == 0 then
 				say("set GC.Transfer.MainUserId first: the ALT needs to know the Main", "warn")
 			end
 		end)
+		b.TextSize = 10
+		paint()
 	end
 	transferToggle(10, "Mannequin", "Mannequin")
-	transferToggle(16 + third, "BuyMannequin", "Buy")
-	transferToggle(22 + third * 2, "AutoPay", "Pay")
-	-- row 3: Achievements and the Pet & Baby Farm, each on its own
-	toggle(10, 244, half, "Achievements", function() return running end, function()
-		if running then
-			running = false
-			show("Stopped", "", "")
-			return
+	transferToggle(16 + (width - 32) / 3, "BuyMannequin", "Buy")
+	transferToggle(22 + (width - 32) / 3 * 2, "AutoPay", "Pay")
+	-- cocoon1.txt Pet Recycle and Pet Pen, same ON / OFF style; painted again every second (a mode can stop itself)
+	local function modeToggle(x, mode)
+		local b
+		local function paint()
+			b.Text = mode.label .. (Extra.on[mode.key] and " ON" or " OFF")
+			b.TextColor3 = Extra.on[mode.key] and THEME.ok or THEME.dim
 		end
-		running = true
-		onFinished = nil
-		task.spawn(function()
-			if not pcall(runGuide) then
-				say("something went wrong, switch Achievements on again", "bad")
-				running = false
-			end
-		end)
-	end)
-	local function startFarm()
-		farmOn = true
-		task.spawn(runFarm)
-	end
-	toggle(16 + half, 244, half, "Pet & Baby Farm", function() return farmOn end, function()
-		if farmOn then
-			farmOn = false
-		else
-			startFarm()
-		end
-	end)
-	-- rows 4-6: cocoon1.txt modes
-	for i, mode in ipairs(Extra.modes) do
-		local col, row = (i - 1) % 3, (i - 1) // 3
-		toggle(10 + col * (third + 6), 274 + row * 30, third, mode.label, function() return Extra.on[mode.key] end, function()
+		b = button(frame, x, 274, half, "", THEME.dim, function()
 			Extra.on[mode.key] = not Extra.on[mode.key]
+			paint()
 			if Extra.on[mode.key] then
 				task.spawn(mode.start)
 				say(mode.label .. " started", "ok")
@@ -11042,20 +10492,52 @@ local function mainWindow()
 				say(mode.label .. " stopped", "warn")
 			end
 		end)
+		b.TextSize = 10
+		paint()
+		task.spawn(function()
+			while b.Parent do
+				task.wait(1)
+				pcall(paint)
+			end
+		end)
 	end
-	text(frame, 10, 362, width - 20, 14, "Targets: " .. table.concat(Extra.targets, ", "), 10, THEME.dim)
+	modeToggle(10, Extra.modes[1])
+	modeToggle(16 + half, Extra.modes[2])
 	if GC.CpuSaver then
 		Needs.cpuSaver(true)
 	end
-	if GC.PetBabyFarm then
-		startFarm()
-	end
-	footer(frame, width, 380)
+	local third = (width - 32) / 3
+	local startButton
+	startButton = button(frame, 10, 244, third, "Start", THEME.ok, function()
+		if running then
+			return
+		end
+		running = true
+		startButton.Text = "Running"
+		onFinished = function()
+			startButton.Text = "Start"
+		end
+		task.spawn(function()
+			local ok = pcall(runGuide)
+			if not ok then
+				say("something went wrong, press Start again", "bad")
+				running = false
+				startButton.Text = "Start"
+			end
+		end)
+	end)
+	button(frame, 16 + third, 244, third, "Skip", THEME.text, function()
+		skipPressed = true
+	end)
+	button(frame, 22 + third * 2, 244, third, "Stop", THEME.bad, function()
+		running = false
+		show("Stopped", "", "")
+	end)
+	footer(frame, width, 304)
 end
 env.AutoAchievements = {
 	Stop = function()
 		running = false
-		farmOn = false
 		Extra.stopAll()
 		Needs.cpuSaver(false)
 		Needs.stop()
@@ -11063,6 +10545,6 @@ env.AutoAchievements = {
 	Skip = function() skipPressed = true end,
 	Preset = Needs.setPreset, -- AutoAchievements.Preset("PotionFarm")
 	CpuSaver = Needs.cpuSaver, -- AutoAchievements.CpuSaver(true / false)
-	Cocoon1 = Extra, -- cocoon1.txt's pen helpers: AutoAchievements.Cocoon1.PenSnapshot() etc.
+	Cocoon1 = Extra, -- cocoon1.txt pen helpers: AutoAchievements.Cocoon1.PenSnapshot() etc.
 }
 mainWindow()
