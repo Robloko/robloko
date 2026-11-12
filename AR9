@@ -1,0 +1,1565 @@
+-- ==================================================================
+-- COCOON (compact GUI + giver/trader functions, with avatar icon)
+-- Eggs = TRADE / Pets = GIVE / Gifts = GIVE / Trade Req = SEND ONLY
+-- + Potion Releaser (ages target pets to age 6 with pet_age_potion)
+-- + Pet Recycler (travels to Nursery, recycles pets, collects tickets)
+-- + Crystal (when 18+ recycle pets: Nursery -> recycle -> tickets ->
+--   buy pet_recycler_2025_crystal_egg. Crystal eggs NEVER go to the pen)
+-- + Pet Pen (PetFarm-style logic: commit progression, purge trash,
+--   neon fusion, remove age-6 pets, refill priority:
+--   inventory recycler eggs FIRST, then tickets -> recycler egg,
+--   else Bucks -> cracked egg. Empty slots are ALWAYS filled.)
+-- + Neon Fuser (4x full-grown same-species pets -> neon)
+-- + Mega Fuser (4x age-6 same-species neons -> mega)
+-- + Money & Ticket Display
+-- ==================================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+
+local env = getgenv and getgenv() or {}
+if env.COCOON and env.COCOON.Stop then
+    pcall(env.COCOON.Stop)
+end
+
+-- ================= CONFIG =================
+local TARGET_PLAYER_NAMES = {"Ndalynna", "Warrindil", "Armindse", "Ximatiann"}
+local GIFT_TYPE = "2d_tuesdays_2025_box"
+local POTION_TARGET_AGE = 6
+local ARRIVAL_TIMEOUT = 35
+
+-- Pet Pen config (PetFarm-style logic)
+local PEN_SLOTS = 4
+local PEN_RECYCLER_EGG = "pet_recycler_2025_basic_egg"
+local PEN_TICKET_KEY = "pet_recycler_tickets_2026"
+local PEN_TICKET_RESERVE = 0            -- don't spend below this many tickets
+local PEN_CRACKED_EGG = "cracked_egg"
+local PEN_CRACKED_PRICE = 350
+local PEN_KEEP_BUCKS = 0                -- don't drop Bucks below this when buying cracked eggs
+local PEN_USE_RECYCLER_FIRST = true     -- buy recycler egg with tickets before cracked egg
+local PEN_CYCLE_SECONDS = 60           -- how often the pen cycle runs
+local PEN_COMMIT_FIRST = true          -- commit progression before each cycle
+
+-- Pets/eggs allowed in the pen, in priority order (list order = use order).
+-- pet_recycler_2025_basic_egg is FIRST: if any are already in inventory,
+-- they get used before anything else, and before any purchase.
+local PEN_PRIORITY_EGGS = {
+    "pet_recycler_2025_basic_egg",
+    "basic_egg_2022_ant",
+    "basic_egg_2022_mouse",
+    "sugarfest_2026_jiggly_jerboa",
+    "sugarfest_2026_cocoadile",
+    "egg_teaser_2026_dire_wolf",
+    "inspector_shepherd_2026_magpie",
+    "cracked_egg",
+    "starter_egg",
+}
+
+local TARGET_EGGS = {
+    "halloween_2026_stray_cat_dragon", "halloween_2026_poltergeist_box", "halloween_2026_skelicorn",
+    "fairytale_egg_2026_fairytale_egg", "pet_progression_2026_purrowl", "admin_abuse_egg_2026_egg",
+    "winter_2024_frostclaw", "halloween_2024_scarebear", "endangered_2026_endangered_egg",
+    "lny_2026_fire_foal", "lny_2026_fire_mare", "lny_2026_fire_stallion",
+    "aztec_egg_2025_aztec_egg", "winter_2025_angus_cow", "winter_2025_angus_calf", "winter_2025_angus_bull",
+    "halloween_2025_bat_cat", "basic_egg_2022_alicorn", "basic_egg_2022_ancient_dragon",
+    "basic_egg_2022_dragonfly", "pet_recycler_2025_basic_egg", "pet_recycler_2025_crystal_egg",
+    "summer_2026_acorn_box",
+}
+
+local TARGET_PETS = {
+    "halloween_2026_pandaguin_glooptodog", "halloween_2026_stitches", "halloween_2026_tomb_spider",
+    "halloween_2026_jump_scare", "roblox_anniversary_2026_blue_cat", "roblox_anniversary_2026_pink_dog",
+    "birthday_2026_birthday_butterfly", "summer_2026_sheepdog", "summer_2026_river_otter",
+    "summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck", "journey_2026_pilot_gull",
+    "summerfest_2024_cow_calf", "halloween_2023_slime", "sugarfest_2026_jiggly_jerboa",
+    "sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile", "egg_teaser_2026_dire_wolf",
+    "lny_2026_fire_foal", "valentines_2026_cherub_chipmunk", "inspector_shepherd_2026_magpie",
+    "winter_2024_frostbite_cub", "winter_2025_angus_cow", "winter_2025_angus_calf",
+    "winter_2025_maine_coon", "winter_2025_turtle_doves", "winter_2025_xmas_tree_sasquatch",
+    "winter_2025_humbug", "basic_egg_2022_ant", "basic_egg_2022_mouse", "basic_egg_2022_camel",
+    "basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",
+    "basic_egg_2022_robot", "basic_egg_2022_corgi",
+}
+
+local TARGET_PETS_FOR_POTIONS = {
+    "halloween_2026_stitches", "halloween_2026_tomb_spider", "halloween_2026_jump_scare",
+    "basic_egg_2022_ant", "basic_egg_2022_mouse", "roblox_anniversary_2026_blue_cat",
+    "roblox_anniversary_2026_pink_dog", "birthday_2026_birthday_butterfly", "summer_2026_sheepdog",
+    "summer_2026_river_otter", "summer_2026_snake_tail_dragonfly", "journey_2026_sheepdog_duck",
+    "journey_2026_pilot_gull", "summerfest_2024_cow_calf", "halloween_2023_slime",
+    "sugarfest_2026_jiggly_jerboa", "sugarfest_2026_waffle_wyrm", "sugarfest_2026_cocoadile",
+    "winter_2024_frostclaw", "halloween_2024_scarebear", "egg_teaser_2026_dire_wolf",
+    "lny_2026_fire_foal", "lny_2026_fire_mare", "valentines_2026_cherub_chipmunk",
+    "inspector_shepherd_2026_magpie", "winter_2024_frostbite_cub", "winter_2025_angus_cow",
+    "winter_2025_angus_calf", "winter_2025_xmas_tree_sasquatch",
+}
+
+local TARGET_PETS_FOR_RECYCLE = {
+    "basic_egg_2022_camel", "basic_egg_2022_robot", "basic_egg_2022_corgi",
+    "basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
+    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",  
+}
+local RECYCLE_MIN_PETS = 4
+
+-- Crystal config
+local CRYSTAL_EGG = "pet_recycler_2025_crystal_egg"
+local CRYSTAL_MIN_PETS = 18             -- recycle only once this many recycle pets exist
+local CRYSTAL_MAX_BUYS = 20             -- safety cap on crystal eggs bought per cycle
+
+-- ================= MODES =================
+local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, true
+local NeonMode, MegaMode, PenMode = false, false, true
+local CrystalMode = false
+
+-- ================= STATUS / LOG =================
+local ui = {}
+local uiLog = nil
+local status = { now = "Ready", goal = "Pick a mode and press a button", queue = {} }
+
+local function renderStatus()
+    if ui.now then
+        pcall(function()
+            ui.now.Text = status.now
+            ui.goal.Text = status.goal
+            ui.queue.Text = #status.queue > 0 and ("Next: " .. table.concat(status.queue, "\n         ")) or ""
+        end)
+    end
+end
+
+local function setGoal(text, queue)
+    status.goal = text or ""
+    status.queue = queue or {}
+    renderStatus()
+end
+
+local function setNow(text)
+    status.now = text or ""
+    renderStatus()
+end
+
+local function say(text, tone)
+    setNow(text)
+    if uiLog then
+        pcall(uiLog, tone or "info", text)
+    end
+    print("[COCOON] " .. tostring(text))
+end
+
+-- ================= HELPERS =================
+local function findFirstAvailablePlayer()
+    for _, name in ipairs(TARGET_PLAYER_NAMES) do
+        local p = Players:FindFirstChild(name)
+        if p then
+            return p
+        end
+    end
+    return nil
+end
+
+local function getPlayerData()
+    local ok, clientData = pcall(function()
+        return require(ReplicatedStorage.ClientModules.Core.ClientData)
+    end)
+    if not ok then
+        return nil
+    end
+    local ok2, data = pcall(function() return clientData.get_data() end)
+    if not ok2 then
+        return nil
+    end
+    return data and data[player.Name] or nil
+end
+
+local function findTargetItems(targetList)
+    local found = {}
+    local data = getPlayerData()
+    if not data or not data.inventory then
+        return found
+    end
+    for _, invType in ipairs({ "pets", "gifts" }) do
+        if data.inventory[invType] then
+            for uid, itemData in pairs(data.inventory[invType]) do
+                if itemData.id then
+                    local id = string.lower(itemData.id)
+                    for _, target in ipairs(targetList) do
+                        if id == target then
+                            table.insert(found, { uid = uid, name = itemData.id, amount = itemData.amount or 1 })
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+local function findGifts()
+    local gifts = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.gifts then
+        for uid, giftData in pairs(data.inventory.gifts) do
+            if giftData.id and string.lower(giftData.id) == GIFT_TYPE then
+                table.insert(gifts, { uid = uid, amount = giftData.amount or 1 })
+            end
+        end
+    end
+    return gifts
+end
+
+local function giveItem(targetPlayer, uid)
+    local ok, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/GiveItem"):InvokeServer(targetPlayer, uid)
+    end)
+    if ok then
+        say("Gave item to " .. targetPlayer.Name, "ok")
+        return true
+    end
+    say("Failed to give item: " .. tostring(result), "bad")
+    return false
+end
+
+-- ================= TRAVEL (goTo Nursery etc.) =================
+local interiorsM = nil
+
+local function waitUntil(predicate, seconds)
+    local deadline = os.clock() + seconds
+    while os.clock() < deadline do
+        local ok, result = pcall(predicate)
+        if ok and result then
+            return true
+        end
+        task.wait(0.1)
+    end
+    return false
+end
+
+local function currentPlace()
+    local data = getPlayerData()
+    local interior = data and data.house_interior
+    if type(interior) ~= "table" then
+        return nil
+    end
+    if type(interior.interior_name) == "string" then
+        return interior.interior_name
+    end
+    return interior.house_pos ~= nil and "housing" or nil
+end
+
+local function isAt(place)
+    local now = currentPlace()
+    return type(now) == "string" and string.sub(now, 1, #place) == place
+end
+
+local function goTo(place)
+    if not place or isAt(place) then
+        return true
+    end
+    if not interiorsM then
+        local ok, module = pcall(function()
+            return require(ReplicatedStorage.ClientModules.Core.InteriorsM.InteriorsM)
+        end)
+        if not ok or type(module) ~= "table" or type(module.enter) ~= "function" then
+            return false, "travel module not found"
+        end
+        interiorsM = module
+    end
+    say("Heading to " .. place .. "...")
+    task.spawn(pcall, interiorsM.enter, place, "MainDoor", {})
+    if waitUntil(function() return isAt(place) end, ARRIVAL_TIMEOUT) then
+        task.wait(1)
+        return true
+    end
+    return false, "could not reach " .. place .. " (still in " .. tostring(currentPlace()) .. ")"
+end
+
+-- ================= INVENTORY / PET HELPERS =================
+local function itemsOf(category, wanted)
+    local data = getPlayerData()
+    local inventory = data and type(data.inventory) == "table" and data.inventory or {}
+    local items = type(inventory[category]) == "table" and inventory[category] or {}
+    local list = {}
+    for key, item in pairs(items) do
+        if type(item) == "table" and item.id then
+            local id = tostring(item.id)
+            if wanted == nil or (type(wanted) == "function" and wanted(id)) or (type(wanted) == "table" and wanted[id]) then
+                table.insert(list, { unique = tostring(item.unique or key), id = id, properties = item.properties })
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.unique < b.unique end)
+    return list
+end
+
+local inventoryDB
+local function dbEntry(kind)
+    if inventoryDB == nil then
+        local ok, db = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("Fsys", 10)).load("InventoryDB")
+        end)
+        inventoryDB = ok and type(db) == "table" and db or false
+    end
+    local entry = inventoryDB and type(inventoryDB.pets) == "table" and inventoryDB.pets[tostring(kind or "")]
+    return type(entry) == "table" and entry or nil
+end
+
+local function isEgg(kind)
+    local entry = dbEntry(kind)
+    if entry and entry.is_egg ~= nil then
+        return entry.is_egg == true
+    end
+    return string.sub(tostring(kind or ""), -4) == "_egg"
+end
+
+local function isTemporary(kind)
+    local entry = dbEntry(kind)
+    return entry ~= nil and entry.temporary == true
+end
+
+local RARITY = { common = 1, uncommon = 2, rare = 3, ultra_rare = 4, ultrarare = 4, ["ultra rare"] = 4, legendary = 5 }
+local function rarityOf(kind)
+    local entry = dbEntry(kind)
+    return entry and RARITY[string.lower(tostring(entry.rarity or ""))] or 3
+end
+
+local function equippedPets()
+    local data = getPlayerData()
+    local equip = data and data.equip_manager
+    local list = {}
+    for _, pet in pairs(type(equip) == "table" and type(equip.pets) == "table" and equip.pets or {}) do
+        if type(pet) == "table" and type(pet.unique) == "string" then
+            table.insert(list, pet)
+        end
+    end
+    return list
+end
+
+local function isEquipped(unique)
+    for _, pet in ipairs(equippedPets()) do
+        if pet.unique == unique then
+            return true
+        end
+    end
+    return false
+end
+
+local function penPets()
+    local data = getPlayerData()
+    local pen = data and data.idle_progression_manager
+    local set, count = {}, 0
+    for unique in pairs(type(pen) == "table" and type(pen.active_pets) == "table" and pen.active_pets or {}) do
+        set[tostring(unique)] = true
+        count += 1
+    end
+    return set, count
+end
+
+local function money()
+    local data = getPlayerData()
+    return data and tonumber(data.money) or 0
+end
+
+local function penTickets()
+    local data = getPlayerData()
+    return data and tonumber(data[PEN_TICKET_KEY]) or 0
+end
+
+local function canAfford(price)
+    return money() >= price + PEN_KEEP_BUCKS
+end
+
+local function choosePet()
+    -- pick the highest-age real (non-temporary) pet, else any non-temporary egg
+    local realPet, realAge, egg
+    for _, pet in ipairs(itemsOf("pets", nil)) do
+        if not isTemporary(pet.id) then
+            local entry = { unique = pet.unique, kind = pet.id }
+            if isEgg(pet.id) then
+                egg = egg or entry
+            else
+                local age = type(pet.properties) == "table" and tonumber(pet.properties.age) or 1
+                if not realPet or age > realAge then
+                    realPet, realAge = entry, age
+                end
+            end
+        end
+    end
+    return realPet or egg
+end
+
+local function sparePets(eggsFirst)
+    -- General-purpose spare-pet lister (used elsewhere, not by pen logic)
+    local inPen = penPets()
+    local session = choosePet()
+    local list = {}
+    for _, pet in ipairs(itemsOf("pets", nil)) do
+        if not isTemporary(pet.id) and not inPen[pet.unique] and not (session and session.unique == pet.unique)
+            and not isEquipped(pet.unique) then
+            local props = type(pet.properties) == "table" and pet.properties or {}
+            table.insert(list, { unique = pet.unique, kind = pet.id, egg = isEgg(pet.id), rarity = rarityOf(pet.id),
+                age = tonumber(props.age) or 1, neon = props.neon == true, mega = props.mega_neon == true })
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.egg ~= b.egg then
+            if eggsFirst then
+                return a.egg
+            end
+            return not a.egg
+        end
+        if a.rarity ~= b.rarity then
+            return a.rarity < b.rarity
+        end
+        if a.age ~= b.age then
+            return a.age < b.age
+        end
+        return a.unique < b.unique
+    end)
+    return list
+end
+
+local function prettyKind(kind)
+    return (string.gsub(tostring(kind or "pet"), "_", " "))
+end
+
+-- ================= POTION RELEASER =================
+local function findPetAgePotion()
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.food then
+        for uniqueId, itemData in pairs(data.inventory.food) do
+            if itemData.id == "pet_age_potion" then
+                return uniqueId
+            end
+        end
+    end
+    return nil
+end
+
+local function safelyUnequipFood(itemId)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Unequip"):InvokeServer(itemId)
+    end)
+end
+
+local function equipTool(itemId)
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/Equip"):InvokeServer(itemId, {
+            use_sound_delay = true,
+            equip_as_last = false
+        })
+    end)
+    return ok
+end
+
+local function findPetsNeedingPotions()
+    local petsNeedingPotions = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for petUniqueId, petData in pairs(data.inventory.pets) do
+            if petData.id and petData.properties then
+                local petName = string.lower(petData.id)
+                local petAge = petData.properties.age or 0
+                for _, targetPet in ipairs(TARGET_PETS_FOR_POTIONS) do
+                    if petName == targetPet and petAge < POTION_TARGET_AGE then
+                        table.insert(petsNeedingPotions, {
+                            uid = petUniqueId,
+                            name = petData.id,
+                            age = petAge,
+                        })
+                        break
+                    end
+                end
+            end
+        end
+    end
+    table.sort(petsNeedingPotions, function(a, b)
+        return a.age < b.age
+    end)
+    return petsNeedingPotions
+end
+
+local function getPetAge(petUniqueId)
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for uid, petData in pairs(data.inventory.pets) do
+            if uid == petUniqueId or petData.unique == petUniqueId then
+                return petData.properties and petData.properties.age or 0, petData.id or "Unknown"
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function usePotionOnPet(petUniqueId)
+    local currentAge, petName = getPetAge(petUniqueId)
+    if not currentAge or currentAge >= POTION_TARGET_AGE then
+        say("Pet no longer needs potion: " .. tostring(petName), "warn")
+        return false
+    end
+
+    if not equipTool(petUniqueId) then
+        say("Failed to equip pet: " .. tostring(petName), "bad")
+        return false
+    end
+    say("Equipped pet: " .. tostring(petName))
+    task.wait(1)
+
+    local potionId = findPetAgePotion()
+    if not potionId then
+        say("No potions found!", "bad")
+        return false
+    end
+    if not equipTool(potionId) then
+        say("Failed to equip potion", "bad")
+        return false
+    end
+    task.wait(1)
+
+    local startOk = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("ToolAPI/ServerUseTool"):InvokeServer(potionId, "START")
+    end)
+    if not startOk then
+        safelyUnequipFood(potionId)
+        say("Failed to start using potion", "bad")
+        return false
+    end
+    task.wait(1)
+
+    local consumeOk = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("PetObjectAPI/CreatePetObject"):InvokeServer(
+            "__Enum_PetObjectCreatorType_2",
+            {
+                additional_consume_uniques = {},
+                pet_unique = petUniqueId,
+                unique_id = potionId,
+            }
+        )
+    end)
+    if not consumeOk then
+        safelyUnequipFood(potionId)
+        say("Failed to create pet object for consumption", "bad")
+        return false
+    end
+
+    say("Waiting 9 s for potion to feed " .. tostring(petName) .. "...")
+    local startTime = tick()
+    repeat
+        task.wait(0.1)
+    until tick() - startTime >= 9
+    say("Potion feed complete for " .. tostring(petName), "ok")
+
+    safelyUnequipFood(potionId)
+    return true
+end
+
+local function startPotionReleaser()
+    while PotionMode do
+        local petsNeedingPotions = findPetsNeedingPotions()
+        if #petsNeedingPotions == 0 then
+            say("No pets need potions. Waiting 30 s...", "warn")
+            task.wait(30)
+            continue
+        end
+        if not findPetAgePotion() then
+            say("No potions available", "bad")
+            task.wait(30)
+            continue
+        end
+
+        say(#petsNeedingPotions .. " pets need potions")
+        for _, petData in ipairs(petsNeedingPotions) do
+            if not PotionMode then
+                break
+            end
+            local currentAge = getPetAge(petData.uid)
+            if currentAge and currentAge >= POTION_TARGET_AGE then
+                say(petData.name .. " no longer needs potion (age: " .. currentAge .. ")", "warn")
+                continue
+            end
+            if not usePotionOnPet(petData.uid) then
+                task.wait(2)
+            end
+        end
+        task.wait(5)
+    end
+end
+
+-- ================= PET RECYCLER =================
+local function findPetsToRecycle()
+    local toRecycle = {}
+    local data = getPlayerData()
+    if data and data.inventory and data.inventory.pets then
+        for petUniqueId, petData in pairs(data.inventory.pets) do
+            if petData.id then
+                local id = string.lower(petData.id)
+                for _, target in ipairs(TARGET_PETS_FOR_RECYCLE) do
+                    if id == target then
+                        table.insert(toRecycle, { uid = petUniqueId, name = petData.id })
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return toRecycle
+end
+
+local function collectTickets()
+    local ok, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):FindFirstChild("PetRecyclerAPI/TicketsCollected"):InvokeServer()
+    end)
+    if not ok then
+        say("Ticket collection failed: " .. tostring(result), "bad")
+        return false
+    end
+    say("Tickets collected via PetRecyclerAPI", "ok")
+    return true
+end
+
+local function recyclePets(pets)
+    local character = player.Character
+    if not character then
+        say("No character found", "bad")
+        return false
+    end
+
+    local ok, why = goTo("Nursery")
+    if not ok then
+        say("Could not reach the Nursery: " .. tostring(why), "bad")
+        return false
+    end
+
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("AchievementsAPI/CompleteAchievement"):FireServer("visit_the_pet_releaser")
+    end)
+    task.wait(0.5)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("AchievementsAPI/CompleteAchievement"):FireServer("open_backpack")
+    end)
+    task.wait(0.5)
+
+    local uniques = {}
+    for _, pet in ipairs(pets) do
+        uniques[pet.uid] = true
+    end
+
+    local recycleOk, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):FindFirstChild("HousingAPI/ActivateInteriorFurniture"):InvokeServer(
+            "f-3", "UseBlock", { uniques = uniques }, character)
+    end)
+    if not recycleOk then
+        say("Recycle failed: " .. tostring(result), "bad")
+        return false
+    end
+
+    say("Recycled " .. #pets .. " pets. Collecting tickets...", "ok")
+    task.wait(3)
+    if collectTickets() then
+        task.wait(1)
+        collectTickets()
+    end
+    return true
+end
+
+local function startPetRecycler()
+    while RecycleMode do
+        local pets = findPetsToRecycle()
+        if #pets < RECYCLE_MIN_PETS then
+            say(#pets .. "/" .. RECYCLE_MIN_PETS .. " recycle pets found. Waiting 30 s...", "warn")
+            task.wait(30)
+            continue
+        end
+        if not recyclePets(pets) then
+            say("Retrying recycle in 10 s...", "warn")
+            task.wait(10)
+        else
+            task.wait(5)
+        end
+    end
+end
+
+-- ================= CRYSTAL (recycle 18 -> crystal egg) =================
+local function crystalEggCount()
+    return #itemsOf("pets", function(id) return string.lower(id) == CRYSTAL_EGG end)
+end
+
+-- Buy ONE crystal egg with tickets. Returns true if a new crystal egg appeared.
+-- The egg is only bought into inventory; it is never added to the pet pen.
+local function buyOneCrystalEgg()
+    local before = crystalEggCount()
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("ShopAPI/BuyItem"):InvokeServer(
+            "pets", CRYSTAL_EGG, { buy_count = 1 })
+    end)
+    if waitUntil(function() return crystalEggCount() > before end, 8) then
+        return true
+    end
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):FindFirstChild("RecyclerAPI/BuyEgg"):InvokeServer(
+            CRYSTAL_EGG, { buy_count = 1 })
+    end)
+    return waitUntil(function() return crystalEggCount() > before end, 5)
+end
+
+local function buyCrystalEggs()
+    local bought = 0
+    while CrystalMode and bought < CRYSTAL_MAX_BUYS do
+        local tickets = penTickets()
+        if tickets <= 0 then
+            break
+        end
+        say("Buying crystal egg with tickets (" .. tickets .. " left)", "info")
+        if not buyOneCrystalEgg() then
+            say("Crystal egg purchase stopped (not enough tickets?)", "warn")
+            break
+        end
+        bought += 1
+        say("Got crystal egg #" .. bought .. " (total " .. crystalEggCount() .. ")", "ok")
+        task.wait(1)
+    end
+    return bought
+end
+
+local function startCrystal()
+    while CrystalMode do
+        setGoal(string.format("Crystal: tickets %d, crystal eggs %d", penTickets(), crystalEggCount()))
+        local pets = findPetsToRecycle()
+        if #pets < CRYSTAL_MIN_PETS then
+            say(#pets .. "/" .. CRYSTAL_MIN_PETS .. " recycle pets for crystal. Waiting 30 s...", "warn")
+            task.wait(30)
+            continue
+        end
+        say(#pets .. " recycle pets found - going to Nursery", "ok")
+        if not recyclePets(pets) then
+            say("Crystal recycle failed. Retrying in 10 s...", "warn")
+            task.wait(10)
+            continue
+        end
+        task.wait(2)
+        local bought = buyCrystalEggs()
+        say("Crystal cycle done: bought " .. bought .. " crystal egg(s)", bought > 0 and "ok" or "warn")
+        task.wait(5)
+    end
+end
+
+-- ================= EGG TRADING =================
+local function addEggsToTrade(eggs)
+    local maxEggs = math.min(#eggs, 18)
+    local added = 0
+    for i = 1, maxEggs do
+        local success = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AddItemToOffer"):FireServer(eggs[i].uid)
+        end)
+        if success then
+            added += 1
+            say("Added egg " .. i .. "/" .. maxEggs .. ": " .. eggs[i].name)
+        end
+        task.wait(0.2)
+    end
+    return added
+end
+
+local function tradeEggsWithPlayer(targetPlayer)
+    say("Sending trade request to " .. targetPlayer.Name)
+    local ok1 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(targetPlayer)
+    end)
+    if not ok1 then
+        return false
+    end
+    task.wait(3)
+    local ok2 = pcall(function()
+        return ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptOrDeclineTradeRequest"):InvokeServer(targetPlayer, true)
+    end)
+    if not ok2 then
+        say("Failed to accept trade request", "bad")
+        return false
+    end
+    task.wait(3)
+    local eggs = findTargetItems(TARGET_EGGS)
+    if #eggs == 0 then
+        return false
+    end
+    local added = addEggsToTrade(eggs)
+    if added == 0 then
+        return false
+    end
+    task.wait(3)
+    pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/AcceptNegotiation"):FireServer()
+    end)
+    task.wait(6)
+    local ok4 = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/ConfirmTrade"):FireServer()
+    end)
+    if ok4 then
+        say("Trade completed: " .. added .. " eggs to " .. targetPlayer.Name, "ok")
+        return true
+    end
+    say("Failed to confirm trade", "bad")
+    return false
+end
+
+local function startEggTrader()
+    while EggMode do
+        local eggs = findTargetItems(TARGET_EGGS)
+        if #eggs == 0 then
+            say("No eggs left! Stopping.", "warn")
+            EggMode = false
+            break
+        end
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        if tradeEggsWithPlayer(target) then
+            task.wait(math.random(8, 12))
+        else
+            say("Trade failed. Retrying in 15 s...", "warn")
+            task.wait(15)
+        end
+    end
+end
+
+-- ================= PET GIVER =================
+local function startPetGiver()
+    while PetMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local pets = findTargetItems(TARGET_PETS)
+        if #pets == 0 then
+            say("No target pets left! Stopping.", "warn")
+            PetMode = false
+            break
+        end
+        if giveItem(target, pets[1].uid) then
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+-- ================= GIFT GIVER =================
+local function startGiftGiver()
+    while GiftMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local gifts = findGifts()
+        if #gifts == 0 then
+            say("All " .. GIFT_TYPE .. " given away! Stopping.", "warn")
+            GiftMode = false
+            break
+        end
+        local stack = gifts[1]
+        if giveItem(target, stack.uid) then
+            say("Gave " .. stack.amount .. "x " .. GIFT_TYPE .. " to " .. target.Name, "ok")
+            task.wait(9)
+        else
+            task.wait(3)
+        end
+    end
+end
+
+-- ================= TRADE REQUEST ONLY =================
+local function startTradeRequester()
+    while TradeRequestMode do
+        local target = findFirstAvailablePlayer()
+        if not target then
+            say("No target player. Waiting...")
+            task.wait(10)
+            continue
+        end
+        local ok = pcall(function()
+            ReplicatedStorage:WaitForChild("API"):WaitForChild("TradeAPI/SendTradeRequest"):FireServer(target)
+        end)
+        if ok then
+            say("Trade request sent to " .. target.Name, "ok")
+        else
+            say("Failed to send trade request", "bad")
+        end
+        task.wait(math.random(8, 15))
+    end
+end
+
+-- ================= NEON FUSER =================
+local function doNeonFusion()
+    local data = getPlayerData()
+    if not data or not data.inventory or not data.inventory.pets then
+        say("No pet data available", "bad")
+        return 0
+    end
+
+    local fullGrownPets = {}
+    for id, pet in pairs(data.inventory.pets) do
+        local isNeon = pet.properties and pet.properties.neon or false
+        local isMega = pet.properties and pet.properties.mega or false
+        local age = pet.properties and pet.properties.age or 0
+        local petName = pet.id
+        if petName and not isNeon and not isMega and age == 6 then
+            fullGrownPets[petName] = fullGrownPets[petName] or {}
+            table.insert(fullGrownPets[petName], id)
+        end
+    end
+
+    local fused = 0
+    for petType, petList in pairs(fullGrownPets) do
+        while #petList >= 4 do
+            local fusionSet = {}
+            for i = 1, 4 do
+                table.insert(fusionSet, petList[1])
+                table.remove(petList, 1)
+            end
+            say("Fusing 4 Full Grown " .. petType .. " into NEON...")
+            local success, err = pcall(function()
+                local neonAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion")
+                if neonAPI then
+                    return neonAPI:InvokeServer(fusionSet)
+                end
+                local altAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/NeonFusion")
+                    or ReplicatedStorage.API:FindFirstChild("PetAPI/FuseNeon")
+                    or ReplicatedStorage.API:FindFirstChild("NeonAPI/Fuse")
+                if altAPI then
+                    return altAPI:InvokeServer(fusionSet)
+                end
+                error("neon fusion API not found")
+            end)
+            if success and err ~= nil then
+                say("Created NEON " .. petType .. "!", "ok")
+                fused += 1
+                task.wait(3)
+            else
+                say("Fusion failed for " .. petType .. ": " .. tostring(err), "bad")
+                for _, id in ipairs(fusionSet) do
+                    table.insert(petList, id)
+                end
+                break
+            end
+        end
+    end
+    return fused
+end
+
+local function startNeonFuser()
+    while NeonMode do
+        local fused = doNeonFusion()
+        if fused == 0 then
+            say("No 4x full-grown (age 6) pets to fuse. Waiting 30 s...", "warn")
+            task.wait(30)
+        else
+            say("NEON fusion pass complete: " .. fused .. " created", "ok")
+            task.wait(5)
+        end
+    end
+end
+
+-- ================= MEGA FUSER =================
+local function doMegaFusion()
+    local data = getPlayerData()
+    if not data or not data.inventory or not data.inventory.pets then
+        say("No pet data available", "bad")
+        return 0
+    end
+
+    local age6Neons = {}
+    for id, pet in pairs(data.inventory.pets) do
+        if pet.properties and pet.properties.neon then
+            local age = pet.properties.age or 0
+            local petName = pet.id
+            if petName and age == 6 then
+                age6Neons[petName] = age6Neons[petName] or {}
+                table.insert(age6Neons[petName], id)
+            end
+        end
+    end
+
+    local fused = 0
+    for petType, petList in pairs(age6Neons) do
+        while #petList >= 4 do
+            local fusionSet = {}
+            for i = 1, 4 do
+                table.insert(fusionSet, petList[i])
+            end
+            say("Fusing 4 age-6 NEON " .. petType .. " into MEGA...")
+            local success, err = pcall(function()
+                local megaAPI = ReplicatedStorage.API:FindFirstChild("PetAPI/DoMegaFusion")
+                if megaAPI then
+                    return megaAPI:InvokeServer(fusionSet)
+                end
+                return ReplicatedStorage.API:FindFirstChild("PetAPI/DoNeonFusion"):InvokeServer(fusionSet)
+            end)
+            if success then
+                say("Created MEGA " .. petType .. "!", "ok")
+                fused += 1
+                for i = 1, 4 do
+                    table.remove(petList, 1)
+                end
+                task.wait(2)
+            else
+                say("MEGA fusion failed: " .. tostring(err), "bad")
+                break
+            end
+        end
+    end
+    return fused
+end
+
+local function startMegaFuser()
+    while MegaMode do
+        local fused = doMegaFusion()
+        if fused == 0 then
+            say("No 4x age-6 neons to fuse into mega. Waiting 30 s...", "warn")
+            task.wait(30)
+        else
+            say("MEGA fusion pass complete: " .. fused .. " created", "ok")
+            task.wait(5)
+        end
+    end
+end
+
+-- ==================================================================
+-- PET PEN SYSTEM (PetFarm-style: neon fusion, purge trash,
+-- remove age-6 pets, refill priority:
+--   1. NEON pets under age 6
+--   2. inventory recycler eggs FIRST, then other priority pets/eggs
+--   3. buy recycler egg with TICKETS, else cracked egg with Bucks
+-- Empty slots are ALWAYS filled.)
+-- ==================================================================
+local penPrioritySet = {}
+for _, v in ipairs(PEN_PRIORITY_EGGS) do penPrioritySet[string.lower(v)] = true end
+
+local function penSnapshot()
+    local data = getPlayerData()
+    if not data or not data.idle_progression_manager or not data.idle_progression_manager.active_pets then
+        return {}
+    end
+    local snapshot = {}
+    for uniqueId, _ in pairs(data.idle_progression_manager.active_pets) do
+        local pet = data.inventory and data.inventory.pets and data.inventory.pets[uniqueId]
+        if pet then
+            table.insert(snapshot, {
+                unique_id = uniqueId,
+                name = pet.id,
+                age = pet.properties and pet.properties.age or 0,
+                neon = pet.properties and pet.properties.neon or false,
+            })
+        end
+    end
+    return snapshot
+end
+
+local function penAddPet(uniqueId)
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("IdleProgressionAPI/AddPet"):FireServer(uniqueId)
+    end)
+    return ok
+end
+
+local function penRemovePet(uniqueId)
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("API"):WaitForChild("IdleProgressionAPI/RemovePet"):FireServer(uniqueId)
+    end)
+    return ok
+end
+
+-- Remove everything from the pen that isn't a NEON or a priority pet
+local function penPurgeTrash()
+    local data = getPlayerData()
+    if not data or not data.idle_progression_manager or not data.idle_progression_manager.active_pets then
+        return 0
+    end
+    local removed = 0
+    for uniqueId, _ in pairs(data.idle_progression_manager.active_pets) do
+        local pet = data.inventory and data.inventory.pets and data.inventory.pets[uniqueId]
+        if pet and pet.id and pet.properties then
+            local isNeon = pet.properties.neon or false
+            local cleanName = string.lower(pet.id)
+            if not isNeon and not penPrioritySet[cleanName] then
+                say("Purging trash from pen: " .. prettyKind(pet.id), "info")
+                penRemovePet(uniqueId)
+                removed += 1
+                task.wait(0.7)
+            end
+        end
+    end
+    return removed
+end
+
+-- Buy one egg: recycler egg ONLY if we have tickets, else cracked egg with Bucks
+local function penBuyOneEgg()
+    local tickets = penTickets()
+
+    -- 1) recycler egg with tickets (only if tickets above reserve)
+    -- (skipped while CRYSTAL is on: tickets are saved for crystal eggs)
+    if PEN_USE_RECYCLER_FIRST and not CrystalMode and tickets > PEN_TICKET_RESERVE then
+        say("Buying a recycler egg with tickets (" .. tickets .. " left)", "info")
+        local before = #itemsOf("pets", nil)
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):FindFirstChild("ShopAPI/BuyItem"):InvokeServer(
+                "pets", PEN_RECYCLER_EGG, { buy_count = 1 })
+        end)
+        if waitUntil(function() return #itemsOf("pets", nil) > before end, 8) then
+            return PEN_RECYCLER_EGG
+        end
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):FindFirstChild("RecyclerAPI/BuyEgg"):InvokeServer(
+                PEN_RECYCLER_EGG, { buy_count = 1 })
+        end)
+        if waitUntil(function() return #itemsOf("pets", nil) > before end, 5) then
+            return PEN_RECYCLER_EGG
+        end
+        say("Recycler purchase failed, falling back to cracked egg", "warn")
+    end
+
+    -- 2) no tickets (or recycler failed): cracked egg with Bucks
+    if canAfford(PEN_CRACKED_PRICE) then
+        say("Buying a Cracked Egg (" .. PEN_CRACKED_PRICE .. " Bucks)", "info")
+        local before = #itemsOf("pets", nil)
+        pcall(function()
+            ReplicatedStorage:WaitForChild("API"):FindFirstChild("ShopAPI/BuyItem"):InvokeServer(
+                "pets", PEN_CRACKED_EGG, { buy_count = 1 })
+        end)
+        if waitUntil(function() return #itemsOf("pets", nil) > before end, 8) then
+            return PEN_CRACKED_EGG
+        end
+        return nil
+    end
+
+    return nil
+end
+
+-- Fill empty pen slots: 1) NEON pets under age 6,
+-- 2) inventory priority pets/eggs (recycler egg first, list order),
+-- 3) ALWAYS buy eggs (tickets -> recycler egg, else Bucks -> cracked egg)
+local function penAddPriorityPets(snapshot)
+    local data = getPlayerData()
+    if not data or not data.inventory or not data.inventory.pets then
+        return 0
+    end
+    local slotsOpen = PEN_SLOTS - #snapshot
+    if slotsOpen <= 0 then
+        return 0
+    end
+
+    local inPen = {}
+    for _, pet in ipairs(snapshot) do
+        inPen[pet.unique_id] = true
+    end
+
+    local added = 0
+    local addedSet = {}
+
+    -- Priority 1: NEON pets (must be under age 6)
+    for uniqueId, petData in pairs(data.inventory.pets) do
+        local petAge = petData.properties and petData.properties.age or 0
+        if petData.properties and petData.properties.neon and petAge < 6
+            and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+            penAddPet(uniqueId)
+            say("Added NEON to pen: " .. prettyKind(petData.id) .. " (Age " .. petAge .. ")", "ok")
+            added += 1
+            addedSet[uniqueId] = true
+            inPen[uniqueId] = true
+            task.wait(0.6)
+        end
+    end
+
+    -- Priority 2: exact priority pet/egg match in list order
+    -- (pet_recycler_2025_basic_egg is FIRST in the list, so inventory
+    --  recycler eggs are always used before any other priority pet)
+    for _, eggName in ipairs(PEN_PRIORITY_EGGS) do
+        for uniqueId, petData in pairs(data.inventory.pets) do
+            local petAge = petData.properties and petData.properties.age or 0
+            if string.lower(petData.id or "") == string.lower(eggName) and petAge < 6
+                and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+                penAddPet(uniqueId)
+                say("Added PRIORITY to pen: " .. prettyKind(petData.id) .. " (Age " .. petAge .. ")", "ok")
+                added += 1
+                addedSet[uniqueId] = true
+                inPen[uniqueId] = true
+                task.wait(0.6)
+            end
+        end
+    end
+
+    -- Priority 3: ALWAYS auto-buy eggs to fill remaining empty slots
+    while added < slotsOpen and PenMode do
+        local eggKind = penBuyOneEgg()
+        if not eggKind then
+            say("No tickets and not enough Bucks (" .. money() .. ") - can't buy more eggs", "warn")
+            break
+        end
+
+        task.wait(3) -- wait for server to replicate the purchase
+        local newData = getPlayerData()
+        if not (newData and newData.inventory and newData.inventory.pets) then
+            break
+        end
+
+        local foundEgg = false
+        for uniqueId, petData in pairs(newData.inventory.pets) do
+            local petAge = petData.properties and petData.properties.age or 0
+            if string.lower(petData.id or "") == string.lower(eggKind) and petAge < 6
+                and not inPen[uniqueId] and not addedSet[uniqueId] then
+                penAddPet(uniqueId)
+                say("Added PURCHASED " .. prettyKind(eggKind) .. " to pen", "ok")
+                added += 1
+                addedSet[uniqueId] = true
+                inPen[uniqueId] = true
+                foundEgg = true
+                task.wait(0.6)
+                break
+            end
+        end
+        if not foundEgg then
+            say("Bought egg but couldn't find it in inventory - stopping auto-buy", "warn")
+            break
+        end
+    end
+
+    say("Pen refill: added " .. added .. " pet(s) this cycle", "info")
+    return added
+end
+
+local function startPenFiller()
+    say("Pet Pen started (PetFarm-style cycles)", "ok")
+    while PenMode do
+        local snapshot = penSnapshot()
+        setGoal(string.format("Pet Pen %d/%d  (tickets %d, bucks %d)",
+            #snapshot, PEN_SLOTS, penTickets(), money()))
+
+        -- 0. Commit progression FIRST to update pet ages locally
+        if PEN_COMMIT_FIRST then
+            pcall(function()
+                ReplicatedStorage.API["IdleProgressionAPI/CommitAllProgression"]:FireServer()
+            end)
+            say("Committed progression to refresh age data", "info")
+            task.wait(3)
+        end
+
+        -- 1. Neon fusion pass (4x age-6 non-neon pets of the same type)
+        local fusions = doNeonFusion()
+        if fusions > 0 then
+            task.wait(5)
+        end
+
+        -- 2. Purge non-priority trash from the pen
+        penPurgeTrash()
+        task.wait(2)
+
+        -- 3. Remove aged (6+) pets from the pen
+        snapshot = penSnapshot()
+        for _, pet in ipairs(snapshot) do
+            if pet.age >= 6 then
+                say("Removing aged pet from pen: " .. prettyKind(pet.name) .. " (Age " .. pet.age .. ")", "info")
+                penRemovePet(pet.unique_id)
+                task.wait(0.7)
+            end
+        end
+
+        -- 4. Refill (inventory recycler eggs first, then tickets->recycler,
+        --    else Bucks->cracked egg, until all slots are full)
+        task.wait(2)
+        snapshot = penSnapshot()
+        penAddPriorityPets(snapshot)
+
+        setGoal(string.format("Pet Pen %d/%d  (tickets %d, bucks %d)",
+            #penSnapshot(), PEN_SLOTS, penTickets(), money()))
+        task.wait(PEN_CYCLE_SECONDS)
+    end
+    say("Pet Pen stopped", "warn")
+end
+
+-- ================= UI =================
+local GC = GC or {}
+GC.LogFolder = "COCOON"
+GC.AvatarUrl = "https://raw.githubusercontent.com/Robloko/robloko/main/icon.png"
+GC.AvatarUser = "COCOON"
+
+local THEME = {
+    bg = Color3.fromRGB(18, 18, 22), line = Color3.fromRGB(40, 40, 48), field = Color3.fromRGB(28, 28, 34),
+    text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
+    ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
+    money = Color3.fromRGB(120, 230, 120), ticket = Color3.fromRGB(255, 200, 80),
+}
+local MODE_COLORS = {
+    egg = Color3.fromRGB(200, 150, 0), pet = Color3.fromRGB(0, 120, 200),
+    gift = Color3.fromRGB(200, 100, 200), req = Color3.fromRGB(150, 100, 50),
+    potion = Color3.fromRGB(200, 100, 0), recycle = Color3.fromRGB(100, 180, 80),
+    neon = Color3.fromRGB(80, 200, 220), mega = Color3.fromRGB(180, 80, 220),
+    pen = Color3.fromRGB(70, 160, 220), crystal = Color3.fromRGB(90, 200, 230),
+}
+
+local function guiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then
+        return hui
+    end
+    local okCore, core = pcall(function() return game:GetService("CoreGui") end)
+    if okCore and core then
+        return core
+    end
+    return player:WaitForChild("PlayerGui")
+end
+
+local function create(className, props, parent)
+    local object = Instance.new(className)
+    for key, value in pairs(props) do
+        object[key] = value
+    end
+    object.Parent = parent
+    return object
+end
+
+local function corner(parent, radius)
+    create("UICorner", { CornerRadius = UDim.new(0, radius or 6) }, parent)
+end
+
+local function makeDraggable(handle, target)
+    local dragging, startInput, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, startInput, startPos = true, input.Position, target.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - startInput
+            target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+local function text(parent, x, y, width, height, value, size, color, bold)
+    return create("TextLabel", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, height),
+        BackgroundTransparency = 1, Text = value or "", TextColor3 = color or THEME.text, TextSize = size or 12,
+        Font = bold and Enum.Font.GothamMedium or Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd }, parent)
+end
+
+local function toggleButton(parent, x, y, width, label, color, onClick)
+    local b = create("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, 24),
+        BackgroundColor3 = color, BorderSizePixel = 0, Text = label, TextColor3 = THEME.text,
+        Font = Enum.Font.GothamMedium, TextSize = 11, AutoButtonColor = true }, parent)
+    corner(b, 4)
+    create("UIStroke", { Color = THEME.line, Thickness = 1 }, b)
+    b.MouseButton1Click:Connect(function()
+        pcall(onClick, b)
+    end)
+    return b
+end
+
+local function avatarImage()
+    if type(getcustomasset) == "function" and type(writefile) == "function" then
+        local file = GC.LogFolder .. "/" .. GC.AvatarUser .. ".png"
+        local ok, image = pcall(function()
+            if not (type(isfile) == "function" and isfile(file)) then
+                if type(isfolder) == "function" and not isfolder(GC.LogFolder) then
+                    makefolder(GC.LogFolder)
+                end
+                local data = game:HttpGet(GC.AvatarUrl)
+                if type(data) ~= "string" or (string.sub(data, 1, 8) ~= "\137PNG\r\n\26\n" and string.sub(data, 1, 3) ~= "\255\216\255") then
+                    error("not a picture")
+                end
+                writefile(file, data)
+            end
+            return getcustomasset(file)
+        end)
+        if ok and type(image) == "string" and image ~= "" then
+            return image
+        end
+    end
+    local ok, image = pcall(function()
+        local userId = Players:GetUserIdFromNameAsync(GC.AvatarUser)
+        return (Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48))
+    end)
+    return ok and type(image) == "string" and image or ""
+end
+
+local function window(width, height)
+    if ui.screen and ui.screen.Parent then
+        ui.screen:Destroy()
+    end
+    ui.screen = create("ScreenGui", { Name = "COCOON", ResetOnSpawn = false, DisplayOrder = 999 }, guiParent())
+    local frame = create("Frame", { Size = UDim2.fromOffset(width, height), Position = UDim2.new(0, 16, 0.5, -height / 2),
+        BackgroundColor3 = THEME.bg, BorderSizePixel = 0 }, ui.screen)
+    corner(frame, 8)
+    create("UIStroke", { Color = THEME.line, Thickness = 1 }, frame)
+    local header = create("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1 }, frame)
+    makeDraggable(header, frame)
+    local avatar = create("ImageLabel", { Position = UDim2.fromOffset(8, 5), Size = UDim2.fromOffset(16, 16),
+        BackgroundColor3 = THEME.field, BorderSizePixel = 0, Image = "" }, header)
+    corner(avatar, 8)
+    task.spawn(function()
+        local image = avatarImage()
+        if avatar.Parent then
+            avatar.Image = image
+        end
+    end)
+    text(header, 30, 0, width - 58, 26, "COCOON", 13, THEME.text, true)
+    local close = create("TextButton", { Position = UDim2.fromOffset(width - 26, 1), Size = UDim2.fromOffset(22, 22),
+        BackgroundTransparency = 1, Text = "×", TextColor3 = THEME.dim, Font = Enum.Font.GothamMedium, TextSize = 16 }, header)
+    close.MouseButton1Click:Connect(function()
+        EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+        NeonMode, MegaMode, PenMode = false, false, false
+        CrystalMode = false
+        uiLog = nil
+        ui.now = nil
+        frame:Destroy()
+    end)
+    create("Frame", { Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+    return frame
+end
+
+local function mainWindow()
+    local width = 210
+    local height = 302
+    local frame = window(width, height)
+
+    -- ============ MONEY / TICKET DISPLAY ============
+    local statsBg = create("Frame", { Position = UDim2.fromOffset(8, 29), Size = UDim2.fromOffset(width - 16, 18),
+        BackgroundColor3 = THEME.field, BorderSizePixel = 0 }, frame)
+    corner(statsBg, 4)
+    local moneyLabel = text(statsBg, 5, 1, (width - 26) / 2, 16, "💵 $0", 11, THEME.money, true)
+    local ticketLabel = text(statsBg, (width - 16) / 2 + 3, 1, (width - 26) / 2, 16, "🎟️ 0", 11, THEME.ticket, true)
+
+    task.spawn(function()
+        while frame.Parent do
+            local ok, d = pcall(function()
+                local cd = require(ReplicatedStorage.ClientModules.Core.ClientData)
+                return cd.get_data()[player.Name] or {}
+            end)
+            if ok and d then
+                local moneyVal = d.money or 0
+                local tickets = d.pet_recycler_tickets_2026 or 0
+                moneyLabel.Text = "💵 $" .. tostring(moneyVal)
+                ticketLabel.Text = "🎟️ " .. tostring(tickets)
+            end
+            task.wait(2)
+        end
+    end)
+
+    -- ============ STATUS ============
+    text(frame, 8, 51, 26, 13, "Now", 10, THEME.accent, true)
+    ui.now = text(frame, 34, 51, width - 42, 13, status.now, 11, THEME.text, true)
+    ui.goal = text(frame, 8, 66, width - 16, 12, status.goal, 10, THEME.dim)
+    local logBox = create("TextLabel", { Position = UDim2.fromOffset(8, 80), Size = UDim2.fromOffset(width - 16, 40),
+        BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = THEME.dim, Font = Enum.Font.Gotham, TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = false,
+        ClipsDescendants = true }, frame)
+    renderStatus()
+    local shown = {}
+    local TONES = { ok = "#5ac878", bad = "#e65a5a", warn = "#d6a046", info = "#9a9aae" }
+    uiLog = function(tone, message)
+        local safe = string.gsub(string.gsub(string.gsub(tostring(message), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+        table.insert(shown, '<font color="' .. (TONES[tone] or TONES.info) .. '">' .. safe .. "</font>")
+        while #shown > 3 do
+            table.remove(shown, 1)
+        end
+        logBox.Text = table.concat(shown, "\n")
+    end
+    create("Frame", { Position = UDim2.fromOffset(8, 123), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+
+    -- ============ COMPACT BUTTON GRID (2x5 = 9 buttons) ============
+    local half = (width - 20) / 2
+    local function gridButton(x, y, label, color, modeGet, starter, setName)
+        local btn = toggleButton(frame, x, y, half, label .. " [OFF]", color, function(b)
+            local on = not modeGet()
+            setName(on)
+            b.Text = label .. (on and " [ON]" or " [OFF]")
+            b.BackgroundColor3 = on and THEME.ok or color
+            if on then
+                task.spawn(starter)
+                say(label .. " started", "ok")
+            else
+                say(label .. " stopped", "warn")
+            end
+            return b
+        end)
+        return btn
+    end
+
+    local eggButton = gridButton(8, 130, "EGGS", MODE_COLORS.egg, function() return EggMode end, startEggTrader,
+        function(on) EggMode = on end)
+    local petButton = gridButton(12 + half, 130, "PETS", MODE_COLORS.pet, function() return PetMode end, startPetGiver,
+        function(on) PetMode = on end)
+    local giftButton = gridButton(8, 159, "GIFTS", MODE_COLORS.gift, function() return GiftMode end, startGiftGiver,
+        function(on) GiftMode = on end)
+    local reqButton = gridButton(12 + half, 159, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end,
+        startTradeRequester, function(on) TradeRequestMode = on end)
+    local potionButton = gridButton(8, 188, "POTIONS", MODE_COLORS.potion, function() return PotionMode end, startPotionReleaser,
+        function(on) PotionMode = on end)
+    local recycleButton = gridButton(12 + half, 188, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end,
+        startPetRecycler, function(on) RecycleMode = on end)
+    local neonButton = gridButton(8, 217, "NEON", MODE_COLORS.neon, function() return NeonMode end,
+        startNeonFuser, function(on) NeonMode = on end)
+    local megaButton = gridButton(12 + half, 217, "MEGA", MODE_COLORS.mega, function() return MegaMode end,
+        startMegaFuser, function(on) MegaMode = on end)
+    local penButton = gridButton(8, 246, "PET PEN", MODE_COLORS.pen, function() return PenMode end,
+        startPenFiller, function(on) PenMode = on end)
+    local crystalButton = gridButton(12 + half, 246, "CRYSTAL", MODE_COLORS.crystal, function() return CrystalMode end,
+        startCrystal, function(on) CrystalMode = on end)
+
+    task.spawn(function()
+        local labels = { { eggButton, "EGGS", MODE_COLORS.egg, function() return EggMode end },
+            { petButton, "PETS", MODE_COLORS.pet, function() return PetMode end },
+            { giftButton, "GIFTS", MODE_COLORS.gift, function() return GiftMode end },
+            { reqButton, "TRADE REQ", MODE_COLORS.req, function() return TradeRequestMode end },
+            { potionButton, "POTIONS", MODE_COLORS.potion, function() return PotionMode end },
+            { recycleButton, "RECYCLE", MODE_COLORS.recycle, function() return RecycleMode end },
+            { neonButton, "NEON", MODE_COLORS.neon, function() return NeonMode end },
+            { megaButton, "MEGA", MODE_COLORS.mega, function() return MegaMode end },
+            { penButton, "PET PEN", MODE_COLORS.pen, function() return PenMode end },
+            { crystalButton, "CRYSTAL", MODE_COLORS.crystal, function() return CrystalMode end } }
+        while frame.Parent do
+            task.wait(2)
+            for _, entry in ipairs(labels) do
+                local btn, label, color, get = entry[1], entry[2], entry[3], entry[4]
+                if not get() and string.find(btn.Text, "ON", 1, true) then
+                    btn.Text = label .. " [OFF]"
+                    btn.BackgroundColor3 = color
+                end
+            end
+        end
+    end)
+
+    text(frame, 8, 276, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 293), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0 }, frame)
+end
+
+env.COCOON = {
+    Stop = function()
+        EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+        NeonMode, MegaMode, PenMode = false, false, false
+        CrystalMode = false
+    end,
+    -- Expose pen helpers for console/debug use
+    PenSnapshot = penSnapshot,
+    PenPurgeTrash = penPurgeTrash,
+    PenAddPet = penAddPet,
+    PenRemovePet = penRemovePet,
+    PenBuyOneEgg = penBuyOneEgg,
+    PenAddPriorityPets = penAddPriorityPets,
+}
+
+mainWindow()
+say("Loaded. Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), "ok")
