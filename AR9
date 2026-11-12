@@ -106,13 +106,14 @@ local RECYCLE_MIN_PETS = 4
 
 -- Crystal config
 local CRYSTAL_EGG = "pet_recycler_2025_crystal_egg"
-local CRYSTAL_MIN_PETS = 18             -- recycle only once this many recycle pets exist
+local CRYSTAL_PRICE = 4000              -- tickets per crystal egg
+local CRYSTAL_MIN_PETS = 18            -- recycle only once this many recycle pets exist
 local CRYSTAL_MAX_BUYS = 20             -- safety cap on crystal eggs bought per cycle
 
 -- ================= MODES =================
-local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
+local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, true
 local NeonMode, MegaMode, PenMode = false, false, true
-local CrystalMode = true
+local CrystalMode = false
 
 -- ================= STATUS / LOG =================
 local ui = {}
@@ -708,7 +709,7 @@ local function buyCrystalEggs()
     local bought = 0
     while CrystalMode and bought < CRYSTAL_MAX_BUYS do
         local tickets = penTickets()
-        if tickets <= 0 then
+        if tickets < CRYSTAL_PRICE then
             break
         end
         say("Buying crystal egg with tickets (" .. tickets .. " left)", "info")
@@ -725,10 +726,20 @@ end
 
 local function startCrystal()
     while CrystalMode do
-        setGoal(string.format("Crystal: tickets %d, crystal eggs %d", penTickets(), crystalEggCount()))
+        setGoal(string.format("Crystal: tickets %d/%d, crystal eggs %d", penTickets(), CRYSTAL_PRICE, crystalEggCount()))
+
+        -- Buy whenever there are enough tickets (no recycling needed)
+        if penTickets() >= CRYSTAL_PRICE then
+            local boughtNow = buyCrystalEggs()
+            if boughtNow > 0 then
+                say("Bought " .. boughtNow .. " crystal egg(s) with saved tickets", "ok")
+            end
+        end
+
         local pets = findPetsToRecycle()
         if #pets < CRYSTAL_MIN_PETS then
-            say(#pets .. "/" .. CRYSTAL_MIN_PETS .. " recycle pets for crystal. Waiting 30 s...", "warn")
+            say(#pets .. "/" .. CRYSTAL_MIN_PETS .. " recycle pets, " .. penTickets() .. "/" .. CRYSTAL_PRICE
+                .. " tickets. Waiting 30 s...", "warn")
             task.wait(30)
             continue
         end
@@ -740,7 +751,11 @@ local function startCrystal()
         end
         task.wait(2)
         local bought = buyCrystalEggs()
-        say("Crystal cycle done: bought " .. bought .. " crystal egg(s)", bought > 0 and "ok" or "warn")
+        if bought > 0 then
+            say("Crystal cycle done: bought " .. bought .. " crystal egg(s)", "ok")
+        else
+            say("Recycled. Tickets " .. penTickets() .. "/" .. CRYSTAL_PRICE .. " - saving for crystal egg", "info")
+        end
         task.wait(5)
     end
 end
@@ -1304,6 +1319,7 @@ local THEME = {
     text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(130, 130, 145), accent = Color3.fromRGB(150, 120, 255),
     ok = Color3.fromRGB(90, 200, 120), bad = Color3.fromRGB(230, 90, 90),
     money = Color3.fromRGB(120, 230, 120), ticket = Color3.fromRGB(255, 200, 80),
+    crystal = Color3.fromRGB(120, 210, 255),
 }
 local MODE_COLORS = {
     egg = Color3.fromRGB(200, 150, 0), pet = Color3.fromRGB(0, 120, 200),
@@ -1449,8 +1465,11 @@ local function mainWindow()
     local statsBg = create("Frame", { Position = UDim2.fromOffset(8, 29), Size = UDim2.fromOffset(width - 16, 18),
         BackgroundColor3 = THEME.field, BorderSizePixel = 0 }, frame)
     corner(statsBg, 4)
-    local moneyLabel = text(statsBg, 5, 1, (width - 26) / 2, 16, "💵 $0", 11, THEME.money, true)
-    local ticketLabel = text(statsBg, (width - 16) / 2 + 3, 1, (width - 26) / 2, 16, "🎟️ 0", 11, THEME.ticket, true)
+    -- three columns: money | tickets | crystal eggs
+    local col = (width - 16) / 3
+    local moneyLabel = text(statsBg, 5, 1, col - 6, 16, "💵 $0", 11, THEME.money, true)
+    local ticketLabel = text(statsBg, col + 3, 1, col - 6, 16, "🎟️ 0", 11, THEME.ticket, true)
+    local crystalLabel = text(statsBg, col * 2 + 3, 1, col - 6, 16, "💎 0", 11, THEME.crystal, true)
 
     task.spawn(function()
         while frame.Parent do
@@ -1463,6 +1482,7 @@ local function mainWindow()
                 local tickets = d.pet_recycler_tickets_2026 or 0
                 moneyLabel.Text = "💵 $" .. tostring(moneyVal)
                 ticketLabel.Text = "🎟️ " .. tostring(tickets)
+                crystalLabel.Text = "💎 " .. tostring(crystalEggCount())
             end
             task.wait(2)
         end
@@ -1567,8 +1587,8 @@ end
 env.COCOON = {
     Stop = function()
         EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
-        NeonMode, MegaMode, PenMode = false, false, false
-        CrystalMode = false
+        NeonMode, MegaMode, PenMode = false, false, true
+        CrystalMode = true
     end,
     -- Expose pen helpers for console/debug use
     PenSnapshot = penSnapshot,
