@@ -98,10 +98,9 @@ local TARGET_PETS_FOR_POTIONS = {
 }
 
 local TARGET_PETS_FOR_RECYCLE = {
-    "basic_egg_2022_ant", "basic_egg_2022_mouse", "basic_egg_2022_swordfish",
     "basic_egg_2022_camel", "basic_egg_2022_robot", "basic_egg_2022_corgi",
     "basic_egg_2022_poodle", "basic_egg_2022_donkey", "basic_egg_2022_zebra",
-    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet",
+    "basic_egg_2022_orangutan", "basic_egg_2022_parakeet", "basic_egg_2022_swordfish",  
 }
 local RECYCLE_MIN_PETS = 4
 
@@ -109,7 +108,10 @@ local RECYCLE_MIN_PETS = 4
 local CRYSTAL_EGG = "pet_recycler_2025_crystal_egg"
 local CRYSTAL_PRICE = 4000              -- tickets per crystal egg
 local CRYSTAL_MIN_PETS = 18            -- recycle only once this many recycle pets exist
-local CRYSTAL_MAX_BUYS = 20             -- safety cap on crystal eggs bought per cycle
+local CRYSTAL_PEN_FALLBACK = { "basic_egg_2022_ant", "basic_egg_2022_mouse" } -- pen fill when no Bucks for cracked egg
+local crystalFallbackSet = {}
+for _, v in ipairs(CRYSTAL_PEN_FALLBACK) do crystalFallbackSet[v] = true end
+local CRYSTAL_MAX_BUYS = 20            -- safety cap on crystal eggs bought per cycle
 
 -- ================= MODES =================
 local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, true
@@ -1105,8 +1107,8 @@ local function penPurgeTrash()
             local cleanName = string.lower(pet.id)
             local isTrash
             if CrystalMode then
-                -- CRYSTAL on: pen holds ONLY cracked eggs
-                isTrash = cleanName ~= PEN_CRACKED_EGG
+                -- CRYSTAL on: pen holds cracked eggs (+ ant/mouse fallback)
+                isTrash = cleanName ~= PEN_CRACKED_EGG and not crystalFallbackSet[cleanName]
             else
                 isTrash = not isNeon and not penPrioritySet[cleanName]
             end
@@ -1253,6 +1255,27 @@ local function penAddPriorityPets(snapshot)
         if not foundEgg then
             say("Bought egg but couldn't find it in inventory - stopping auto-buy", "warn")
             break
+        end
+    end
+
+    -- Priority 4 (CRYSTAL only): not enough Bucks for cracked eggs and slots
+    -- still empty -> fill them with ant / mouse from inventory
+    if crystalOnly and added < slotsOpen and PenMode then
+        local fbData = getPlayerData()
+        local fbPets = fbData and fbData.inventory and fbData.inventory.pets or {}
+        for _, eggName in ipairs(CRYSTAL_PEN_FALLBACK) do
+            for uniqueId, petData in pairs(fbPets) do
+                local petAge = petData.properties and petData.properties.age or 0
+                if string.lower(petData.id or "") == eggName and petAge < 6
+                    and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
+                    penAddPet(uniqueId)
+                    say("No Bucks for cracked egg - added " .. prettyKind(petData.id) .. " to pen", "ok")
+                    added += 1
+                    addedSet[uniqueId] = true
+                    inPen[uniqueId] = true
+                    task.wait(0.6)
+                end
+            end
         end
     end
 
@@ -1588,8 +1611,8 @@ end
 env.COCOON = {
     Stop = function()
         EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = false, false, false, false, false, false
-        NeonMode, MegaMode, PenMode = false, false, true
-        CrystalMode = true
+        NeonMode, MegaMode, PenMode = false, false, false
+        CrystalMode = false
     end,
     -- Expose pen helpers for console/debug use
     PenSnapshot = penSnapshot,
