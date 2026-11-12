@@ -4,7 +4,8 @@
 -- + Potion Releaser (ages target pets to age 6 with pet_age_potion)
 -- + Pet Recycler (travels to Nursery, recycles pets, collects tickets)
 -- + Crystal (when 18+ recycle pets: Nursery -> recycle -> tickets ->
---   buy pet_recycler_2025_crystal_egg. Crystal eggs NEVER go to the pen)
+--   buy pet_recycler_2025_crystal_egg. Crystal eggs NEVER go to the pen.
+--   While CRYSTAL is on, PET PEN fills all 4 slots with cracked_egg ONLY)
 -- + Pet Pen (PetFarm-style logic: commit progression, purge trash,
 --   neon fusion, remove age-6 pets, refill priority:
 --   inventory recycler eggs FIRST, then tickets -> recycler egg,
@@ -1086,8 +1087,15 @@ local function penPurgeTrash()
         if pet and pet.id and pet.properties then
             local isNeon = pet.properties.neon or false
             local cleanName = string.lower(pet.id)
-            if not isNeon and not penPrioritySet[cleanName] then
-                say("Purging trash from pen: " .. prettyKind(pet.id), "info")
+            local isTrash
+            if CrystalMode then
+                -- CRYSTAL on: pen holds ONLY cracked eggs
+                isTrash = cleanName ~= PEN_CRACKED_EGG
+            else
+                isTrash = not isNeon and not penPrioritySet[cleanName]
+            end
+            if isTrash then
+                say("Purging from pen: " .. prettyKind(pet.id), "info")
                 penRemovePet(uniqueId)
                 removed += 1
                 task.wait(0.7)
@@ -1161,10 +1169,14 @@ local function penAddPriorityPets(snapshot)
     local added = 0
     local addedSet = {}
 
+    -- CRYSTAL on: skip neons and the priority list, use ONLY cracked eggs
+    -- (inventory cracked eggs first, then buy cracked eggs with Bucks)
+    local crystalOnly = CrystalMode
+
     -- Priority 1: NEON pets (must be under age 6)
     for uniqueId, petData in pairs(data.inventory.pets) do
         local petAge = petData.properties and petData.properties.age or 0
-        if petData.properties and petData.properties.neon and petAge < 6
+        if not crystalOnly and petData.properties and petData.properties.neon and petAge < 6
             and not inPen[uniqueId] and added < slotsOpen and not addedSet[uniqueId] then
             penAddPet(uniqueId)
             say("Added NEON to pen: " .. prettyKind(petData.id) .. " (Age " .. petAge .. ")", "ok")
@@ -1178,7 +1190,7 @@ local function penAddPriorityPets(snapshot)
     -- Priority 2: exact priority pet/egg match in list order
     -- (pet_recycler_2025_basic_egg is FIRST in the list, so inventory
     --  recycler eggs are always used before any other priority pet)
-    for _, eggName in ipairs(PEN_PRIORITY_EGGS) do
+    for _, eggName in ipairs(crystalOnly and { PEN_CRACKED_EGG } or PEN_PRIORITY_EGGS) do
         for uniqueId, petData in pairs(data.inventory.pets) do
             local petAge = petData.properties and petData.properties.age or 0
             if string.lower(petData.id or "") == string.lower(eggName) and petAge < 6
