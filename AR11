@@ -17,7 +17,8 @@
 -- + Mega Fuser (4x age-6 same-species neons -> mega)
 -- + Money & Ticket Display
 -- + FARM button (AR11): the AdoptMe Farm from cocoon.txt, embedded below,
---   Potion Farm preset + baby needs by default. Its own window: RightShift.
+--   Potion Farm preset + baby needs by default. No window of its own:
+--   FARM / BABY NEEDS buttons and the Farm status line live in this GUI.
 --   pet_recycler_2025_crystal_egg is NEVER equipped / hatched by the farm.
 -- ==================================================================
 local Players = game:GetService("Players")
@@ -129,6 +130,7 @@ local EggMode, PetMode, GiftMode, TradeRequestMode, PotionMode, RecycleMode = fa
 local NeonMode, MegaMode, PenMode = false, false, true
 local CrystalMode = true
 local FarmMode = false                 -- true = the FARM button starts ON at load
+local FarmBaby = true                  -- BABY NEEDS button: the farm does baby needs too
 
 -- ================= STATUS / LOG =================
 local ui = {}
@@ -1493,7 +1495,7 @@ local UserConfig = {
     Preset = "PotionFarm", -- AR11 default; the values below win over the preset
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
-        BabyMode = true, -- AR11: baby needs stay on with the Potion Farm preset
+        BabyMode = true, -- AR11: baby needs stay on with the Potion Farm preset (BABY NEEDS button)
         AutoNeeds = {
             Enabled = true,
             Skip = {},
@@ -1581,7 +1583,7 @@ local UserConfig = {
             MaxOutfitPrice = 100,
         },
     },
-    Interface = { Enabled = true, Keybind = "RightShift", Toasts = true, RememberSettings = true, Theme = "Halloween",
+    Interface = { Enabled = false, Keybind = "RightShift", Toasts = true, RememberSettings = true, Theme = "Halloween",
         Descriptions = false, StartHidden = true, Language = "Auto" },
     Logging = {
         ConsoleLevel = "OFF",
@@ -30924,9 +30926,19 @@ local function startFarm()
     end
     -- runs until the button is switched off or the farm is stopped / replaced from elsewhere
     while FarmMode and farmEnv.AdoptMeFarm == api do
+        pcall(function()
+            api.Config.Farm.BabyMode = FarmBaby -- read live by the farm every tick
+            local s = api.Status()
+            if ui.farm then
+                ui.farm.Text = string.format("Farm: %s | needs %d | +%d bucks", tostring(s.task), s.needsDone or 0, s.bucksEarned or 0)
+            end
+        end)
         task.wait(1)
     end
-    if farmEnv.AdoptMeFarm == nil then -- stopped from its own window; a newer start keeps its switch
+    if ui.farm then
+        pcall(function() ui.farm.Text = "Farm: off" end)
+    end
+    if farmEnv.AdoptMeFarm == nil then -- stopped by itself; a newer start keeps its switch
         FarmMode = false
     end
     pcall(api.Stop, "COCOON FARM button")
@@ -31076,6 +31088,7 @@ local function window(width, height)
         FarmMode = false
         uiLog = nil
         ui.now = nil
+        ui.farm = nil
         frame:Destroy()
     end)
     create("Frame", { Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.line,
@@ -31085,7 +31098,7 @@ end
 
 local function mainWindow()
     local width = 210
-    local height = 331
+    local height = 346
     local frame = window(width, height)
 
     -- ============ MONEY / TICKET DISPLAY ============
@@ -31184,6 +31197,9 @@ local function mainWindow()
         startCrystal, function(on) CrystalMode = on end)
     local farmButton = gridButton(8, 275, "FARM", MODE_COLORS.farm, function() return FarmMode end,
         startFarm, function(on) FarmMode = on end)
+    local babyButton = gridButton(12 + half, 275, "BABY NEEDS", MODE_COLORS.farm, function() return FarmBaby end,
+        function() end, function(on) FarmBaby = on end) -- applied by the FARM loop
+    ui.farm = text(frame, 8, 304, width - 16, 13, "Farm: off", 10, THEME.dim)
 
     task.spawn(function()
         local labels = { { eggButton, "EGGS", MODE_COLORS.egg, function() return EggMode end },
@@ -31196,7 +31212,8 @@ local function mainWindow()
             { megaButton, "MEGA", MODE_COLORS.mega, function() return MegaMode end },
             { penButton, "PET PEN", MODE_COLORS.pen, function() return PenMode end },
             { crystalButton, "CRYSTAL", MODE_COLORS.crystal, function() return CrystalMode end },
-            { farmButton, "FARM", MODE_COLORS.farm, function() return FarmMode end } }
+            { farmButton, "FARM", MODE_COLORS.farm, function() return FarmMode end },
+            { babyButton, "BABY NEEDS", MODE_COLORS.farm, function() return FarmBaby end } }
         while frame.Parent do
             task.wait(2)
             for _, entry in ipairs(labels) do
@@ -31209,8 +31226,8 @@ local function mainWindow()
         end
     end)
 
-    text(frame, 8, 305, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
-    create("Frame", { Position = UDim2.fromOffset(8, 322), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
+    text(frame, 8, 320, width - 16, 14, "Targets: " .. table.concat(TARGET_PLAYER_NAMES, ", "), 10, THEME.dim)
+    create("Frame", { Position = UDim2.fromOffset(8, 337), Size = UDim2.new(1, -16, 0, 1), BackgroundColor3 = THEME.line,
         BorderSizePixel = 0 }, frame)
 end
 
